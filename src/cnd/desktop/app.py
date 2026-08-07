@@ -33,7 +33,7 @@ ctk.set_appearance_mode("light")
 
 FONTE = "Segoe UI"
 INTERVALO_ATUALIZACAO_MS = 2000
-ID_DO_APLICATIVO = "Mapah.CND.Certidoes"
+ID_DO_APLICATIVO = "Mapah.Acta.Certidoes"
 
 # O que a operação pergunta: a empresa está limpa ou não. Os nomes internos
 # (CPEN, PENDENCIA_MANUAL) ficam no banco; na tela, português.
@@ -92,7 +92,7 @@ class Aplicativo(ctk.CTk):
         self.robo = Robo(RAIZ_PROJETO)
         self.secao_atual = "inicio"
 
-        self.title("CND — Emissão de Certidões")
+        self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1200x760")
         self.minsize(980, 640)
         self._por_icone()
@@ -130,9 +130,9 @@ class Aplicativo(ctk.CTk):
         self._marca = ctk.CTkImage(marca.desenhar_marca(96), size=(26, 26))
         ctk.CTkLabel(topo, image=self._marca, text="").grid(row=0, column=0,
                                                             rowspan=2, padx=(0, 12))
-        ctk.CTkLabel(topo, text="mapah", font=(FONTE, 20, "bold"),
+        ctk.CTkLabel(topo, text=marca.NOME_PRODUTO, font=(FONTE, 20, "bold"),
                      text_color=marca.TEXTO_NA_BARRA).grid(row=0, column=1, sticky="w")
-        ctk.CTkLabel(topo, text="Certidões", font=(FONTE, 11),
+        ctk.CTkLabel(topo, text="Certidões · Mapah", font=(FONTE, 11),
                      text_color=marca.TEXTO_NA_BARRA_2).grid(row=1, column=1,
                                                              sticky="w")
 
@@ -315,7 +315,8 @@ class Aplicativo(ctk.CTk):
         cabecalho.grid_columnconfigure(0, weight=1)
 
         self._titulo(cabecalho, "Máquinas",
-                     "Cada computador roda o robô de um órgão"
+                     "Cada computador roda o robô de um órgão. "
+                     "Clique no nome para acessá-lo pelo AnyDesk."
                      ).grid(row=0, column=0, sticky="w")
         ctk.CTkButton(cabecalho, text="Atualizar", height=38, width=112,
                       corner_radius=19, font=(FONTE, 12), fg_color=marca.BRANCO,
@@ -364,9 +365,17 @@ class Aplicativo(ctk.CTk):
             ctk.CTkLabel(topo, text="●", font=(FONTE, 14),
                          text_color=cores[cor]).grid(row=0, column=0, rowspan=2,
                                                      padx=(0, 10))
-            ctk.CTkLabel(topo, text=estado.rotulo.upper(), font=(FONTE, 15, "bold"),
-                         text_color=marca.TEXTO, anchor="w").grid(row=0, column=1,
-                                                                  sticky="w")
+            # O nome é o próprio acesso: clicar nele abre o AnyDesk já
+            # apontado para aquela máquina. Azul e sublinhado porque é
+            # assim que se lê "isto leva a algum lugar" — botão separado
+            # obrigaria a procurar onde clicar.
+            titulo = ctk.CTkLabel(topo, text=estado.rotulo.upper(),
+                                  font=(FONTE, 15, "bold"), anchor="w",
+                                  text_color=marca.AZUL if estado.acessavel
+                                  else marca.TEXTO)
+            titulo.grid(row=0, column=1, sticky="w")
+            if estado.acessavel:
+                self._transformar_em_link(titulo, estado)
             ctk.CTkLabel(topo, text=texto_situacao, font=(FONTE, 12),
                          text_color=cores[cor]).grid(row=0, column=2, sticky="e")
             if estado.subtitulo:
@@ -435,23 +444,31 @@ class Aplicativo(ctk.CTk):
                      lambda e=estado: self._baixar_de(
                          e, f"/relatorio/{e.lote_id}.zip", ".zip")),
                 ]
-            # O acesso remoto aparece sempre, inclusive na máquina que não
-            # respondeu — é justamente quando alguém precisa entrar nela.
-            if estado.maquina.anydesk:
-                botoes.append(("Acessar a máquina",
-                               lambda e=estado: self._acessar(e)))
 
             for coluna, (rotulo, acao) in enumerate(botoes):
-                destaque = rotulo.startswith("Acessar") and not estado.online
                 ctk.CTkButton(
                     acoes, text=rotulo, height=34, width=152,
-                    corner_radius=17, font=(FONTE, 12),
-                    fg_color=marca.AZUL if destaque else marca.BRANCO,
-                    hover_color=marca.AZUL_CLARO if destaque else marca.PAPEL,
-                    text_color=marca.BRANCO if destaque else marca.AZUL,
-                    border_width=0 if destaque else 1,
-                    border_color=marca.BORDA, command=acao,
+                    corner_radius=17, font=(FONTE, 12), fg_color=marca.BRANCO,
+                    hover_color=marca.PAPEL, text_color=marca.AZUL,
+                    border_width=1, border_color=marca.BORDA, command=acao,
                 ).grid(row=0, column=coluna, padx=(0, 9))
+            if not botoes:
+                acoes.grid_remove()
+
+    def _transformar_em_link(self, rotulo, estado) -> None:
+        """Deixa o texto com cara e comportamento de link.
+
+        O CustomTkinter não tem widget de link, e o sublinhado do Tk vive na
+        fonte — daí trocar a fonte no hover em vez de uma propriedade de
+        estilo.
+        """
+        normal = (FONTE, 15, "bold")
+        sobre = (FONTE, 15, "bold underline")
+
+        rotulo.configure(cursor="hand2")
+        rotulo.bind("<Enter>", lambda _e: rotulo.configure(font=sobre))
+        rotulo.bind("<Leave>", lambda _e: rotulo.configure(font=normal))
+        rotulo.bind("<Button-1>", lambda _e: self._acessar(estado))
 
     def _acessar(self, estado) -> None:
         """Abre o AnyDesk já apontado para aquela máquina."""

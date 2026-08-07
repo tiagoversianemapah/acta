@@ -5,16 +5,20 @@ programa instalado nas máquinas do escritório.
 
 ## O que é entregue
 
-Uma pasta, `dist/EMISSOR CND/`, com tudo dentro:
+Uma pasta, `dist/ACTA/`, com tudo dentro:
 
 ```
-EMISSOR CND/
-  EMISSOR CND.exe     ← a janela; é o que vai no atalho
-  cnd.exe             ← a linha de comando e o processo do robô
-  config.toml         ← ajustes da máquina
-  data/               ← banco, certidões, evidências, logs
-  _internal/          ← Python e bibliotecas
+ACTA/
+  ACTA.exe       ← a janela; é o que vai no atalho
+  cnd.exe        ← a linha de comando e o processo do robô
+  config.toml    ← ajustes da máquina
+  data/          ← banco, certidões, evidências, logs
+  _internal/     ← Python e bibliotecas
 ```
+
+O produto se chama ACTA; `cnd` continua sendo o nome do pacote e da linha
+de comando, porque está em toda a documentação e em todo comando que a
+operação já conhece.
 
 Não há instalador e não há Python na máquina de destino. Copiar a pasta
 **é** a instalação. A decisão é deliberada: são computadores de escritório
@@ -37,11 +41,13 @@ O que ele faz, em ordem:
 2. escreve `versao.txt`, que preenche Propriedades > Detalhes do
    executável. Programa sem isso aparece como "desconhecido" para o
    SmartScreen e para as políticas de aplicativo do Windows;
-3. roda o PyInstaller com `empacotar/emissor.spec`;
+3. roda o PyInstaller com `empacotar/acta.spec`;
 4. leva `config.toml` e a calibragem para junto do executável — **sem
    sobrescrever** o que já existir, para que reconstruir não apague o
    ajuste de quem opera;
-5. cria os atalhos na Área de Trabalho e no Menu Iniciar.
+5. cria os atalhos na Área de Trabalho e no Menu Iniciar, e **apaga os de
+   nomes antigos** (`NOMES_ANTIGOS` no script) — atalho apontando para um
+   executável que não existe mais é a primeira coisa que alguém clica.
 
 Opções: `--sem-atalhos` (só constrói) e `--so-atalhos` (só refaz os
 atalhos, útil depois de copiar a pasta para outra máquina).
@@ -56,7 +62,7 @@ espera encontrá-lo.
 
 ### Dois executáveis
 
-`EMISSOR CND.exe` não tem console — é um aplicativo, e uma janela preta
+`ACTA.exe` não tem console — é um aplicativo, e uma janela preta
 piscando atrás dele seria amadorismo. Mas o robô **precisa** de console: a
 janela lê a saída dele para mostrar no Registro, e um executável sem
 console entregaria essa saída no vazio. Daí `cnd.exe`, que é o mesmo
@@ -86,7 +92,7 @@ sem utilidade. O pacote fica em 50 MB.
 
 ## Instalar numa máquina do robô
 
-1. copie a pasta `EMISSOR CND` para a máquina (por rede, pen drive ou o
+1. copie a pasta `ACTA` para a máquina (por rede, pen drive ou o
    próprio AnyDesk);
 2. edite o `config.toml` dela:
    - `[rede] nome` — como ela aparece no aplicativo, ex. `"PC-CND-01"`
@@ -110,26 +116,31 @@ Mesma pasta, mas o `config.toml` lista as outras:
 nome  = "Tiago"
 senha = "..."          # a mesma em todas; prefira CND_REDE_SENHA
 maquinas = [
-  { orgao = "Receita Federal",    nome = "PC-CND-01", url = "http://192.168.0.21:8000", anydesk = "123 456 789" },
-  { orgao = "Receitas Estaduais", nome = "PC-CND-02", url = "http://192.168.0.22:8000", anydesk = "234 567 890" },
+  { orgao = "ACTA CND FEDERAL",    nome = "PC-CND-01", url = "http://192.168.0.21:8000", anydesk = "123 456 789" },
+  { orgao = "ACTA CND ESTADUAIS",  nome = "PC-CND-02", url = "http://192.168.0.22:8000", anydesk = "234 567 890" },
 ]
 ```
 
 A tela **Máquinas** passa a mostrar um cartão por computador: o órgão em
 destaque, o nome e o endereço abaixo, progresso do lote, e os botões de
-baixar planilha, baixar certidões e acessar a máquina.
+baixar planilha e baixar certidões.
 
-### O botão "Acessar a máquina"
+### O nome da máquina é o acesso remoto
 
-Abre o AnyDesk já apontado para o número daquela máquina. Procura o
-programa nos caminhos usuais de instalação e, se não achar, tenta o
-protocolo `anydesk:` — que existe se o AnyDesk já rodou ali, mesmo na
-versão portátil.
+O `orgao` aparece em **azul** no cartão, e clicar nele abre o AnyDesk já
+apontado para aquela máquina. Não é um botão separado de propósito: o que
+a pessoa está olhando quando decide entrar na máquina é o nome dela, e é
+ali que a mão já está.
 
-O número não é credencial: para conectar, o AnyDesk continua exigindo a
+O link procura o AnyDesk nos caminhos usuais de instalação e, se não achar,
+tenta o protocolo `anydesk:` — que existe se o programa já rodou ali, mesmo
+em versão portátil. O número pode ser colado com os espaços do jeito que o
+AnyDesk mostra (`123 456 789`); apelidos (`mapah-cnd@ad`) passam inteiros.
+
+O número **não é credencial**: para conectar, o AnyDesk continua exigindo a
 senha de acesso não vigiado ou a confirmação de quem estiver na outra
 ponta. Guardá-lo no `config.toml` não abre porta nenhuma.
 
-O botão aparece **inclusive na máquina que não respondeu**, em azul cheio.
-É de propósito: é justamente quando o painel diz "sem resposta" que alguém
-precisa entrar nela.
+O link funciona **inclusive na máquina que não respondeu**. É de propósito:
+é justamente quando o painel diz "sem resposta" que alguém precisa entrar
+nela.

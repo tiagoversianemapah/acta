@@ -1,11 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Receita de empacotamento do EMISSOR CND.
+"""Receita de empacotamento do ACTA.
 
 Gera DOIS executáveis que dividem a mesma pasta de bibliotecas:
 
-  EMISSOR CND.exe   sem console — é o que vai no atalho
-  cnd.exe           com console — a linha de comando (importar, painel,
-                    calibrar) e o processo do robô, cuja saída a janela lê
+  ACTA.exe   sem console — é o que vai no atalho
+  cnd.exe    com console — a linha de comando (importar, painel, calibrar)
+             e o processo do robô, cuja saída a janela lê
 
 Modo pasta (onedir) e não arquivo único: o arquivo único se descompacta
 inteiro num diretório temporário a cada abertura, o que custa segundos de
@@ -15,6 +15,8 @@ espera encontrar.
 
 Rodar por:  python empacotar/construir.py
 """
+# ruff: noqa: F821  — Analysis, PYZ, EXE, COLLECT e SPECPATH são injetados
+# pelo PyInstaller no momento de ler a receita; não existem como import.
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all
@@ -62,9 +64,9 @@ pyz = PYZ(analise.pure)
 janela = EXE(
     pyz, analise.scripts, [],
     exclude_binaries=True,
-    name="EMISSOR CND",
+    name="ACTA",
     console=False,
-    icon=str(RAIZ / "empacotar" / "emissor.ico"),
+    icon=str(RAIZ / "empacotar" / "acta.ico"),
     version=str(RAIZ / "empacotar" / "versao.txt"),
 )
 
@@ -73,12 +75,12 @@ terminal = EXE(
     exclude_binaries=True,
     name="cnd",
     console=True,
-    icon=str(RAIZ / "empacotar" / "emissor.ico"),
+    icon=str(RAIZ / "empacotar" / "acta.ico"),
     version=str(RAIZ / "empacotar" / "versao.txt"),
 )
 
 COLLECT(
     janela, terminal,
     analise.binaries, analise.datas,
-    name="EMISSOR CND",
+    name="ACTA",
 )

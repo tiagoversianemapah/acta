@@ -1,9 +1,12 @@
-# EMISSOR CND — Emissão de Certidões de Regularidade Fiscal em Lote
+# ACTA — Emissão de Certidões de Regularidade Fiscal em Lote
 
 Robô que emite certidões de regularidade fiscal (CND/CPEN) para a carteira de
 CNPJs da Mapah/BPYOU. Roda sem operador, distribui o trabalho entre várias
 máquinas do escritório, avisa no Teams quando algo precisa de atenção e entrega
 planilha e PDFs prontos para envio.
+
+O produto se chama **ACTA**; `cnd` é o nome do pacote Python e da linha de
+comando, e continua assim porque está em todos os comandos e na documentação.
 
 Fase 1: Receita Federal, pessoa jurídica — ~2.850 CNPJs por rodada.
 
@@ -15,7 +18,7 @@ Fase 1: Receita Federal, pessoa jurídica — ~2.850 CNPJs por rodada.
 | Banco, fila e máquina de estados | ✅ |
 | Ritmo adaptativo (AIMD) e disjuntor por órgão | ✅ |
 | Orquestrador (workers, retry, heartbeat, órfãos) | ✅ |
-| Aplicativo de mesa (`EMISSOR CND.exe`) | ✅ |
+| Aplicativo de mesa (`ACTA.exe`) | ✅ |
 | Painel web, API e visão de várias máquinas | ✅ |
 | Relatório Excel e pacote ZIP das certidões | ✅ |
 | Avisos no Microsoft Teams | ✅ em produção |
@@ -37,7 +40,7 @@ Precisa de alguém na frente da máquina: o robô assume o mouse e o teclado.
 
 Para **usar**, não há instalação de ambiente: veja
 [docs/07 — Instalação nas máquinas](docs/07-instalacao-nas-maquinas.md). Copiar a
-pasta `dist/EMISSOR CND/` é a instalação.
+pasta `dist/ACTA/` é a instalação.
 
 Para **desenvolver**:
 
@@ -46,9 +49,9 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-pytest                       # 177 testes, sem rede e sem portal
-ruff check src tests         # sem apontamentos
-python empacotar/construir.py  # gera o .exe e os atalhos
+pytest                         # 184 testes, sem rede e sem portal
+ruff check src tests empacotar # sem apontamentos
+python empacotar/construir.py  # gera o ACTA.exe e os atalhos
 ```
 
 ## Como funciona
@@ -110,9 +113,13 @@ banco central, pasta compartilhada nem servidor a instalar. (SQLite em pasta de
 rede corrompe: o Windows não trava o arquivo de forma confiável.)
 
 A tela **Máquinas** mostra um cartão por computador, com o órgão em destaque,
-progresso, e botões de baixar planilha, baixar certidões e **acessar a máquina
-pelo AnyDesk** — este último aparece inclusive quando ela não responde, que é
-justamente quando alguém precisa entrar nela.
+progresso, e botões de baixar planilha e baixar certidões.
+
+**O nome da máquina é um link**: em azul, e clicar nele abre o AnyDesk já
+apontado para ela — não é preciso decorar nove dígitos nem procurar numa lista.
+O link funciona inclusive quando a máquina não responde, que é justamente quando
+alguém precisa entrar nela. O número não é credencial: o AnyDesk continua
+pedindo a senha de acesso ou a confirmação de quem estiver na outra ponta.
 
 ## Segurança
 
@@ -140,6 +147,8 @@ cnd testar-alerta                             # confere o Teams
 cnd simular 150                               # lote falso, sem tocar em portal
 cnd app                                       # o aplicativo de mesa
 ```
+
+Na máquina instalada, o mesmo com `cnd.exe` ao lado do `ACTA.exe`.
 
 `cnd simular` vale a pena: o adapter falso **imita a heurística antirrobô** —
 quanto mais rápido o robô consulta, maior a chance de "captcha". Rodar isso mostra
@@ -180,7 +189,9 @@ src/cnd/
 ├── orquestrador/  decide quando e o quê executar; vigia e alerta
 ├── web/           painel, API de leitura, relatório e ZIP
 ├── desktop/       o aplicativo: telas, marca, acesso remoto
-└── infra/         banco, config, log, tela, entrada, Teams, arquivos
+├── infra/         banco, config, log, tela, entrada, Teams, arquivos
+└── lancador.py    ponto de entrada do ACTA.exe: sem argumentos abre a
+                   janela, com argumentos vira linha de comando
 ```
 
 A regra que amarra tudo: as camadas de cima importam as de baixo, **nunca o

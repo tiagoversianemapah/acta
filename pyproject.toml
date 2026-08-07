@@ -1,7 +1,7 @@
 [project]
 name = "cnd"
-version = "1.0.0"
-description = "RPA de emissão de certidões de regularidade fiscal em lote"
+version = "1.1.0"
+description = "ACTA — RPA de emissão de certidões de regularidade fiscal em lote"
 requires-python = ">=3.12"
 dependencies = [
     # Núcleo: fila, ingestão e entrega
@@ -34,8 +34,8 @@ dev = [
 cnd = "cnd.cli:main"
 
 [project.gui-scripts]
-# Sem console: é o mesmo ponto de entrada do EMISSOR CND.exe
-"emissor-cnd" = "cnd.lancador:main"
+# Sem console: é o mesmo ponto de entrada do ACTA.exe
+acta = "cnd.lancador:main"
 
 [build-system]
 requires = ["hatchling"]

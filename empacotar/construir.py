@@ -1,13 +1,13 @@
-"""Gera o EMISSOR CND.exe e os atalhos do Windows.
+"""Gera o ACTA.exe e os atalhos do Windows.
 
     python empacotar/construir.py                 # constrói e cria atalhos
     python empacotar/construir.py --sem-atalhos   # só constrói
 
-O resultado sai em dist/EMISSOR CND/. Essa pasta é o programa inteiro:
-copiar ela para outra máquina é a instalação, sem Python, sem pip, sem
-nada. É de propósito — as máquinas do robô são computadores de escritório,
-e pedir instalação de ambiente em cada uma seria um convite a versões
-diferentes rodando em lugares diferentes.
+O resultado sai em dist/ACTA/. Essa pasta é o programa inteiro: copiar ela
+para outra máquina é a instalação, sem Python, sem pip, sem nada. É de
+propósito — as máquinas do robô são computadores de escritório, e pedir
+instalação de ambiente em cada uma seria um convite a versões diferentes
+rodando em lugares diferentes.
 """
 from __future__ import annotations
 
@@ -19,11 +19,19 @@ from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
 PASTA = Path(__file__).resolve().parent
-DESTINO = RAIZ / "dist" / "EMISSOR CND"
 
-NOME = "EMISSOR CND"
-VERSAO = (1, 0, 0, 0)
+sys.path.insert(0, str(RAIZ / "src"))
+from cnd.desktop import marca  # noqa: E402 — depende do sys.path acima
+
+NOME = marca.NOME_PRODUTO
+DESTINO = RAIZ / "dist" / NOME
+VERSAO = (1, 1, 0, 0)
 EMPRESA = "Mapah Auditoria e Contabilidade"
+
+# Nomes que o programa já usou. Os atalhos antigos apontam para um
+# executável que não existe mais, e atalho quebrado na Área de Trabalho é
+# a primeira coisa que alguém clica.
+NOMES_ANTIGOS = ("EMISSOR CND",)
 
 
 def gerar_icone() -> Path:
@@ -32,10 +40,7 @@ def gerar_icone() -> Path:
     Assim a identidade visual tem uma fonte só: mexeu em marca.py, o ícone
     do atalho acompanha na próxima build.
     """
-    sys.path.insert(0, str(RAIZ / "src"))
-    from cnd.desktop import marca
-
-    caminho = PASTA / "emissor.ico"
+    caminho = PASTA / "acta.ico"
     marca.salvar_icone_janela(caminho)
     print(f"  ícone   {caminho.name}")
     return caminho
@@ -56,11 +61,11 @@ def gerar_versao() -> Path:
   kids=[
     StringFileInfo([StringTable('040904B0', [
         StringStruct('CompanyName', '{EMPRESA}'),
-        StringStruct('FileDescription', 'Emissor de Certidões Negativas'),
+        StringStruct('FileDescription', '{NOME} — {marca.DESCRICAO_PRODUTO}'),
         StringStruct('FileVersion', '{".".join(map(str, VERSAO))}'),
-        StringStruct('InternalName', 'EMISSOR CND'),
-        StringStruct('OriginalFilename', 'EMISSOR CND.exe'),
-        StringStruct('ProductName', 'Emissor CND'),
+        StringStruct('InternalName', '{NOME}'),
+        StringStruct('OriginalFilename', '{NOME}.exe'),
+        StringStruct('ProductName', '{NOME}'),
         StringStruct('ProductVersion', '{".".join(map(str, VERSAO))}'),
         StringStruct('LegalCopyright', '{EMPRESA}')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])
@@ -97,7 +102,7 @@ def construir() -> None:
     print("Construindo o executável (leva alguns minutos)...")
     subprocess.run(
         [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean",
-         str(PASTA / "emissor.spec")],
+         str(PASTA / "acta.spec")],
         cwd=str(RAIZ), check=True,
     )
 
@@ -154,6 +159,7 @@ def criar_atalhos() -> None:
         print(f"  atalhos IGNORADOS — {exe} não existe")
         return
 
+    antigos = ", ".join(f"'{nome}.lnk'" for nome in NOMES_ANTIGOS)
     script = f"""
 $w = New-Object -ComObject WScript.Shell
 $lugares = @(
@@ -163,13 +169,20 @@ $lugares = @(
 )
 foreach ($lugar in $lugares) {{
   if (-not (Test-Path $lugar)) {{ continue }}
+  foreach ($velho in @({antigos})) {{
+    $caminho = Join-Path $lugar $velho
+    if (Test-Path $caminho) {{
+      Remove-Item $caminho -Force
+      Write-Output ("  removido  " + $caminho)
+    }}
+  }}
   $atalho = $w.CreateShortcut((Join-Path $lugar '{NOME}.lnk'))
   $atalho.TargetPath       = '{exe}'
   $atalho.WorkingDirectory = '{DESTINO}'
   $atalho.IconLocation     = '{exe},0'
-  $atalho.Description      = 'Emissor de Certidões Negativas — Mapah'
+  $atalho.Description      = '{NOME} — {marca.DESCRICAO_PRODUTO} — Mapah'
   $atalho.Save()
-  Write-Output ("  atalho  " + (Join-Path $lugar '{NOME}.lnk'))
+  Write-Output ("  atalho    " + (Join-Path $lugar '{NOME}.lnk'))
 }}
 """
     resultado = subprocess.run(
@@ -180,7 +193,7 @@ foreach ($lugar in $lugares) {{
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="empacota o EMISSOR CND")
+    parser = argparse.ArgumentParser(description=f"empacota o {NOME}")
     parser.add_argument("--sem-atalhos", action="store_true")
     parser.add_argument("--so-atalhos", action="store_true",
                         help="não reconstrói, só refaz os atalhos")

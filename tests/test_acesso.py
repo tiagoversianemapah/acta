@@ -38,3 +38,18 @@ def test_sem_orgao_o_titulo_e_o_nome_da_maquina():
     estado = EstadoRemoto(Maquina(nome="Esta máquina", url=""), online=True)
     assert estado.rotulo == "Esta máquina"
     assert estado.subtitulo == ""
+
+
+def test_o_nome_vira_link_quando_ha_anydesk():
+    com = Maquina("PC-01", "http://x", "ACTA CND FEDERAL", "123456789")
+    assert EstadoRemoto(com, online=True).acessavel
+
+
+def test_a_maquina_muda_continua_acessivel():
+    """Máquina fora do ar é justamente quando alguém precisa entrar nela."""
+    caida = Maquina("PC-01", "http://x", "ACTA CND FEDERAL", "123456789")
+    assert EstadoRemoto(caida, online=False, erro="não respondeu").acessavel
+
+
+def test_sem_anydesk_o_nome_nao_e_link():
+    assert not EstadoRemoto(Maquina("PC-01", "http://x")).acessavel

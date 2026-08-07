@@ -7,7 +7,7 @@ dist/
 build/
 
 # Gerados pelo empacotar/construir.py a partir de marca.py — não são fonte
-empacotar/emissor.ico
+empacotar/*.ico
 empacotar/versao.txt
 
 # Dados de operação: banco, PDFs, evidências, logs, perfis de navegador.

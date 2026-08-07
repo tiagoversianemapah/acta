@@ -12,6 +12,12 @@ from __future__ import annotations
 
 from PIL import Image, ImageDraw
 
+# O produto se chama ACTA; `cnd` é o nome do pacote e da linha de comando.
+# Fica num lugar só para que a janela, o executável e os atalhos não possam
+# divergir entre si.
+NOME_PRODUTO = "ACTA"
+DESCRICAO_PRODUTO = "Emissão de Certidões"
+
 # --- marca -------------------------------------------------------------
 AZUL = "#2B2A6B"          # azul-marinho do logotipo
 AZUL_CLARO = "#3E3D91"

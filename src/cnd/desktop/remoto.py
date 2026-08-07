@@ -46,6 +46,16 @@ class EstadoRemoto:
         return self.maquina.orgao or self.nome
 
     @property
+    def acessavel(self) -> bool:
+        """Se dá para entrar nela pelo AnyDesk.
+
+        Não depende de a máquina estar respondendo: quando ela some do
+        painel é exatamente quando alguém precisa entrar para ver o que
+        houve.
+        """
+        return bool(self.maquina.anydesk)
+
+    @property
     def subtitulo(self) -> str:
         partes = [self.nome] if self.maquina.orgao else []
         if self.maquina.url:

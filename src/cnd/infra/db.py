@@ -12,8 +12,8 @@ def _raiz() -> Path:
     Rodando do código-fonte, é a raiz do projeto — três níveis acima deste
     arquivo (src/cnd/infra/db.py). Rodando do executável empacotado, o
     código vive dentro do pacote e não há "projeto" nenhum acima dele: o
-    que interessa é a pasta onde o EMISSOR CND.exe foi instalado, porque é
-    lá que o operador enxerga o config e as certidões.
+    que interessa é a pasta onde o ACTA.exe foi instalado, porque é lá que
+    o operador enxerga o config e as certidões.
     """
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent

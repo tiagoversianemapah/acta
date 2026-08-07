@@ -104,10 +104,10 @@ def _comando_base() -> list[str]:
     """Como chamar a linha de comando a partir daqui.
 
     Rodando do código-fonte é o Python do ambiente. Rodando empacotado,
-    `sys.executable` é o próprio EMISSOR CND.exe: usamos o cnd.exe que vem
-    ao lado dele, que é a versão de console — o robô imprime o andamento, e
-    a janela lê essa saída para mostrar no Registro. Um executável sem
-    console entregaria essa saída no vazio.
+    `sys.executable` é o próprio ACTA.exe: usamos o cnd.exe que vem ao lado
+    dele, que é a versão de console — o robô imprime o andamento, e a janela
+    lê essa saída para mostrar no Registro. Um executável sem console
+    entregaria essa saída no vazio.
     """
     if getattr(sys, "frozen", False):
         console = Path(sys.executable).with_name("cnd.exe")

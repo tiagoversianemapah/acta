@@ -1,4 +1,4 @@
-"""Ponto de entrada do EMISSOR CND.exe.
+"""Ponto de entrada do ACTA.exe.
 
 Um executável só, com dois comportamentos: clicado no atalho, abre a
 janela; chamado com argumentos, vira a linha de comando. É o mesmo binário
