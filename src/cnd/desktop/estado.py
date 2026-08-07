@@ -6,6 +6,7 @@ e testar interface gráfica é caro e frágil.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
@@ -142,8 +143,15 @@ class Robo:
         if reiniciar_ritmo:
             comando.append("--reiniciar-ritmo")
 
+        # A janela decodifica a saída do robô como UTF-8. Fora de um
+        # console, o Python do Windows escreveria na codificação regional
+        # (cp1252) e todo acento chegaria trocado no Registro — "órgão"
+        # viraria "Ã³rgÃ£o". Mandar a codificação explícita tira a
+        # adivinhação do caminho.
+        ambiente = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
+
         self._processo = subprocess.Popen(
-            comando, cwd=str(self.raiz),
+            comando, cwd=str(self.raiz), env=ambiente,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
