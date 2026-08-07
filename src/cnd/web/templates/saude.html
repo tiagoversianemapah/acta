@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% set pagina = 'saude' %}
+{% block titulo %}Diagnóstico — CND{% endblock %}
+
+{% block ferramentas %}
+<div class="ferramentas">
+  {% if idade is none %}
+    <span class="estado">Robô nunca iniciado nesta máquina</span>
+  {% elif idade > timeout %}
+    <span class="estado erro">Robô parado há {{ (idade // 60) | int }} minuto(s)</span>
+  {% else %}
+    <span class="estado ok">Robô em execução — último sinal há {{ idade | int }}s</span>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block conteudo %}
+<div class="titulo-pagina">
+  <h1>Diagnóstico</h1>
+  <p class="sub">
+    Em que horários o portal costuma recusar as consultas. Serve para decidir
+    a janela de trabalho do robô.
+  </p>
+</div>
+
+{% for orgao, horas in dados.items() %}
+<section class="painel">
+  <div class="painel-topo">
+    <h2>{{ orgao }}</h2>
+    <span class="dica" style="margin:0">últimos 7 dias · horário UTC</span>
+  </div>
+  {% if not horas %}
+    <div class="vazio">
+      <b>Sem dados ainda</b>
+      Nenhuma tentativa foi registrada nos últimos 7 dias.
+    </div>
+  {% else %}
+  <div class="rolagem">
+    <table>
+      <thead>
+        <tr><th>Hora</th><th class="num">Consultas</th><th class="num">Recusas</th>
+            <th class="num">Taxa</th><th style="width:50%"></th></tr>
+      </thead>
+      <tbody>
+      {% for h in horas %}
+        <tr>
+          <td class="mono">{{ h.hora }}:00</td>
+          <td class="num">{{ h.total }}</td>
+          <td class="num">{{ h.captchas }}</td>
+          <td class="num">
+            <span class="selo {{ 'erro' if h.taxa > 0.1 else ('alerta' if h.taxa > 0.02 else 'ok') }}">
+              {{ '%.1f' % (h.taxa * 100) }}%
+            </span>
+          </td>
+          <td>
+            <div class="progresso">
+              <i class="erro" style="width: {{ '%.1f' % (h.taxa * 100) }}%"></i>
+            </div>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

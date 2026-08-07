@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% set pagina = 'jobs' %}
+{% block titulo %}{{ job.documento if job else 'Item' }} — CND{% endblock %}
+
+{% block ferramentas %}
+<div class="ferramentas">
+  <a class="botao" href="/jobs">← Voltar para a lista</a>
+  {% if job %}<span>Item #{{ job.id }} · lote #{{ job.lote_id }}</span>{% endif %}
+</div>
+{% endblock %}
+
+{% block conteudo %}
+{% if not job %}
+  <div class="alerta-caixa"><strong>Item não encontrado.</strong></div>
+{% else %}
+
+<div class="titulo-pagina">
+  <h1>{{ job.nome }}</h1>
+  <p class="sub"><span class="mono">{{ job.documento }}</span> · {{ job.orgao }}</p>
+</div>
+
+<div class="colunas">
+  <section class="painel">
+    <div class="painel-topo">
+      <h2>Situação</h2>
+      {% if job.status == 'DONE' %}<span class="estado ok">Concluído</span>
+      {% elif job.status == 'FAILED' %}<span class="estado erro">Falhou</span>
+      {% else %}<span class="estado">{{ job.status }}</span>{% endif %}
+    </div>
+    <div class="rolagem">
+      <table class="ficha">
+        <tbody>
+          <tr><td>Desfecho</td><td>{{ job.desfecho or '—' }}</td></tr>
+          <tr><td>Tentativas realizadas</td><td>{{ job.tentativas }}</td></tr>
+          <tr><td>Próxima execução</td><td class="mono">{{ job.proxima_execucao_em }}</td></tr>
+          <tr><td>Última atualização</td><td class="mono">{{ job.atualizado_em }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="painel">
+    <div class="painel-topo">
+      <h2>Certidão</h2>
+      {% if certidao %}<span class="selo ok">{{ certidao.tipo }}</span>{% endif %}
+    </div>
+    {% if certidao %}
+    <div class="rolagem">
+      <table class="ficha">
+        <tbody>
+          <tr><td>Emitida em</td><td class="mono">{{ certidao.emitida_em }}</td></tr>
+          <tr><td>Válida até</td><td class="mono">{{ certidao.valida_ate or '—' }}</td></tr>
+          <tr><td>Código de controle</td><td class="mono">{{ certidao.codigo_controle or '—' }}</td></tr>
+          <tr><td>Arquivo</td><td class="mono" style="word-break:break-all">{{ certidao.caminho_pdf }}</td></tr>
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <div class="vazio">
+        <b>Sem certidão</b>
+        Este item não gerou PDF — veja o histórico abaixo para entender o motivo.
+      </div>
+    {% endif %}
+  </section>
+</div>
+
+<section class="painel">
+  <div class="painel-topo">
+    <h2>Histórico de tentativas</h2>
+    <span class="dica" style="margin:0">{{ tentativas | length }} registro(s)</span>
+  </div>
+  <div class="rolagem">
+    <table>
+      <thead>
+        <tr><th class="num">Nº</th><th>Início</th><th>Término</th><th>Desfecho</th>
+            <th>Retorno do portal</th><th>Evidência</th></tr>
+      </thead>
+      <tbody>
+      {% for t in tentativas %}
+        <tr>
+          <td class="num">{{ t.numero }}</td>
+          <td class="mono">{{ t.iniciada_em[:19].replace('T',' ') }}</td>
+          <td class="mono">{{ t.finalizada_em[:19].replace('T',' ') if t.finalizada_em else '—' }}</td>
+          <td>
+            {% if t.desfecho in ['CAPTCHA','ERRO_TECNICO','BLOQUEIO_TEMPORARIO'] %}
+              <span class="selo erro">{{ t.desfecho }}</span>
+            {% elif t.desfecho %}<span class="selo ok">{{ t.desfecho }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td style="color:var(--texto-2)">{{ (t.mensagem_portal or '—') | truncate(100) }}</td>
+          <td class="mono" style="color:var(--texto-3)">{{ (t.evidencia or '—') | truncate(45) }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6"><div class="vazio">Ainda não foi processado.</div></td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

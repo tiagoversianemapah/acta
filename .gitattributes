@@ -1,0 +1,16 @@
+# Normaliza a quebra de linha no repositório e entrega CRLF no Windows.
+# Sem isto, cada máquina que editar um arquivo o devolve inteiro modificado,
+# e o histórico deixa de mostrar quem mudou o quê.
+* text=auto
+
+*.py    text diff=python
+*.md    text
+*.toml  text
+*.sql   text
+*.html  text
+
+# Binários: comparar não faz sentido e o diff só polui.
+*.ico   binary
+*.png   binary
+*.xlsx  binary
+*.pdf   binary

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% set pagina = 'jobs' %}
+{% block titulo %}Itens — CND{% endblock %}
+
+{% macro situacao(s) %}
+  {% if s == 'DONE' %}<span class="estado ok">Concluído</span>
+  {% elif s == 'FAILED' %}<span class="estado erro">Falhou</span>
+  {% elif s == 'RUNNING' %}<span class="estado ativo">Processando</span>
+  {% elif s == 'RETRY_WAIT' %}<span class="estado alerta">Vai tentar de novo</span>
+  {% else %}<span class="estado">Na fila</span>{% endif %}
+{% endmacro %}
+
+{% macro desfecho(d) %}
+  {% if d == 'NEGATIVA' %}<span class="selo ok">Negativa</span>
+  {% elif d == 'CPEN' %}<span class="selo ok">Efeito de negativa</span>
+  {% elif d == 'POSITIVA' %}<span class="selo alerta">Positiva</span>
+  {% elif d == 'PENDENCIA_MANUAL' %}<span class="selo alerta">Exige atendimento</span>
+  {% elif d == 'APROVEITADA' %}<span class="selo info">Já emitida no mês</span>
+  {% elif d == 'BLOQUEIO_TEMPORARIO' %}<span class="selo erro">Portal recusou</span>
+  {% elif d == 'CAPTCHA' %}<span class="selo erro">Captcha</span>
+  {% elif d == 'ERRO_TECNICO' %}<span class="selo erro">Erro técnico</span>
+  {% elif d %}<span class="selo">{{ d }}</span>
+  {% else %}<span style="color:var(--texto-3)">—</span>{% endif %}
+{% endmacro %}
+
+{% block ferramentas %}
+<div class="ferramentas">
+  <form method="get" action="/jobs" class="controles" style="width:100%">
+    <label>Lote
+      <select name="lote">
+        <option value="">Todos</option>
+        {% for l in lotes %}
+          <option value="{{ l.id }}" {% if l.id == lote_id %}selected{% endif %}>#{{ l.id }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Órgão
+      <select name="orgao">
+        <option value="">Todos</option>
+        {% for o in orgaos %}
+          <option value="{{ o }}" {% if o == filtros.orgao %}selected{% endif %}>{{ o }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Situação
+      <select name="status">
+        <option value="">Todas</option>
+        <option value="PENDING"    {% if filtros.status == 'PENDING' %}selected{% endif %}>Na fila</option>
+        <option value="RUNNING"    {% if filtros.status == 'RUNNING' %}selected{% endif %}>Processando</option>
+        <option value="RETRY_WAIT" {% if filtros.status == 'RETRY_WAIT' %}selected{% endif %}>Vai tentar de novo</option>
+        <option value="DONE"       {% if filtros.status == 'DONE' %}selected{% endif %}>Concluído</option>
+        <option value="FAILED"     {% if filtros.status == 'FAILED' %}selected{% endif %}>Falhou</option>
+      </select>
+    </label>
+    <label>Desfecho
+      <select name="desfecho">
+        <option value="">Todos</option>
+        <option value="NEGATIVA"            {% if filtros.desfecho == 'NEGATIVA' %}selected{% endif %}>Negativa</option>
+        <option value="CPEN"                {% if filtros.desfecho == 'CPEN' %}selected{% endif %}>Efeito de negativa</option>
+        <option value="POSITIVA"            {% if filtros.desfecho == 'POSITIVA' %}selected{% endif %}>Positiva</option>
+        <option value="PENDENCIA_MANUAL"    {% if filtros.desfecho == 'PENDENCIA_MANUAL' %}selected{% endif %}>Exige atendimento</option>
+        <option value="APROVEITADA"         {% if filtros.desfecho == 'APROVEITADA' %}selected{% endif %}>Já emitida no mês</option>
+        <option value="BLOQUEIO_TEMPORARIO" {% if filtros.desfecho == 'BLOQUEIO_TEMPORARIO' %}selected{% endif %}>Portal recusou</option>
+        <option value="ERRO_TECNICO"        {% if filtros.desfecho == 'ERRO_TECNICO' %}selected{% endif %}>Erro técnico</option>
+      </select>
+    </label>
+    <label>Buscar
+      <input name="busca" value="{{ filtros.busca or '' }}" size="24" placeholder="CNPJ ou razão social">
+    </label>
+    <button class="primario">Pesquisar</button>
+    <a class="botao" href="/jobs">Limpar filtros</a>
+  </form>
+</div>
+{% endblock %}
+
+{% block conteudo %}
+<div class="titulo-pagina">
+  <h1>Itens</h1>
+  <p class="sub">Cada linha é uma empresa em um órgão. Clique para ver o histórico completo.</p>
+</div>
+
+<section class="painel">
+  <div class="painel-topo">
+    <h2>{{ jobs | length }} registro(s) encontrado(s)</h2>
+    <form method="post" action="/acoes/reenfileirar"
+          onsubmit="return confirm('Confirma o reenvio de todos os itens com falha para a fila?')">
+      <input type="hidden" name="orgao" value="{{ filtros.orgao or '' }}">
+      <button>Reenviar itens com falha{% if filtros.orgao %} de {{ filtros.orgao }}{% endif %}</button>
+    </form>
+  </div>
+  <div class="rolagem">
+    <table>
+      <thead>
+        <tr>
+          <th>Razão social</th><th>Documento</th><th>Órgão</th>
+          <th>Situação</th><th>Desfecho</th><th class="num">Tentativas</th>
+          <th>Retorno do portal</th><th></th>
+        </tr>
+      </thead>
+      <tbody>
+      {% for j in jobs %}
+        <tr>
+          <td>{{ j.nome }}</td>
+          <td class="mono">{{ j.documento }}</td>
+          <td style="color:var(--texto-2)">{{ j.orgao }}</td>
+          <td>{{ situacao(j.status) }}</td>
+          <td>{{ desfecho(j.desfecho) }}</td>
+          <td class="num">{{ j.tentativas }}</td>
+          <td style="color:var(--texto-2)">{{ (j.ultima_mensagem or '') | truncate(75) }}</td>
+          <td><a href="/job/{{ j.id }}">Detalhar</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8">
+          <div class="vazio">
+            <b>Nenhum item encontrado</b>
+            Tente remover algum filtro ou <a href="/jobs">limpar todos</a>.
+          </div>
+        </td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+<p class="dica">A consulta retorna no máximo 200 registros por vez.</p>
+{% endblock %}

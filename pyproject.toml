@@ -1,0 +1,82 @@
+[project]
+name = "cnd"
+version = "1.0.0"
+description = "RPA de emissão de certidões de regularidade fiscal em lote"
+requires-python = ">=3.12"
+dependencies = [
+    # Núcleo: fila, ingestão e entrega
+    "openpyxl>=3.1",        # leitura da planilha e geração do relatório
+    "pypdf>=5.0",           # leitura do PDF da certidão, para classificá-la
+    # Painel web consultado pelo aplicativo e pelas outras máquinas
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.9",
+    # Aplicativo de mesa e robô cego
+    "customtkinter>=5.2",
+    "pillow>=10.0",         # ícone, marca e leitura de pixel da tela
+]
+
+[project.optional-dependencies]
+# O adapter de navegador está desligado — o portal da Receita o detecta
+# (teste A/B em 07/08/2026). Fica como extra porque o mapeamento do fluxo e
+# a leitura do PDF continuam servindo de referência, e porque instalar
+# ~100 MB de navegador em toda máquina do robô não se justifica.
+navegador = ["playwright>=1.45"]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",          # cliente do TestClient do FastAPI
+    "ruff>=0.6",
+    "pyinstaller>=6.10",
+]
+
+[project.scripts]
+cnd = "cnd.cli:main"
+
+[project.gui-scripts]
+# Sem console: é o mesmo ponto de entrada do EMISSOR CND.exe
+"emissor-cnd" = "cnd.lancador:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cnd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# --strict-markers: marcador com nome errado vira erro, e não teste que
+# silenciosamente não roda.
+addopts = "--strict-markers"
+
+[tool.ruff]
+# 100 e não 88: o código já é escrito perto de 79, e as poucas linhas que
+# passam disso são assinaturas e SQL onde quebrar piora a leitura. Limite
+# com exceção não é limite — este é respeitado por inteiro.
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",    # pycodestyle
+    "F",         # pyflakes: nome não usado, import morto, f-string sem campo
+    "I",         # ordenação de imports
+    "B",         # bugbear: armadilhas reais, como argumento padrão mutável
+    "UP",        # sintaxe moderna disponível na versão mínima
+    "SIM",       # simplificações que não mudam o sentido
+    "RUF",
+]
+ignore = [
+    # O projeto é escrito em português, inclusive nos textos de exceção;
+    # a regra que exige mensagem fora do raise atrapalha mais que ajuda.
+    "EM101", "EM102",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Teste tem nome longo de propósito: o nome é a documentação do caso.
+"tests/*" = ["E501"]
+# `_fields_` de uma ctypes.Structure é lista por exigência do ctypes, não
+# por descuido — a regra de atributo de classe mutável não se aplica.
+"src/cnd/infra/entrada_real.py" = ["RUF012"]

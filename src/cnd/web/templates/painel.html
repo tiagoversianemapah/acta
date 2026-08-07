@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set pagina = 'painel' %}
+{% block titulo %}Acompanhamento — CND{% endblock %}
+
+{% block ferramentas %}
+<div class="ferramentas">
+  <form method="get" action="/">
+    <label>Lote
+      <select name="lote" onchange="this.form.submit()">
+        {% for l in lotes %}
+          <option value="{{ l.id }}" {% if l.id == lote_id %}selected{% endif %}>
+            #{{ l.id }} · {{ l.arquivo_origem or l.descricao }} · {{ '{:,}'.format(l.jobs).replace(',','.') }} itens
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+
+  {% if orquestrador_vivo %}
+    <span class="estado ok">Robô em execução</span>
+  {% elif orquestrador_idade is none %}
+    <span class="estado">Robô não iniciado</span>
+  {% else %}
+    <span class="estado erro">Robô parado</span>
+  {% endif %}
+  </form>
+
+  {% if lote_id %}
+  <span class="direita">
+    <a class="botao" href="/relatorio/{{ lote_id }}.xlsx">Exportar planilha</a>
+    <a class="botao" href="/relatorio/{{ lote_id }}.zip">Baixar PDFs</a>
+  </span>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block conteudo %}
+<div class="titulo-pagina">
+  <h1>Acompanhamento</h1>
+  <p class="sub">Situação de cada órgão no lote selecionado.</p>
+</div>
+
+<div id="resumo">
+  {% include "_cards.html" %}
+</div>
+
+<script>
+  // Recarrega apenas o quadro. Para leitura humana, 5 segundos equivale a
+  // tempo real e evita manter conexão aberta (ADR-005).
+  var lote = {{ lote_id or 'null' }};
+  setInterval(function () {
+    if (document.hidden) return;
+    fetch('/fragmento/resumo' + (lote ? '?lote=' + lote : ''))
+      .then(function (r) { return r.ok ? r.text() : null; })
+      .then(function (html) { if (html) document.getElementById('resumo').innerHTML = html; })
+      .catch(function () { /* rede oscilou; tenta no próximo ciclo */ });
+  }, 5000);
+</script>
+{% endblock %}

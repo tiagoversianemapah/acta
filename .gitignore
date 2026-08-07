@@ -1,0 +1,28 @@
+# Ambiente virtual e artefatos de build
+.venv/
+*.egg-info/
+__pycache__/
+*.py[cod]
+dist/
+build/
+
+# Gerados pelo empacotar/construir.py a partir de marca.py — não são fonte
+empacotar/emissor.ico
+empacotar/versao.txt
+
+# Dados de operação: banco, PDFs, evidências, logs, perfis de navegador.
+# É o estado da máquina, nunca vai para o controle de versão.
+data/
+
+# Planilhas de clientes — contêm CNPJ/CPF de terceiros (RNF-06)
+*.xlsx
+*.xls
+
+# Configuração local com credenciais
+config.local.toml
+
+# Editor / SO
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
