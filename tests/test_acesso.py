@@ -35,9 +35,11 @@ def test_cartao_mostra_o_orgao_e_o_computador():
 
 
 def test_sem_orgao_o_titulo_e_o_nome_da_maquina():
-    estado = EstadoRemoto(Maquina(nome="Esta máquina", url=""), online=True)
-    assert estado.rotulo == "Esta máquina"
-    assert estado.subtitulo == ""
+    estado = EstadoRemoto(Maquina(nome="MEU-PC", url=""), online=True)
+    assert estado.rotulo == "MEU-PC"
+    # Sem endereço de rede é o próprio computador; a legenda diz isso em
+    # vez de repetir o nome que já está no título.
+    assert estado.subtitulo == "este computador"
 
 
 def test_o_nome_vira_link_quando_ha_anydesk():

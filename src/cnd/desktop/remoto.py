@@ -56,10 +56,18 @@ class EstadoRemoto:
         return bool(self.maquina.anydesk)
 
     @property
+    def local(self) -> bool:
+        """Se é o próprio computador — o que não tem endereço de rede."""
+        return not self.maquina.url
+
+    @property
     def subtitulo(self) -> str:
+        if self.local:
+            return "este computador"
         partes = [self.nome] if self.maquina.orgao else []
-        if self.maquina.url:
-            partes.append(self.maquina.base.replace("http://", ""))
+        partes.append(self.maquina.base.replace("http://", ""))
+        if not self.acessavel:
+            partes.append("sem AnyDesk cadastrado")
         return "  ·  ".join(partes)
 
     @property
@@ -146,10 +154,14 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     que o painel web esteja no ar — e o resto da tela não precisa saber a
     diferença, porque o formato é o mesmo.
     """
+    import platform
+
     from cnd.desktop.estado import ler_atividade, ler_panorama
 
     panorama = ler_panorama(cfg)
-    maquina = Maquina(cfg.rede.nome or "Esta máquina", "")
+    # Sem AnyDesk de propósito: é o computador em que a pessoa já está, e
+    # oferecer acesso remoto a si mesmo só confundiria.
+    maquina = Maquina(cfg.rede.nome or platform.node(), "")
     return EstadoRemoto(maquina, online=True, dados={
         "maquina": maquina.nome,
         "robo_ativo": panorama.robo_ativo,
