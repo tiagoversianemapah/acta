@@ -83,6 +83,81 @@ pacote inteiro.
 
 É o que faz o mesmo código achar `config.toml` e `data/` nos dois casos.
 
+## O Windows 11 bloqueia o executável
+
+Em máquina com o **Controle Inteligente de Aplicativos** ligado, abrir o
+`ACTA.exe` produz:
+
+> Bloqueamos …\ACTA.exe porque não conseguimos verificar seu fornecedor e
+> confirmar se ele é seguro para execução.
+
+Não é defeito nosso nem falso positivo de antivírus. O recurso recusa
+**qualquer** executável sem assinatura digital de uma autoridade
+certificadora reconhecida, e — ao contrário do SmartScreen — **não oferece
+"executar assim mesmo" nem aceita exceção**. Adicionar a pasta às exclusões
+do Windows Defender não muda nada: são mecanismos diferentes.
+
+Conferir numa máquina:
+
+```powershell
+(Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy').VerifiedAndReputablePolicyState
+# 0 = desligado   1 = ligado   2 = em avaliação
+```
+
+Ele só liga sozinho em **instalação limpa** do Windows 11. Máquina de
+escritório que veio de atualização quase sempre está com 0, e nesse caso não
+há nada a fazer.
+
+### Saída 1 — atalho que roda pelo Python (grátis, imediato)
+
+```powershell
+python empacotar/construir.py --atalho-fonte
+```
+
+O atalho passa a apontar para o `pythonw.exe` do ambiente, que é assinado
+pela Python Software Foundation e portanto **passa** pelo controle. Ícone,
+nome, janela e comportamento são os mesmos — a diferença não aparece para
+quem usa.
+
+O preço: essa máquina precisa do repositório e do ambiente Python, o que
+anula a vantagem de "copiar a pasta e pronto". Faz sentido no computador de
+quem acompanha o robô; nas máquinas do robô, prefira uma das outras saídas.
+
+### Saída 2 — desligar o Controle Inteligente
+
+Segurança do Windows > Controle de aplicativo e navegador > Controle
+inteligente de aplicativos > Desativado.
+
+**É uma decisão sem volta:** uma vez desligado, o Windows só permite ligá-lo
+de novo com uma reinstalação do sistema. Nas máquinas dedicadas ao robô é
+defensável — elas rodam um programa só, num escopo conhecido. No computador
+pessoal de alguém, pense duas vezes.
+
+### Saída 3 — assinar o executável (custa dinheiro, resolve de vez)
+
+Um certificado de assinatura de código de uma autoridade reconhecida
+(DigiCert, Sectigo e afins) faz o bloqueio desaparecer em qualquer máquina,
+e ainda tira o aviso do SmartScreen. É o que qualquer software distribuído
+faz. Custa na faixa de R$ 1.000 a R$ 2.500 por ano, com validação da empresa
+— e como o CNPJ da Mapah é real e verificável, a emissão é rotina.
+
+O `construir.py` já assina sozinho quando encontra o certificado:
+
+```powershell
+setx CND_CERT_PFX   "C:\certificados\mapah.pfx"
+setx CND_CERT_SENHA "..."
+python empacotar/construir.py
+```
+
+Ele carimba a hora num servidor público, para a assinatura continuar válida
+depois que o certificado expirar.
+
+**Certificado autoassinado não resolve.** O Controle Inteligente avalia
+contra o serviço de reputação da Microsoft, não contra o armazenamento de
+confiança da máquina — um certificado criado por nós mesmos, ainda que
+distribuído por diretiva de grupo, não passa. Ele serve para diretiva de
+aplicativo dentro do domínio, e só.
+
 ### O Playwright fica de fora
 
 O adapter `rfb_pj` está desligado — o portal da Receita o detecta

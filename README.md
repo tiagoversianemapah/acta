@@ -42,6 +42,12 @@ Para **usar**, não há instalação de ambiente: veja
 [docs/07 — Instalação nas máquinas](docs/07-instalacao-nas-maquinas.md). Copiar a
 pasta `dist/ACTA/` é a instalação.
 
+> **Windows 11 com Controle Inteligente de Aplicativos ligado recusa o
+> `ACTA.exe`**, porque ele não é assinado — e esse recurso não tem lista de
+> exceção. São três saídas: atalho que roda pelo Python (grátis, imediato),
+> desligar o controle (decisão sem volta) ou assinar com certificado (custa).
+> As três estão em [docs/07](docs/07-instalacao-nas-maquinas.md#o-windows-11-bloqueia-o-executável).
+
 Para **desenvolver**:
 
 ```powershell

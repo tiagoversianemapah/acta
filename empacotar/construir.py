@@ -12,6 +12,7 @@ rodando em lugares diferentes.
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -146,18 +147,85 @@ def levar_arquivos_do_operador() -> None:
                 print(f"  calibragem {arquivo.name} copiada")
 
 
-def criar_atalhos() -> None:
+def assinar(exes: list[Path]) -> None:
+    """Assina os executáveis, se houver um certificado configurado.
+
+    Sem assinatura, o Controle Inteligente de Aplicativos do Windows 11
+    recusa o programa e não oferece "executar assim mesmo" — ele não tem
+    lista de exceção. Com um certificado de verdade (comprado de uma
+    autoridade certificadora reconhecida), o bloqueio desaparece e o
+    SmartScreen para de avisar.
+
+    Certificado autoassinado NÃO resolve este caso: o Controle Inteligente
+    avalia contra o serviço de reputação da Microsoft, não contra o
+    armazenamento de confiança da máquina. Ele ajuda em política de
+    aplicativo dentro de um domínio, e só.
+
+    Configure com:
+        setx CND_CERT_PFX    "C:\\caminho\\certificado.pfx"
+        setx CND_CERT_SENHA  "..."
+    """
+    pfx = os.environ.get("CND_CERT_PFX", "")
+    if not pfx:
+        print("  assinatura  nenhuma (defina CND_CERT_PFX para assinar)")
+        return
+    if not Path(pfx).exists():
+        print(f"  assinatura  IGNORADA — {pfx} não existe")
+        return
+
+    senha = os.environ.get("CND_CERT_SENHA", "")
+    alvos = ", ".join(f"'{caminho}'" for caminho in exes)
+    script = f"""
+$senha = ConvertTo-SecureString '{senha}' -AsPlainText -Force
+$cert  = Get-PfxCertificate -FilePath '{pfx}' -Password $senha
+foreach ($alvo in @({alvos})) {{
+  $r = Set-AuthenticodeSignature -FilePath $alvo -Certificate $cert `
+       -TimestampServer 'http://timestamp.digicert.com' -HashAlgorithm SHA256
+  Write-Output ("  assinatura  " + (Split-Path $alvo -Leaf) + ": " + $r.Status)
+}}
+"""
+    resultado = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+        capture_output=True, text=True,
+    )
+    print(resultado.stdout.strip() or resultado.stderr.strip())
+
+
+def criar_atalhos(pela_fonte: bool = False) -> None:
     """Área de Trabalho e Menu Iniciar, como qualquer programa instalado.
 
     Feito por COM do Windows (WScript.Shell) porque é o único jeito de
     escrever um .lnk de verdade — o que aceita ícone próprio, pasta de
     trabalho e fixação na barra de tarefas. Um .bat ou um atalho de
     internet não permitem nada disso.
+
+    `pela_fonte` aponta o atalho para o `pythonw.exe` do ambiente em vez do
+    executável empacotado. Serve para máquina com o Controle Inteligente de
+    Aplicativos ligado: o `pythonw.exe` é assinado pela Python Software
+    Foundation e passa, enquanto o nosso executável, sem assinatura, é
+    barrado. O ícone, o nome e a janela são os mesmos — a diferença não
+    aparece para quem usa.
     """
-    exe = DESTINO / f"{NOME}.exe"
-    if not exe.exists():
-        print(f"  atalhos IGNORADOS — {exe} não existe")
-        return
+    icone = PASTA / "acta.ico"
+    if not icone.exists():
+        gerar_icone()
+
+    if pela_fonte:
+        alvo = Path(sys.executable).with_name("pythonw.exe")
+        argumentos = "-m cnd.lancador"
+        pasta_de_trabalho = RAIZ
+        origem_do_icone = icone
+        if not alvo.exists():
+            print(f"  atalhos IGNORADOS — {alvo} não existe")
+            return
+    else:
+        alvo = DESTINO / f"{NOME}.exe"
+        argumentos = ""
+        pasta_de_trabalho = DESTINO
+        origem_do_icone = alvo
+        if not alvo.exists():
+            print(f"  atalhos IGNORADOS — {alvo} não existe")
+            return
 
     antigos = ", ".join(f"'{nome}.lnk'" for nome in NOMES_ANTIGOS)
     script = f"""
@@ -177,9 +245,10 @@ foreach ($lugar in $lugares) {{
     }}
   }}
   $atalho = $w.CreateShortcut((Join-Path $lugar '{NOME}.lnk'))
-  $atalho.TargetPath       = '{exe}'
-  $atalho.WorkingDirectory = '{DESTINO}'
-  $atalho.IconLocation     = '{exe},0'
+  $atalho.TargetPath       = '{alvo}'
+  $atalho.Arguments        = '{argumentos}'
+  $atalho.WorkingDirectory = '{pasta_de_trabalho}'
+  $atalho.IconLocation     = '{origem_do_icone},0'
   $atalho.Description      = '{NOME} — {marca.DESCRICAO_PRODUTO} — Mapah'
   $atalho.Save()
   Write-Output ("  atalho    " + (Join-Path $lugar '{NOME}.lnk'))
@@ -190,6 +259,29 @@ foreach ($lugar in $lugares) {{
         capture_output=True, text=True,
     )
     print(resultado.stdout.strip() or resultado.stderr.strip())
+    if pela_fonte:
+        print("  o atalho roda pelo Python do ambiente — passa pelo "
+              "Controle Inteligente de Aplicativos")
+
+
+def controle_inteligente_ligado() -> bool:
+    """Se o Windows vai recusar um executável sem assinatura.
+
+    Só existe no Windows 11 e só liga sozinho em instalação limpa; a maior
+    parte das máquinas de escritório, que vieram de atualização, está com
+    ele desligado.
+    """
+    try:
+        import winreg
+
+        chave = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,
+                               r"SYSTEM\CurrentControlSet\Control\CI\Policy")
+        with chave:
+            valor, _ = winreg.QueryValueEx(chave,
+                                           "VerifiedAndReputablePolicyState")
+        return valor == 1
+    except OSError:
+        return False
 
 
 def main() -> int:
@@ -197,6 +289,10 @@ def main() -> int:
     parser.add_argument("--sem-atalhos", action="store_true")
     parser.add_argument("--so-atalhos", action="store_true",
                         help="não reconstrói, só refaz os atalhos")
+    parser.add_argument("--atalho-fonte", action="store_true",
+                        help="atalho apontando para o Python do ambiente, "
+                             "para máquina com o Controle Inteligente de "
+                             "Aplicativos ligado")
     args = parser.parse_args()
 
     if not args.so_atalhos:
@@ -204,14 +300,24 @@ def main() -> int:
         gerar_versao()
         construir()
         levar_arquivos_do_operador()
+        assinar([DESTINO / f"{NOME}.exe", DESTINO / "cnd.exe"])
 
     if not args.sem_atalhos:
-        criar_atalhos()
+        criar_atalhos(pela_fonte=args.atalho_fonte)
 
     print()
     print(f"Pronto. O programa está em:  {DESTINO}")
     print("Para instalar em outra máquina, copie essa pasta inteira e rode")
     print("o construir.py --so-atalhos lá, ou crie o atalho na mão.")
+
+    if controle_inteligente_ligado() and not args.atalho_fonte:
+        print()
+        print("ATENÇÃO: o Controle Inteligente de Aplicativos está LIGADO")
+        print("nesta máquina e vai recusar o ACTA.exe, que não é assinado.")
+        print("Ele não tem lista de exceção. Saídas, em docs/07:")
+        print("  - use  --atalho-fonte  (roda pelo Python, que é assinado)")
+        print("  - ou desligue o Controle Inteligente (decisão sem volta)")
+        print("  - ou assine com certificado, via CND_CERT_PFX")
     return 0
 
 
