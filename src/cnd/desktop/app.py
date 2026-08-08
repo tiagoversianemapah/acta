@@ -18,9 +18,10 @@ import tempfile
 import threading
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 
 import customtkinter as ctk
+from PIL import Image, ImageDraw, ImageTk
 
 from cnd.core.documentos import formatar
 from cnd.desktop import acesso, marca, remoto
@@ -34,6 +35,9 @@ ctk.set_appearance_mode("light")
 FONTE = "Segoe UI"
 INTERVALO_ATUALIZACAO_MS = 2000
 ID_DO_APLICATIVO = "Mapah.Acta.Certidoes"
+# A tabela nativa aguenta a carteira inteira sem engasgar; o teto existe só
+# para uma busca vazia não puxar o banco todo de uma vez.
+LIMITE_DE_ITENS = 3000
 
 # O que a operação pergunta: a empresa está limpa ou não. Os nomes internos
 # (CPEN, PENDENCIA_MANUAL) ficam no banco; na tela, português.
@@ -45,6 +49,7 @@ RESULTADOS = {
     "Exige atendimento": "PENDENCIA_MANUAL",
     "Já emitida no mês": "APROVEITADA",
     "Portal recusou": "BLOQUEIO_TEMPORARIO",
+    "Exigiu captcha": "CAPTCHA",
     "Erro técnico": "ERRO_TECNICO",
 }
 
@@ -63,6 +68,7 @@ ROTULOS_DE_RESULTADO = {
     "PENDENCIA_MANUAL": ("Exige atendimento", "#8A5D00"),
     "APROVEITADA": ("Já emitida no mês", "#8A94A2"),
     "BLOQUEIO_TEMPORARIO": ("Portal recusou", "#B02A1C"),
+    "CAPTCHA": ("Exigiu captcha", "#B02A1C"),
     "ERRO_TECNICO": ("Erro técnico", "#B02A1C"),
 }
 
@@ -91,6 +97,7 @@ class Aplicativo(ctk.CTk):
         self.cfg = carregar()
         self.robo = Robo(RAIZ_PROJETO)
         self.secao_atual = "inicio"
+        self._pontos: dict[str, ImageTk.PhotoImage] = {}
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1200x760")
@@ -548,40 +555,93 @@ class Aplicativo(ctk.CTk):
 
         moldura = self._cartao(quadro)
         moldura.grid(row=2, column=0, sticky="nsew", padx=34, pady=(0, 28))
-        moldura.grid_rowconfigure(1, weight=1)
+        moldura.grid_rowconfigure(0, weight=1)
         moldura.grid_columnconfigure(0, weight=1)
 
-        cabecalho = ctk.CTkFrame(moldura, fg_color=marca.PAPEL, corner_radius=0,
-                                 height=34)
-        cabecalho.grid(row=0, column=0, sticky="ew")
-        self._configurar_colunas(cabecalho, cabecalho_da_tabela=True)
+        # Tabela nativa, e não uma pilha de widgets num quadro rolável: com
+        # milhares de itens, o quadro rolável cria um widget por célula, e o
+        # Windows não repinta todos a tempo quando a rolagem é rápida — as
+        # linhas antigas ficam na tela por cima das novas. O Treeview desenha
+        # só o que está visível e rola liso com a lista inteira.
+        self._preparar_estilo_da_tabela()
 
-        for coluna, titulo in enumerate(["EMPRESA", "DOCUMENTO", "RESULTADO"]):
-            ctk.CTkLabel(cabecalho, text=titulo, font=(FONTE, 10, "bold"),
-                         text_color=marca.TEXTO_3, anchor="w").grid(
-                row=0, column=coluna, sticky="w", padx=(14, 8), pady=9)
+        # A coluna da árvore (#0) guarda o ponto colorido do resultado. É o
+        # único lugar do Treeview que aceita cor por célula — etiqueta pinta
+        # a linha inteira, e a razão social sairia verde ou vermelha junto.
+        self.tabela = ttk.Treeview(
+            moldura, style="Acta.Treeview", show="tree headings",
+            selectmode="browse", columns=("empresa", "documento", "resultado"),
+        )
+        self.tabela.column("#0", width=34, minwidth=34, stretch=False)
+        self.tabela.heading("#0", text="")
+        for chave, titulo, largura, minimo in (
+            ("empresa", "EMPRESA", 440, 220),
+            ("documento", "DOCUMENTO", 190, 160),
+            ("resultado", "RESULTADO", 220, 150),
+        ):
+            self.tabela.heading(chave, text=titulo, anchor="w")
+            self.tabela.column(chave, width=largura, minwidth=minimo,
+                               stretch=(chave == "empresa"), anchor="w")
+        self.tabela.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
 
-        self.lista = ctk.CTkScrollableFrame(moldura, fg_color=marca.BRANCO,
-                                            corner_radius=0)
-        self.lista.grid(row=1, column=0, sticky="nsew")
-        self.lista.grid_columnconfigure(0, weight=1)
+        rolagem = ctk.CTkScrollbar(moldura, command=self.tabela.yview,
+                                   button_color=marca.BORDA,
+                                   button_hover_color=marca.TEXTO_3,
+                                   fg_color="transparent", width=16)
+        rolagem.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=6)
+        self.tabela.configure(yscrollcommand=rolagem.set)
+
+        self.tabela.tag_configure("par", background=marca.BRANCO)
+        self.tabela.tag_configure("impar", background=marca.PAPEL)
         return quadro
 
-    @staticmethod
-    def _configurar_colunas(quadro, cabecalho_da_tabela: bool = False) -> None:
-        """Larguras iguais no cabeçalho e nas linhas.
+    def _ponto(self, cor: str):
+        """Bolinha colorida do resultado, desenhada e guardada em cache.
 
-        Sem largura fixa, cada linha é uma grade independente e as colunas
-        saem desalinhadas — o CNPJ de uma linha aparecendo debaixo do nome
-        da outra. `minsize` garante o alinhamento; o `weight` na primeira
-        coluna faz a razão social absorver a sobra.
+        Guardar a referência é obrigatório: o Tk não segura a imagem, e sem
+        alguém guardando ela some no coletor de lixo e a linha aparece vazia.
         """
-        quadro.grid_columnconfigure(0, weight=1, minsize=240)
-        quadro.grid_columnconfigure(1, weight=0, minsize=170)
-        # A última coluna do cabeçalho reserva o espaço da barra de rolagem,
-        # que existe na lista e não no cabeçalho.
-        quadro.grid_columnconfigure(2, weight=0,
-                                    minsize=210 + (18 if cabecalho_da_tabela else 0))
+        if cor not in self._pontos:
+            lado, escala = 12, 4
+            imagem = Image.new("RGBA", (lado * escala,) * 2, (0, 0, 0, 0))
+            ImageDraw.Draw(imagem).ellipse(
+                [escala, escala, lado * escala - escala, lado * escala - escala],
+                fill=cor)
+            self._pontos[cor] = ImageTk.PhotoImage(
+                imagem.resize((lado, lado), Image.LANCZOS))
+        return self._pontos[cor]
+
+    def _preparar_estilo_da_tabela(self) -> None:
+        """Veste o Treeview com as cores da marca.
+
+        O tema `clam` é a base porque é o único em que o Tk no Windows
+        respeita cor de fundo e de cabeçalho; o tema nativo ignora boa parte
+        do que se configura. O estilo tem nome próprio para não afetar
+        nenhum outro widget da janela.
+        """
+        estilo = ttk.Style()
+        with contextlib.suppress(Exception):
+            estilo.theme_use("clam")
+
+        estilo.configure(
+            "Acta.Treeview", font=(FONTE, 12), rowheight=34,
+            background=marca.BRANCO, fieldbackground=marca.BRANCO,
+            foreground=marca.TEXTO, borderwidth=0, relief="flat",
+        )
+        estilo.configure(
+            "Acta.Treeview.Heading", font=(FONTE, 10, "bold"),
+            background=marca.PAPEL, foreground=marca.TEXTO_3,
+            relief="flat", borderwidth=0, padding=(14, 10),
+        )
+        estilo.map("Acta.Treeview.Heading",
+                   background=[("active", marca.PAPEL_2)])
+        # Seleção no azul da marca, em vez do azul do sistema.
+        estilo.map("Acta.Treeview",
+                   background=[("selected", marca.AZUL)],
+                   foreground=[("selected", marca.BRANCO)])
+        estilo.layout("Acta.Treeview", [
+            ("Acta.Treeview.treearea", {"sticky": "nswe"}),
+        ])
 
     # ---------------- Registro ----------------
     def _secao_registro(self, pai) -> ctk.CTkFrame:
@@ -893,40 +953,29 @@ class Aplicativo(ctk.CTk):
             status=SITUACOES.get(self.filtro_situacao.get()),
             desfecho=RESULTADOS.get(self.filtro_resultado.get()),
             busca=self.busca.get().strip() or None,
-            limite=200,
+            limite=LIMITE_DE_ITENS,
         )
 
-        for filho in self.lista.winfo_children():
-            filho.destroy()
-
+        self.tabela.delete(*self.tabela.get_children())
         self.contador.configure(
-            text=f"{len(itens)} item(ns)" + (" (máximo)" if len(itens) >= 200 else ""))
+            text=f"{len(itens)} item(ns)"
+                 + (" (máximo)" if len(itens) >= LIMITE_DE_ITENS else ""))
 
         if not itens:
-            ctk.CTkLabel(self.lista, text="Nenhum item com esses filtros",
-                         font=(FONTE, 12), text_color=marca.TEXTO_3).grid(
-                row=0, column=0, pady=44)
+            # Tabela vazia sem explicação parece tela quebrada.
+            self.tabela.insert("", "end", tags=("par",),
+                               values=("Nenhum item com esses filtros", "", ""))
             return
 
         for indice, item in enumerate(itens):
-            linha = ctk.CTkFrame(self.lista, corner_radius=0,
-                                 fg_color=marca.PAPEL if indice % 2 else marca.BRANCO)
-            linha.grid(row=indice, column=0, sticky="ew")
-            self._configurar_colunas(linha)
-
-            ctk.CTkLabel(linha, text=item["nome"][:44], font=(FONTE, 12),
-                         text_color=marca.TEXTO, anchor="w").grid(
-                row=0, column=0, sticky="w", padx=(14, 8), pady=9)
-            ctk.CTkLabel(linha, text=formatar(item["documento"]),
-                         font=("Consolas", 11), text_color=marca.TEXTO_2,
-                         anchor="w").grid(row=0, column=1, sticky="w", padx=(14, 8))
-
             rotulo, cor = ROTULOS_DE_RESULTADO.get(
                 item["desfecho"], (SITUACAO_SEM_RESULTADO.get(item["status"], "—"),
                                    marca.TEXTO_3))
-            ctk.CTkLabel(linha, text=rotulo, font=(FONTE, 11, "bold"),
-                         text_color=cor, anchor="w").grid(
-                row=0, column=2, sticky="w", padx=(14, 8))
+            self.tabela.insert(
+                "", "end", image=self._ponto(cor),
+                tags=("impar" if indice % 2 else "par",),
+                values=(item["nome"], formatar(item["documento"]), rotulo),
+            )
 
     # ------------------------------------------------------------------
     def _ao_fechar(self) -> None:
