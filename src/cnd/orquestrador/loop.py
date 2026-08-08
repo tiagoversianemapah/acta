@@ -378,8 +378,11 @@ class Vigia:
         base = (self.cfg.alertas.url_painel or "").rstrip("/")
         if not base:
             return []
+        # A planilha é do lote (o que aquela importação produziu); o pacote
+        # de certidões é do mês, que é o corte que o cliente recebe.
+        mes = tempo.agora_iso()[:7]
         return [("Baixar planilha", f"{base}/relatorio/{lote_id}.xlsx"),
-                ("Baixar PDFs", f"{base}/relatorio/{lote_id}.zip"),
+                ("Baixar certidões do mês", f"{base}/certidoes/{mes}.zip"),
                 ("Abrir painel", base)]
 
     def _avisar_travamento(self, conn, orgao: ConfigOrgao) -> None:

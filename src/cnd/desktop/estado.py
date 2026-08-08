@@ -114,6 +114,22 @@ def ler_atividade(cfg: Config, limite: int = 6) -> list[dict]:
         conn.close()
 
 
+def ler_meses(cfg: Config) -> list[str]:
+    """Meses com certidão guardada. Nunca levanta exceção."""
+    from cnd.web.relatorio import meses_com_certidao
+
+    try:
+        conn = conectar_leitura(cfg.banco)
+    except Exception:
+        return []
+    try:
+        return meses_com_certidao(conn)
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def _comando_base() -> list[str]:
     """Como chamar a linha de comando a partir daqui.
 

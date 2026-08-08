@@ -94,10 +94,24 @@ class TestOQueViraCertidao:
         assert Desfecho.PENDENCIA_MANUAL not in COM_PDF
 
 
+MES = "2026-08"
+
+
 class TestPacoteZip:
-    def _preparar(self, conn, tmp_path, tipos: list[str]):
-        conn.execute("INSERT INTO lote (id, descricao) VALUES (1, 'Teste')")
-        for indice, tipo in enumerate(tipos, start=1):
+    """O pacote é recortado pelo MÊS de emissão, não pelo lote.
+
+    É a mesma régua que o robô usa para decidir se reemite (a certidão vale
+    180 dias, mas quem recebe exige do mês) — e é a única que faz sentido
+    quando cada máquina numera os lotes por conta.
+    """
+
+    def _preparar(self, conn, tmp_path, tipos: list[str],
+                  orgao: str = "RFB_PJ", emitida_em: str = "2026-08-07",
+                  inicio: int = 1):
+        conn.execute("INSERT OR IGNORE INTO lote (id, descricao) "
+                     "VALUES (1, 'Teste')")
+        for deslocamento, tipo in enumerate(tipos):
+            indice = inicio + deslocamento
             documento = f"{indice:014d}"
             nome = f"EMPRESA {indice}"
             pdf = tmp_path / f"{documento} - {nome}.pdf"
@@ -107,11 +121,11 @@ class TestPacoteZip:
                 "VALUES (?, ?, 'CNPJ', ?)", (indice, documento, nome))
             conn.execute(
                 "INSERT INTO job (id, lote_id, empresa_id, orgao, status, desfecho) "
-                "VALUES (?, 1, ?, 'RFB_PJ', 'DONE', ?)", (indice, indice, tipo))
+                "VALUES (?, 1, ?, ?, 'DONE', ?)", (indice, indice, orgao, tipo))
             conn.execute(
                 "INSERT INTO certidao (job_id, tipo, emitida_em, valida_ate, "
-                "caminho_pdf, sha256) VALUES (?, ?, '2026-08-07', '2027-02-03', ?, 'x')",
-                (indice, tipo, str(pdf)))
+                "caminho_pdf, sha256) VALUES (?, ?, ?, '2027-02-03', ?, 'x')",
+                (indice, tipo, emitida_em, str(pdf)))
 
     def _nomes(self, conteudo: bytes) -> list[str]:
         with zipfile.ZipFile(BytesIO(conteudo)) as pacote:
@@ -120,25 +134,54 @@ class TestPacoteZip:
     def test_separa_por_tipo_em_pastas(self, conn, tmp_path):
         self._preparar(conn, tmp_path, ["NEGATIVA", "CPEN"])
 
-        nomes = self._nomes(zipar_pdfs(conn, 1))
+        nomes = self._nomes(zipar_pdfs(conn, MES))
 
         assert any("CERTIDOES NEGATIVAS" in n for n in nomes)
         assert any("POSITIVAS COM EFEITO DE NEGATIVA" in n for n in nomes)
 
+    def test_separa_por_orgao_com_nome_de_gente(self, conn, tmp_path):
+        """É a pasta que o cliente abre: 'RFB_PJ' não diz nada a ele."""
+        self._preparar(conn, tmp_path, ["NEGATIVA"])
+        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_GO",
+                       inicio=90)
+
+        nomes = self._nomes(zipar_pdfs(conn, MES,
+                                       nomes={"SEFAZ_GO": "SEFAZ GOIAS"}))
+
+        assert any(n.startswith("RECEITA FEDERAL/") for n in nomes)
+        assert any(n.startswith("SEFAZ GOIAS/") for n in nomes)
+
+    def test_orgao_sem_nome_cadastrado_usa_o_codigo(self, conn, tmp_path):
+        """Órgão novo entra na entrega antes de alguém batizá-lo."""
+        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_MT")
+
+        nomes = self._nomes(zipar_pdfs(conn, MES))
+        assert any(n.startswith("SEFAZ_MT/") for n in nomes)
+
+    def test_certidao_de_outro_mes_fica_de_fora(self, conn, tmp_path):
+        """Quem recebe exige emissão do mês; a do mês passado não serve."""
+        self._preparar(conn, tmp_path, ["NEGATIVA"])
+        self._preparar(conn, tmp_path, ["NEGATIVA"], emitida_em="2026-07-30",
+                       inicio=50)
+
+        nomes = self._nomes(zipar_pdfs(conn, MES))
+        assert len([n for n in nomes if n.endswith(".pdf")]) == 1
+
     def test_traz_indice_para_conferencia(self, conn, tmp_path):
         self._preparar(conn, tmp_path, ["NEGATIVA"])
 
-        with zipfile.ZipFile(BytesIO(zipar_pdfs(conn, 1))) as pacote:
+        with zipfile.ZipFile(BytesIO(zipar_pdfs(conn, MES))) as pacote:
             indice = pacote.read("indice.csv").decode()
 
         assert "EMPRESA 1" in indice
+        assert "RECEITA FEDERAL" in indice, "o órgão também vai no índice"
         assert "00.000.000/0000-01" in indice, "documento com máscara no índice"
         assert "07/08/2026" in indice, "datas em formato brasileiro"
 
     def test_somente_negativas_deixa_cpen_de_fora(self, conn, tmp_path):
         self._preparar(conn, tmp_path, ["NEGATIVA", "CPEN"])
 
-        nomes = self._nomes(zipar_pdfs(conn, 1, somente_negativas=True))
+        nomes = self._nomes(zipar_pdfs(conn, MES, somente_negativas=True))
 
         assert any("CERTIDOES NEGATIVAS" in n for n in nomes)
         assert not any("EFEITO DE NEGATIVA" in n for n in nomes)
@@ -148,6 +191,14 @@ class TestPacoteZip:
         self._preparar(conn, tmp_path, ["NEGATIVA", "NEGATIVA"])
         next(tmp_path.glob("*.pdf")).unlink()
 
-        nomes = self._nomes(zipar_pdfs(conn, 1))
+        nomes = self._nomes(zipar_pdfs(conn, MES))
 
         assert len([n for n in nomes if n.endswith(".pdf")]) == 1
+
+    def test_sem_mes_usa_o_corrente(self, conn, tmp_path):
+        from cnd.web.relatorio import mes_corrente
+
+        self._preparar(conn, tmp_path, ["NEGATIVA"],
+                       emitida_em=f"{mes_corrente()}-15")
+
+        assert any(n.endswith(".pdf") for n in self._nomes(zipar_pdfs(conn)))

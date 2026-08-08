@@ -175,6 +175,7 @@ def _contexto_painel(conn: sqlite3.Connection, lote_id: int | None) -> dict:
         "orquestrador_vivo": idade is not None and idade <= cfg.alertas.heartbeat_timeout_s,
         "orquestrador_idade": idade,
         "agora": tempo.agora_iso(),
+        "mes": relatorio.mes_corrente(),
     }
 
 
@@ -331,18 +332,20 @@ def baixar_relatorio(lote_id: int):
     )
 
 
-@app.get("/relatorio/{lote_id}.zip")
-def baixar_pdfs(lote_id: int, somente_negativas: bool = False):
-    """Pacote das certidões do lote.
+@app.get("/certidoes/{mes}.zip")
+def baixar_pdfs(mes: str, somente_negativas: bool = False):
+    """Pacote das certidões emitidas no mês (`2026-08`), por órgão.
 
     `?somente_negativas=1` deixa de fora as CPEN, para quem precisa só das
     empresas totalmente limpas.
     """
     with contextlib.closing(ler()) as conn:
-        conteudo = relatorio.zipar_pdfs(conn, lote_id, somente_negativas)
+        conteudo = relatorio.zipar_pdfs(
+            conn, mes, somente_negativas,
+            nomes={codigo: orgao.rotulo for codigo, orgao in cfg.orgaos.items()})
     sufixo = "_negativas" if somente_negativas else ""
     return Response(
         conteudo, media_type="application/zip",
         headers={"Content-Disposition":
-                 f'attachment; filename="certidoes_lote_{lote_id}{sufixo}.zip"'},
+                 f'attachment; filename="certidoes_{mes}{sufixo}.zip"'},
     )

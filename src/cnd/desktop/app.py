@@ -18,7 +18,7 @@ import tempfile
 import threading
 import webbrowser
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import TclError, filedialog, messagebox, ttk
 from typing import ClassVar
 
 import customtkinter as ctk
@@ -27,9 +27,10 @@ from PIL import Image, ImageDraw, ImageTk
 from cnd.core.documentos import formatar
 from cnd.desktop import acesso, marca, remoto
 from cnd.desktop.estado import Robo, estado_dos_orgaos, ler_panorama, listar_itens
-from cnd.infra.config import carregar
+from cnd.infra.config import carregar, nome_do_orgao
 from cnd.infra.db import RAIZ_PROJETO
 from cnd.infra.db import garantir as garantir_banco
+from cnd.web.relatorio import mes_corrente as relatorio_mes_corrente
 
 ctk.set_appearance_mode("light")
 
@@ -81,6 +82,61 @@ SITUACAO_SEM_RESULTADO = {
     "RETRY_WAIT": "Vai tentar de novo",
     "FAILED": "Falhou",
 }
+
+
+MESES = ("janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+         "agosto", "setembro", "outubro", "novembro", "dezembro")
+
+
+def _mes_por_extenso(mes: str) -> str:
+    """'2026-08' vira 'agosto/2026'. Ninguém lê data no formato do banco."""
+    try:
+        ano, numero = mes.split("-")
+        return f"{MESES[int(numero) - 1]}/{ano}"
+    except (ValueError, IndexError):
+        return mes
+
+
+def _mes_do_rotulo(rotulo: str) -> str:
+    """O caminho de volta, de 'agosto/2026' para '2026-08'."""
+    try:
+        nome, ano = rotulo.split("/")
+        return f"{ano}-{MESES.index(nome) + 1:02d}"
+    except ValueError:
+        return rotulo
+
+
+def _numero(valor: int) -> str:
+    return f"{valor:,}".replace(",", ".")
+
+
+def _resumo_da_maquina(estado) -> str:
+    """A linha que responde 'como vai' — quanto, quão rápido e até quando."""
+    partes = [f"{_numero(estado.concluidos)} de {_numero(estado.total)}"]
+
+    por_hora = sum(o.get("por_hora") or 0 for o in estado.orgaos)
+    if por_hora:
+        partes.append(f"{_numero(round(por_hora))} por hora")
+
+    # A previsão é a pergunta que mais cobram, e o cálculo já existia no
+    # sistema sem nunca chegar à tela.
+    horas = [o["eta_horas"] for o in estado.orgaos if o.get("eta_horas")]
+    if horas:
+        partes.append(f"faltam {_duracao(max(horas))}")
+
+    partes.append(f"{_numero(estado.por_desfecho('NEGATIVA'))} negativas")
+    partes.append(f"{_numero(estado.por_desfecho('CPEN'))} com efeito de negativa")
+    if estado.falhados:
+        partes.append(f"{_numero(estado.falhados)} exigem atendimento")
+    return "   ·   ".join(partes)
+
+
+def _duracao(horas: float) -> str:
+    if horas < 1:
+        return f"{round(horas * 60)} min"
+    if horas < 24:
+        return f"{horas:.0f}h".replace(".", ",")
+    return f"{horas / 24:.0f} dias"
 
 
 def _registrar_no_windows() -> None:
@@ -156,9 +212,8 @@ class Aplicativo(ctk.CTk):
         self.botoes_menu: dict[str, ctk.CTkButton] = {}
         self.marcadores_menu: dict[str, ctk.CTkFrame] = {}
         for indice, (chave, rotulo) in enumerate(
-            [("inicio", "Início"), ("maquinas", "Máquinas"),
-             ("itens", "Consultar itens"), ("registro", "Registro"),
-             ("ajustes", "Ajustes")], start=1
+            [("inicio", "Início"), ("itens", "Consultar itens"),
+             ("registro", "Registro"), ("ajustes", "Ajustes")], start=1
         ):
             item = ctk.CTkFrame(lateral, fg_color="transparent")
             item.grid(row=indice, column=0, sticky="ew", padx=(0, 12), pady=1)
@@ -214,7 +269,7 @@ class Aplicativo(ctk.CTk):
                 quadro.grid_remove()
         if chave == "itens":
             self._recarregar_itens()
-        elif chave == "maquinas":
+        elif chave == "inicio":
             self._recarregar_maquinas()
 
     # ------------------------------------------------------------------
@@ -228,7 +283,6 @@ class Aplicativo(ctk.CTk):
 
         self.secoes = {
             "inicio": self._secao_inicio(area),
-            "maquinas": self._secao_maquinas(area),
             "itens": self._secao_itens(area),
             "registro": self._secao_registro(area),
             "ajustes": self._secao_ajustes(area),
@@ -284,29 +338,30 @@ class Aplicativo(ctk.CTk):
         quadro = ctk.CTkScrollableFrame(pai, fg_color=marca.FUNDO)
         quadro.grid_columnconfigure(0, weight=1)
 
-        self._titulo(quadro, "Início", "Situação do lote em andamento"
-                     ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 22))
+        cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
+        cabecalho.grid_columnconfigure(0, weight=1)
+        self._titulo(cabecalho, "Início", "Como está cada máquina agora"
+                     ).grid(row=0, column=0, sticky="w")
+        self._botao_secundario(cabecalho, "Atualizar", self._recarregar_maquinas,
+                               largura=104).grid(row=0, column=1, sticky="e")
 
-        acoes = ctk.CTkFrame(quadro, fg_color="transparent")
-        acoes.grid(row=1, column=0, sticky="ew", padx=34, pady=(0, 20))
-
+        # Iniciar o robô e importar planilha são ações da máquina em que
+        # este aplicativo está. No computador que só acompanha, elas não
+        # existem — ele não roda robô nenhum, e o botão só confundiria.
+        self.acoes_locais = ctk.CTkFrame(quadro, fg_color="transparent")
         self.botao_robo = ctk.CTkButton(
-            acoes, text="Iniciar robô", height=40, width=152, corner_radius=8,
-            font=(FONTE, 13, "bold"), fg_color=marca.AZUL,
+            self.acoes_locais, text="Iniciar robô", height=40, width=152,
+            corner_radius=8, font=(FONTE, 13, "bold"), fg_color=marca.AZUL,
             hover_color=marca.AZUL_CLARO, text_color=marca.BRANCO,
             command=self._alternar_robo)
         self.botao_robo.grid(row=0, column=0, padx=(0, 8))
-
         self.botao_importar = self._botao_secundario(
-            acoes, "Importar planilha", self._importar)
-        self.botao_importar.grid(row=0, column=1, padx=(0, 8))
-
-        for coluna, (rotulo, acao) in enumerate(
-            [("Exportar planilha", self._exportar_planilha),
-             ("Baixar certidões", self._baixar_zip)], start=2
-        ):
-            self._botao_secundario(acoes, rotulo, acao, largura=150).grid(
-                row=0, column=coluna, padx=(0, 8))
+            self.acoes_locais, "Importar planilha", self._importar)
+        self.botao_importar.grid(row=0, column=1)
+        if not self.cfg.rede.maquinas:
+            self.acoes_locais.grid(row=1, column=0, sticky="w", padx=34,
+                                   pady=(0, 18))
 
         self.faixa_aviso = ctk.CTkFrame(quadro, fg_color=marca.AMBAR_FUNDO,
                                         corner_radius=10)
@@ -315,132 +370,58 @@ class Aplicativo(ctk.CTk):
                                          anchor="w", justify="left", wraplength=740)
         self.rotulo_aviso.grid(row=0, column=0, sticky="w", padx=18, pady=13)
 
-        cartao = self._cartao(quadro)
-        cartao.grid(row=3, column=0, sticky="ew", padx=34, pady=(0, 14))
-        cartao.grid_columnconfigure(0, weight=1)
-
-        cabecalho = ctk.CTkFrame(cartao, fg_color="transparent")
-        cabecalho.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 0))
-        cabecalho.grid_columnconfigure(1, weight=1)
-
-        self.rotulo_lote = ctk.CTkLabel(cabecalho, text="Nenhum lote",
-                                        font=(FONTE, 15, "bold"),
-                                        text_color=marca.TEXTO, anchor="w")
-        self.rotulo_lote.grid(row=0, column=0, sticky="w")
-        self.rotulo_percentual = ctk.CTkLabel(cabecalho, text="",
-                                              font=(FONTE, 13, "bold"),
-                                              text_color=marca.AZUL, anchor="e")
-        self.rotulo_percentual.grid(row=0, column=1, sticky="e")
-
-        self.barra = ctk.CTkProgressBar(cartao, height=6, corner_radius=3,
-                                        progress_color=marca.AZUL,
-                                        fg_color=marca.PAPEL_2)
-        self.barra.grid(row=1, column=0, sticky="ew", padx=24, pady=(14, 9))
-        self.barra.set(0)
-
-        self.rotulo_restante = ctk.CTkLabel(cartao, text="", font=(FONTE, 11),
-                                            text_color=marca.TEXTO_3, anchor="w")
-        self.rotulo_restante.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 20))
-
-        numeros = ctk.CTkFrame(quadro, fg_color="transparent")
-        numeros.grid(row=4, column=0, sticky="ew", padx=34)
-        for coluna in range(4):
-            numeros.grid_columnconfigure(coluna, weight=1, uniform="metrica")
-
-        self.metricas: dict[str, ctk.CTkLabel] = {}
-        for coluna, (chave, rotulo, cor) in enumerate([
-            ("NEGATIVA", "Negativas", marca.VERDE),
-            ("CPEN", "Com efeito de negativa", marca.AZUL),
-            ("PENDENTES", "Com pendência", marca.AMBAR),
-            ("FALHAS", "Falhas", marca.VERMELHO),
-        ]):
-            caixa = self._cartao(numeros)
-            caixa.grid(row=0, column=coluna, sticky="ew",
-                       padx=(0 if coluna == 0 else 10, 0))
-            caixa.grid_columnconfigure(1, weight=1)
-
-            # Rótulo em cima, número embaixo: lê-se o que é antes de quanto
-            # é. O ponto colorido carrega a cor, e o número fica escuro —
-            # quatro números berrantes lado a lado disputam atenção e
-            # nenhum ganha.
-            ctk.CTkLabel(caixa, text="●", font=(FONTE, 11),
-                         text_color=cor).grid(row=0, column=0, sticky="w",
-                                              padx=(18, 7), pady=(16, 0))
-            ctk.CTkLabel(caixa, text=rotulo, font=(FONTE, 11),
-                         text_color=marca.TEXTO_2, anchor="w").grid(
-                row=0, column=1, sticky="w", padx=(0, 18), pady=(16, 0))
-
-            valor = ctk.CTkLabel(caixa, text="0", font=(FONTE, 28, "bold"),
-                                 text_color=marca.TEXTO, anchor="w")
-            valor.grid(row=1, column=0, columnspan=2, sticky="w",
-                       padx=18, pady=(2, 16))
-            self.metricas[chave] = valor
-
-        # Os órgãos: o que fica embaixo do painel e explica o número de
-        # cima. Antes esta parte da tela era um vazio branco.
-        painel_orgaos = self._cartao(quadro)
-        painel_orgaos.grid(row=5, column=0, sticky="ew", padx=34, pady=(14, 28))
-        painel_orgaos.grid_columnconfigure(0, weight=1)
-
-        ctk.CTkLabel(painel_orgaos, text="ÓRGÃOS", font=(FONTE, 10, "bold"),
-                     text_color=marca.TEXTO_3, anchor="w").grid(
-            row=0, column=0, sticky="w", padx=24, pady=(18, 4))
-        self.lista_orgaos = ctk.CTkFrame(painel_orgaos, fg_color="transparent")
-        self.lista_orgaos.grid(row=1, column=0, sticky="ew", padx=24,
-                               pady=(0, 18))
-        self.lista_orgaos.grid_columnconfigure(0, weight=1)
-        self._linhas_de_orgao: dict[str, dict] = {}
-        return quadro
-
-    def _linha_de_orgao(self, codigo: str) -> dict:
-        """Cria (uma vez) a linha de um órgão e devolve seus rótulos.
-
-        Reaproveitar em vez de recriar a cada ciclo de 2s: destruir e montar
-        widgets duas vezes por segundo faz a janela piscar.
-        """
-        if codigo in self._linhas_de_orgao:
-            return self._linhas_de_orgao[codigo]
-
-        linha = ctk.CTkFrame(self.lista_orgaos, fg_color="transparent")
-        linha.grid(row=len(self._linhas_de_orgao), column=0, sticky="ew", pady=5)
-        linha.grid_columnconfigure(1, weight=1)
-
-        pastilha = ctk.CTkLabel(linha, text="●", font=(FONTE, 12),
-                                text_color=marca.TEXTO_3)
-        pastilha.grid(row=0, column=0, padx=(0, 9))
-        ctk.CTkLabel(linha, text=codigo, font=(FONTE, 12, "bold"),
-                     text_color=marca.TEXTO, anchor="w").grid(row=0, column=1,
-                                                              sticky="w")
-        detalhe = ctk.CTkLabel(linha, text="", font=(FONTE, 11),
-                               text_color=marca.TEXTO_3, anchor="e")
-        detalhe.grid(row=0, column=2, sticky="e")
-
-        self._linhas_de_orgao[codigo] = {"pastilha": pastilha,
-                                         "detalhe": detalhe}
-        return self._linhas_de_orgao[codigo]
-
-    # ---------------- Máquinas ----------------
-    def _secao_maquinas(self, pai) -> ctk.CTkFrame:
-        quadro = ctk.CTkScrollableFrame(pai, fg_color=marca.FUNDO)
-        quadro.grid_columnconfigure(0, weight=1)
-
-        cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
-        cabecalho.grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
-        cabecalho.grid_columnconfigure(0, weight=1)
-
-        self._titulo(cabecalho, "Máquinas",
-                     "Cada computador roda o robô de um órgão. "
-                     "Clique no nome para acessá-lo pelo AnyDesk."
-                     ).grid(row=0, column=0, sticky="w")
-        self._botao_secundario(cabecalho, "Atualizar", self._recarregar_maquinas,
-                               largura=104).grid(row=0, column=1, sticky="e")
+        self._montar_entrega(quadro).grid(row=3, column=0, sticky="ew",
+                                          padx=34, pady=(0, 16))
 
         self.painel_maquinas = ctk.CTkFrame(quadro, fg_color="transparent")
-        self.painel_maquinas.grid(row=1, column=0, sticky="ew", padx=34,
+        self.painel_maquinas.grid(row=4, column=0, sticky="ew", padx=34,
                                   pady=(0, 28))
         self.painel_maquinas.grid_columnconfigure(0, weight=1)
         return quadro
 
+    def _montar_entrega(self, pai) -> ctk.CTkFrame:
+        """O bloco de entrega: o pacote do mês, de todas as máquinas juntas.
+
+        Por mês e não por lote porque é assim que o cliente recebe — e
+        porque cada máquina numera os lotes por conta, então "lote 7" não
+        quer dizer nada fora dela.
+        """
+        cartao = self._cartao(pai)
+        cartao.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(cartao, text="ENTREGA DO MÊS", font=(FONTE, 10, "bold"),
+                     text_color=marca.TEXTO_3, anchor="w").grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=22, pady=(18, 8))
+
+        self.seletor_mes = ctk.CTkOptionMenu(
+            cartao, width=130, height=38, corner_radius=8,
+            values=[_mes_por_extenso(relatorio_mes_corrente())],
+            fg_color=marca.PAPEL, button_color=marca.PAPEL,
+            button_hover_color=marca.PAPEL_2, text_color=marca.TEXTO,
+            dropdown_fg_color=marca.BRANCO, dropdown_text_color=marca.TEXTO,
+            dropdown_hover_color=marca.PAPEL, font=(FONTE, 12),
+            dropdown_font=(FONTE, 12))
+        self.seletor_mes.grid(row=1, column=0, sticky="w", padx=(22, 8),
+                              pady=(0, 8))
+
+        ctk.CTkButton(
+            cartao, text="Baixar certidões", height=38, width=160,
+            corner_radius=8, font=(FONTE, 13, "bold"), fg_color=marca.AZUL,
+            hover_color=marca.AZUL_CLARO, text_color=marca.BRANCO,
+            command=self._baixar_certidoes_do_mes).grid(row=1, column=1,
+                                                        sticky="w", padx=(0, 8))
+        self._botao_secundario(cartao, "Exportar planilha",
+                               self._exportar_planilha, largura=150).grid(
+            row=1, column=2, sticky="w", padx=(0, 22))
+
+        self.rotulo_entrega = ctk.CTkLabel(
+            cartao, text="", font=(FONTE, 11), text_color=marca.TEXTO_3,
+            anchor="w", justify="left", wraplength=800)
+        self.rotulo_entrega.grid(row=2, column=0, columnspan=3, sticky="w",
+                                 padx=22, pady=(0, 18))
+        return cartao
+
+    # ---------------- Máquinas (dentro do Início) ----------------
     def _recarregar_maquinas(self, silencioso: bool = False) -> None:
         # Na renovação automática não se limpa a tela antes: piscar
         # "Consultando..." a cada dez segundos, por cima do que a pessoa
@@ -499,34 +480,25 @@ class Aplicativo(ctk.CTk):
                                               padx=22, pady=(10, 0))
                 linha += 1
             else:
-                def n(valor: int) -> str:
-                    return f"{valor:,}".replace(",", ".")
-
-                ctk.CTkLabel(cartao,
-                             text=f"Lote #{estado.lote_id} · {estado.lote_nome}"
-                                  if estado.lote_id else "Nenhum lote importado",
-                             font=(FONTE, 12), text_color=marca.TEXTO_2,
-                             anchor="w").grid(row=linha, column=0, sticky="w",
-                                              padx=22, pady=(12, 0))
+                progresso = ctk.CTkFrame(cartao, fg_color="transparent")
+                progresso.grid(row=linha, column=0, sticky="ew", padx=22,
+                               pady=(14, 0))
+                progresso.grid_columnconfigure(0, weight=1)
                 linha += 1
 
-                barra = ctk.CTkProgressBar(cartao, height=7, corner_radius=4,
+                barra = ctk.CTkProgressBar(progresso, height=7, corner_radius=4,
                                            progress_color=marca.AZUL,
                                            fg_color=marca.PAPEL_2)
-                barra.grid(row=linha, column=0, sticky="ew", padx=22, pady=(10, 4))
+                barra.grid(row=0, column=0, sticky="ew", padx=(0, 14))
                 barra.set(estado.percentual / 100)
-                linha += 1
+                ctk.CTkLabel(progresso, text=f"{estado.percentual:.0f}%",
+                             font=(FONTE, 14, "bold"),
+                             text_color=marca.AZUL).grid(row=0, column=1)
 
-                resumo = (f"{n(estado.concluidos)} de {n(estado.total)}"
-                          f"   ({estado.percentual:.1f}%)"
-                          f"   ·   {n(estado.por_desfecho('NEGATIVA'))} negativas"
-                          f"   ·   {n(estado.por_desfecho('CPEN'))} com efeito"
-                          f" de negativa")
-                if estado.falhados:
-                    resumo += f"   ·   {n(estado.falhados)} falhas"
-                ctk.CTkLabel(cartao, text=resumo, font=(FONTE, 11),
-                             text_color=marca.TEXTO_3, anchor="w").grid(
-                    row=linha, column=0, sticky="w", padx=22, pady=(0, 6))
+                ctk.CTkLabel(cartao, text=_resumo_da_maquina(estado),
+                             font=(FONTE, 11), text_color=marca.TEXTO_3,
+                             anchor="w", justify="left", wraplength=820).grid(
+                    row=linha, column=0, sticky="w", padx=22, pady=(9, 0))
                 linha += 1
 
                 self._desenhar_atividade(cartao, estado).grid(
@@ -543,25 +515,12 @@ class Aplicativo(ctk.CTk):
                         row=linha, column=0, sticky="w", padx=22, pady=(0, 6))
                     linha += 1
 
-            acoes = ctk.CTkFrame(cartao, fg_color="transparent")
-            acoes.grid(row=linha, column=0, sticky="w", padx=22, pady=(12, 18))
-
-            botoes = []
-            if estado.online and estado.lote_id and estado.maquina.url:
-                botoes += [
-                    ("Baixar planilha",
-                     lambda e=estado: self._baixar_de(
-                         e, f"/relatorio/{e.lote_id}.xlsx", ".xlsx")),
-                    ("Baixar certidões",
-                     lambda e=estado: self._baixar_de(
-                         e, f"/relatorio/{e.lote_id}.zip", ".zip")),
-                ]
-
-            for coluna, (rotulo, acao) in enumerate(botoes):
-                self._botao_secundario(acoes, rotulo, acao, largura=150).grid(
-                    row=0, column=coluna, padx=(0, 8))
-            if not botoes:
-                acoes.grid_remove()
+            # Sem botão de baixar por máquina: a entrega é uma só, do mês
+            # inteiro, e está no bloco de cima. Espalhar downloads por
+            # cartão devolveria o problema do pacote picado que a mudança
+            # para "por mês" veio resolver.
+            ctk.CTkFrame(cartao, fg_color="transparent", height=6).grid(
+                row=linha, column=0)
 
     def _transformar_em_link(self, rotulo, estado) -> None:
         """Deixa o texto com cara e comportamento de link.
@@ -939,11 +898,9 @@ class Aplicativo(ctk.CTk):
 
         self._em_segundo_plano(trabalho, "gerar a planilha")
 
-    def _baixar_zip(self) -> None:
-        panorama = ler_panorama(self.cfg)
-        if not panorama.lote_id:
-            messagebox.showwarning("Sem lote", "Importe uma planilha primeiro.")
-            return
+    def _baixar_certidoes_do_mes(self) -> None:
+        """Um pacote só, do mês, com as certidões de todas as máquinas."""
+        mes = _mes_do_rotulo(self.seletor_mes.get())
 
         somente = messagebox.askyesno(
             "Quais certidões incluir",
@@ -953,25 +910,37 @@ class Aplicativo(ctk.CTk):
             "(débito parcelado), que valem como negativa.")
         destino = filedialog.asksaveasfilename(
             title="Salvar pacote de certidões", defaultextension=".zip",
-            initialfile=f"certidoes_lote_{panorama.lote_id}.zip",
+            initialfile=f"certidoes_{mes}.zip",
             filetypes=[("Pacote ZIP", "*.zip")])
         if not destino:
             return
 
         def trabalho():
-            from cnd.infra.db import conectar_leitura
-            from cnd.web.relatorio import zipar_pdfs
+            entrega = remoto.baixar_certidoes(self.cfg, mes, Path(destino),
+                                              somente)
+            self.after(0, lambda: self._avisar_entrega(entrega, destino))
 
-            conn = conectar_leitura(self.cfg.banco)
-            try:
-                dados = zipar_pdfs(conn, panorama.lote_id, somente)
-            finally:
-                conn.close()
-            Path(destino).write_bytes(dados)
-            self.after(0, lambda: messagebox.showinfo(
-                "Pacote salvo", f"Arquivo gerado em:\n{destino}"))
+        self._em_segundo_plano(trabalho, "montar o pacote de certidões")
 
-        self._em_segundo_plano(trabalho, "montar o pacote")
+    def _avisar_entrega(self, entrega, destino: str) -> None:
+        """Diz o que entrou e, principalmente, o que ficou de fora.
+
+        Máquina fora do ar não impede a entrega — mas entregar um pacote
+        incompleto sem saber disso é o pior desfecho possível, então a
+        falha é dita em voz alta.
+        """
+        corpo = [f"{entrega.arquivos} certidões salvas em:\n{destino}"]
+        if entrega.por_maquina:
+            corpo.append("\n" + entrega.resumo)
+        if entrega.falhas:
+            faltando = "\n".join(f"{nome}: {motivo}"
+                                 for nome, motivo in entrega.falhas.items())
+            messagebox.showwarning(
+                "Pacote incompleto",
+                "\n".join(corpo) + "\n\nNÃO respondeu, e ficou de fora:\n"
+                + faltando)
+            return
+        messagebox.showinfo("Pacote salvo", "\n".join(corpo))
 
     def _calibrar(self) -> None:
         messagebox.showinfo(
@@ -1019,8 +988,13 @@ class Aplicativo(ctk.CTk):
                 # depois, na thread da interface, e encontraria o nome
                 # vazio. Amarrar no parâmetro guarda o valor agora. Sem
                 # isso, a caixa de aviso morria calada e a falha sumia.
-                self.after(0, lambda e=erro: messagebox.showerror(
-                    "Não deu certo", f"Falha ao {descricao}:\n\n{e}"))
+                #
+                # O suppress cobre a janela já fechada: aí não há laço de
+                # eventos, e até perguntar se ela existe estoura. Fechar o
+                # aplicativo no meio de um download não é incidente.
+                with contextlib.suppress(RuntimeError, TclError):
+                    self.after(0, lambda e=erro: messagebox.showerror(
+                        "Não deu certo", f"Falha ao {descricao}:\n\n{e}"))
 
         threading.Thread(target=envolver, daemon=True).start()
 
@@ -1041,7 +1015,7 @@ class Aplicativo(ctk.CTk):
         rede por máquina, e o que a pessoa acompanha ali — a última empresa
         consultada — muda na casa das dezenas de segundos, não dos dois.
         """
-        if self.secao_atual != "maquinas":
+        if self.secao_atual != "inicio":
             self._ciclos_ate_renovar = 0
             return
 
@@ -1071,71 +1045,17 @@ class Aplicativo(ctk.CTk):
             hover_color="#C9412F" if rodando else marca.AZUL_CLARO)
         self.botao_importar.configure(state="disabled" if rodando else "normal")
 
-        def numero(valor: int) -> str:
-            return f"{valor:,}".replace(",", ".")
-
-        if panorama.lote_id:
-            self.rotulo_lote.configure(
-                text=f"Lote #{panorama.lote_id} · {panorama.lote_nome}")
-            self.rotulo_percentual.configure(
-                text=f"{numero(panorama.concluidos)} de {numero(panorama.total)}"
-                     f"   ({panorama.percentual:.1f}%)")
-            self.barra.set(panorama.percentual / 100)
-            restam = panorama.total - panorama.concluidos - panorama.falhados
-            self.rotulo_restante.configure(text=f"{numero(restam)} restantes na fila")
-        else:
-            self.rotulo_lote.configure(text="Nenhum lote importado")
-            self.rotulo_percentual.configure(text="")
-            self.rotulo_restante.configure(
-                text="Use o botão Importar planilha para começar")
-            self.barra.set(0)
-
-        self.metricas["NEGATIVA"].configure(text=numero(panorama.por_desfecho("NEGATIVA")))
-        self.metricas["CPEN"].configure(text=numero(panorama.por_desfecho("CPEN")))
-        self.metricas["PENDENTES"].configure(
-            text=numero(panorama.por_desfecho("POSITIVA")
-                        + panorama.por_desfecho("PENDENCIA_MANUAL")))
-        self.metricas["FALHAS"].configure(text=numero(panorama.falhados))
-
-        self._atualizar_orgaos(panorama, numero)
-
         suspensos = [codigo for codigo, estado in estado_dos_orgaos(self.cfg).items()
                      if estado == "ABERTO"]
         if suspensos:
             self.rotulo_aviso.configure(
-                text=f"{', '.join(suspensos)} suspenso — o portal recusou várias "
-                     f"consultas seguidas. O robô retoma sozinho.")
+                text=f"{', '.join(nome_do_orgao(c) for c in suspensos)} suspenso — "
+                     f"o portal recusou várias consultas seguidas. "
+                     f"O robô retoma sozinho.")
             self.faixa_aviso.grid(row=2, column=0, sticky="ew", padx=34,
                                   pady=(0, 16))
         else:
             self.faixa_aviso.grid_remove()
-
-    def _atualizar_orgaos(self, panorama, numero) -> None:
-        """A situação de cada órgão, embaixo dos números do lote."""
-        if not panorama.resumos:
-            linha = self._linha_de_orgao("—")
-            linha["detalhe"].configure(text="nenhum órgão com itens na fila")
-            return
-
-        cores = {"FECHADO": marca.VERDE, "MEIO_ABERTO": marca.AMBAR,
-                 "ABERTO": marca.VERMELHO}
-        for resumo in panorama.resumos:
-            linha = self._linha_de_orgao(resumo.orgao)
-            linha["pastilha"].configure(
-                text_color=cores.get(resumo.breaker_estado, marca.TEXTO_3))
-
-            partes = [f"{numero(resumo.concluidos)} de {numero(resumo.total)}"]
-            if resumo.intervalo_s:
-                # Uma casa decimal abaixo de 10s: o simulador roda a 0,05s e
-                # arredondar para inteiro mostraria "1 a cada 0s".
-                ritmo = (f"{resumo.intervalo_s:.1f}".replace(".", ",")
-                         if resumo.intervalo_s < 10 else f"{resumo.intervalo_s:.0f}")
-                partes.append(f"1 a cada {ritmo}s")
-            if resumo.breaker_estado == "ABERTO":
-                partes.append("suspenso")
-            elif resumo.falhados:
-                partes.append(f"{numero(resumo.falhados)} falhas")
-            linha["detalhe"].configure(text="   ·   ".join(partes))
 
     def _drenar_registro(self) -> None:
         linhas = self.robo.drenar()

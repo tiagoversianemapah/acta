@@ -17,6 +17,7 @@ from openpyxl.utils import get_column_letter
 from cnd.core import tempo
 from cnd.core.documentos import formatar
 from cnd.core.modelos import Desfecho, Status
+from cnd.infra import config
 from cnd.web import consultas
 
 CABECALHO = Font(bold=True, color="FFFFFF")
@@ -227,25 +228,46 @@ PASTAS_DO_ZIP = {
 }
 
 
-def zipar_pdfs(conn: sqlite3.Connection, lote_id: int,
-               somente_negativas: bool = False) -> bytes:
-    """Pacote com as certidões utilizáveis do lote.
+def mes_corrente() -> str:
+    """O mês de referência, no formato que o banco guarda ('2026-08')."""
+    return tempo.agora_iso()[:7]
+
+
+def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
+               somente_negativas: bool = False,
+               nomes: dict[str, str] | None = None) -> bytes:
+    """Pacote com as certidões emitidas no mês, separadas por órgão.
+
+    O corte é o MÊS, e não o lote, por dois motivos. O primeiro é a regra do
+    negócio: a certidão vale 180 dias, mas quem a recebe exige emissão do
+    mês corrente — é o mesmo critério que o robô usa para decidir se
+    reemite. O segundo é prático: cada máquina numera os seus lotes por
+    conta, então "lote 7" não quer dizer nada fora dela, e importar a
+    planilha duas vezes no mesmo mês partiria a entrega em dois pacotes.
 
     Entram apenas NEGATIVA e CPEN — são os dois documentos que servem para
     entregar ao cliente. A CPEN (débito parcelado ou suspenso) vale como
     negativa na prática.
 
-    Certidões POSITIVAS não entram: a empresa tem pendência real, e o
+    Certidões POSITIVAS não entram: a empresa tem pendência real e o
     documento não é entregue — ela aparece no relatório para alguém tratar.
-    Na verdade nem chegam aqui: o adapter não as guarda como certidão.
+    Na verdade nem chegam aqui, porque o adapter não as guarda como
+    certidão.
 
-    As pastas separam os dois tipos, para quem abrir o pacote saber de
-    imediato quais empresas estão limpas e quais estão parceladas.
+    Dentro do pacote, um nível por órgão e, dentro dele, um por tipo:
+
+        RECEITA FEDERAL/CERTIDOES NEGATIVAS/...
+        RECEITA FEDERAL/POSITIVAS COM EFEITO DE NEGATIVA/...
+        SEFAZ GOIAS/CERTIDOES NEGATIVAS/...
+        indice.csv
     """
+    mes = mes or mes_corrente()
+    nomes = nomes or {}
     filtro = "AND c.tipo = 'NEGATIVA'" if somente_negativas else ""
+
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as pacote:
-        indice: list[str] = ["tipo;empresa;documento;emitida_em;valida_ate;arquivo"]
+        indice = ["orgao;tipo;empresa;documento;emitida_em;valida_ate;arquivo"]
 
         for linha in conn.execute(
             f"""
@@ -254,19 +276,19 @@ def zipar_pdfs(conn: sqlite3.Connection, lote_id: int,
               FROM certidao c
               JOIN job j ON j.id = c.job_id
               JOIN empresa e ON e.id = j.empresa_id
-             WHERE j.lote_id = ? {filtro}
-             ORDER BY c.tipo, e.nome
+             WHERE strftime('%Y-%m', c.emitida_em) = ? {filtro}
+             ORDER BY j.orgao, c.tipo, e.nome
             """,
-            (lote_id,),
+            (mes,),
         ):
             origem = Path(linha["caminho_pdf"])
             if not origem.exists():
                 continue
+            orgao = nomes.get(linha["orgao"], config.nome_do_orgao(linha["orgao"]))
             pasta = PASTAS_DO_ZIP.get(linha["tipo"], linha["tipo"])
-            destino = f"{linha['orgao']}/{pasta}/{origem.name}"
-            pacote.write(origem, arcname=destino)
+            pacote.write(origem, arcname=f"{orgao}/{pasta}/{origem.name}")
             indice.append(";".join([
-                linha["tipo"], linha["nome"], formatar(linha["documento"]),
+                orgao, linha["tipo"], linha["nome"], formatar(linha["documento"]),
                 _data_curta(linha["emitida_em"]), _data_curta(linha["valida_ate"]),
                 origem.name,
             ]))
@@ -276,3 +298,11 @@ def zipar_pdfs(conn: sqlite3.Connection, lote_id: int,
         pacote.writestr("indice.csv", "\n".join(indice))
 
     return buffer.getvalue()
+
+
+def meses_com_certidao(conn: sqlite3.Connection) -> list[str]:
+    """Os meses que têm certidão guardada, do mais recente para trás."""
+    return [linha["mes"] for linha in conn.execute(
+        "SELECT DISTINCT strftime('%Y-%m', emitida_em) AS mes FROM certidao "
+        "WHERE emitida_em IS NOT NULL ORDER BY mes DESC"
+    )]

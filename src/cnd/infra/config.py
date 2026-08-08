@@ -39,6 +39,21 @@ class ParametrosRetry:
         return float(tabela[indice])
 
 
+# Como cada órgão se chama para quem lê. O código (RFB_PJ) serve ao banco,
+# ao log e ao config; ninguém do escritório fala assim. Vira nome de pasta
+# dentro do pacote de certidões, então é o que o cliente enxerga.
+NOMES_DE_ORGAO = {
+    "RFB_PJ": "RECEITA FEDERAL",
+    "RFB_PF": "RECEITA FEDERAL - PESSOA FISICA",
+    "CRF": "FGTS - CAIXA",
+    "FAKE": "SIMULACAO",
+}
+
+
+def nome_do_orgao(codigo: str) -> str:
+    return NOMES_DE_ORGAO.get(codigo, codigo)
+
+
 @dataclass(frozen=True)
 class ConfigOrgao:
     codigo: str
@@ -48,9 +63,16 @@ class ConfigOrgao:
     pacing: ParametrosRitmo
     breaker: ParametrosBreaker
     retry: ParametrosRetry
+    # Nome de exibição. Vazio cai na tabela acima, e a tabela cai no
+    # próprio código — um órgão novo funciona antes de alguém batizá-lo.
+    nome: str = ""
     # Chaves livres da seção do órgão, para o adapter ler o que for dele.
     # Ex.: [orgaos.FAKE.simulacao] vira extras["simulacao"].
     extras: dict = field(default_factory=dict)
+
+    @property
+    def rotulo(self) -> str:
+        return self.nome or nome_do_orgao(self.codigo)
 
 
 @dataclass(frozen=True)
@@ -220,6 +242,7 @@ def carregar(caminho: Path | None = None) -> Config:
             ativo=bool(bruto.get("ativo", False)),
             adapter=bruto.get("adapter", codigo.lower()),
             workers=int(bruto.get("workers", 1)),
+            nome=bruto.get("nome", ""),
             pacing=ParametrosRitmo.de_config(bruto.get("pacing", {})),
             breaker=ParametrosBreaker.de_config(bruto.get("breaker", {})),
             retry=ParametrosRetry(
@@ -229,7 +252,8 @@ def carregar(caminho: Path | None = None) -> Config:
                 backoff_bloqueio_s=tuple(retry_bruto.get("backoff_bloqueio_s", (300, 900, 1800))),
             ),
             extras={c: v for c, v in bruto.items()
-                    if c not in ("ativo", "adapter", "workers", "pacing", "breaker", "retry")},
+                    if c not in ("ativo", "adapter", "workers", "nome",
+                                 "pacing", "breaker", "retry")},
         )
 
     def caminho_de(chave: str, padrao: str) -> Path:

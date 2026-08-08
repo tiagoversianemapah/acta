@@ -9,15 +9,18 @@ Uma máquina fora do ar não derruba a tela — ela aparece como offline, que
 """
 from __future__ import annotations
 
+import contextlib
 import json
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cnd.infra.config import Config, Maquina
+from cnd.infra.config import Config, Maquina, nome_do_orgao
 
 TEMPO_LIMITE_S = 6
 
@@ -82,6 +85,22 @@ class EstadoRemoto:
     def atividade(self) -> list[dict]:
         """As últimas consultas daquela máquina, da mais recente para trás."""
         return self.dados.get("atividade", [])
+
+    @property
+    def meses(self) -> list[str]:
+        """Meses com certidão guardada, do mais recente para trás."""
+        return self.dados.get("meses", [])
+
+    @property
+    def rotulo_do_orgao(self) -> str:
+        """O que a máquina faz, em nome de gente.
+
+        Vem do órgão que ela atende — é a informação que identifica a
+        máquina de fato. O `orgao` do config é só um apelido que o console
+        dá a ela, e nem sempre está preenchido.
+        """
+        rotulos = [o.get("rotulo") or o["orgao"] for o in self.orgaos]
+        return "  ·  ".join(rotulos) if rotulos else ""
 
     @property
     def lote_id(self) -> int | None:
@@ -156,7 +175,8 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     """
     import platform
 
-    from cnd.desktop.estado import ler_atividade, ler_panorama
+    from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
+    from cnd.web.consultas import eta_horas
 
     panorama = ler_panorama(cfg)
     # Sem AnyDesk de propósito: é o computador em que a pessoa já está, e
@@ -168,12 +188,21 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
         "lote_id": panorama.lote_id,
         "lote_nome": panorama.lote_nome,
         "atividade": ler_atividade(cfg),
+        "meses": ler_meses(cfg),
+        "ultimo_sinal_ha_s": (round(panorama.robo_idade_s)
+                              if panorama.robo_idade_s is not None else None),
         "orgaos": [{
-            "orgao": r.orgao, "total": r.total, "concluidos": r.concluidos,
+            "orgao": r.orgao,
+            "rotulo": (cfg.orgaos[r.orgao].rotulo if r.orgao in cfg.orgaos
+                       else nome_do_orgao(r.orgao)),
+            "total": r.total, "concluidos": r.concluidos,
             "pendentes": r.pendentes, "em_execucao": r.em_execucao,
             "falhados": r.falhados, "por_desfecho": r.por_desfecho,
             "percentual": round(r.percentual, 1), "intervalo_s": r.intervalo_s,
+            "por_hora": r.ritmo_por_hora,
+            "eta_horas": eta_horas(r),
             "disjuntor": r.breaker_estado, "disjuntor_motivo": r.breaker_motivo,
+            "disjuntor_ate": r.breaker_ate,
             "ultima_tentativa": r.ultima_tentativa,
         } for r in panorama.resumos],
     })
@@ -203,6 +232,96 @@ def listar_itens(maquina: Maquina, senha: str = "", **filtros) -> list[dict]:
         return resultado if isinstance(resultado, list) else []
     except Exception:
         return []
+
+
+@dataclass
+class Entrega:
+    """O resultado de juntar as certidões do mês de todas as máquinas."""
+
+    arquivos: int = 0
+    por_maquina: dict = field(default_factory=dict)
+    falhas: dict = field(default_factory=dict)
+
+    @property
+    def resumo(self) -> str:
+        partes = [f"{nome}: {n}" for nome, n in self.por_maquina.items()]
+        return "\n".join(partes)
+
+
+def baixar_certidoes(cfg: Config, mes: str, destino: Path,
+                     somente_negativas: bool = False) -> Entrega:
+    """Junta num pacote só as certidões do mês de todas as máquinas.
+
+    Cada máquina monta o pacote dela, já com uma pasta por órgão, e aqui as
+    entradas são copiadas para um pacote único. É o que o cliente recebe:
+
+        RECEITA FEDERAL/CERTIDOES NEGATIVAS/...
+        SEFAZ GOIAS/CERTIDOES NEGATIVAS/...
+        indice.csv
+
+    Vai para arquivo temporário e não para a memória: um mês completo passa
+    de 100 MB por máquina, e segurar três desses de uma vez derrubaria a
+    janela em computador de escritório.
+
+    Máquina que não responde não impede a entrega — ela entra em `falhas`,
+    para quem baixou saber o que ficou de fora em vez de descobrir depois.
+    """
+    entrega = Entrega()
+    consulta = f"?somente_negativas={'1' if somente_negativas else '0'}"
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
+        indice: list[str] = []
+
+        for maquina in (cfg.rede.maquinas or (None,)):
+            nome = maquina.nome if maquina else (cfg.rede.nome or "esta máquina")
+            try:
+                origem = _pacote_da_maquina(cfg, maquina, mes, consulta)
+            except Exception as erro:
+                entrega.falhas[nome] = f"{type(erro).__name__}: {erro}"
+                continue
+
+            try:
+                with zipfile.ZipFile(origem) as vindo:
+                    for item in vindo.infolist():
+                        if item.filename == "indice.csv":
+                            linhas = vindo.read(item).decode("utf-8").splitlines()
+                            indice.extend(linhas[1:])   # o cabeçalho é um só
+                            continue
+                        if item.filename in pacote.namelist():
+                            continue        # mesmo órgão em duas máquinas
+                        pacote.writestr(item, vindo.read(item))
+                        entrega.arquivos += 1
+                        entrega.por_maquina[nome] = entrega.por_maquina.get(nome, 0) + 1
+            finally:
+                if isinstance(origem, Path):
+                    origem.unlink(missing_ok=True)
+
+        pacote.writestr(
+            "indice.csv",
+            "\n".join(["orgao;tipo;empresa;documento;emitida_em;valida_ate;arquivo",
+                       *indice]))
+    return entrega
+
+
+def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
+                       consulta: str) -> Path:
+    """Traz (ou monta) o pacote de uma máquina, num arquivo temporário."""
+    temporario = Path(tempfile.mkstemp(suffix=".zip", prefix="acta_")[1])
+
+    if maquina is None:
+        from cnd.infra.db import conectar_leitura
+        from cnd.web.relatorio import zipar_pdfs
+
+        with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
+            temporario.write_bytes(zipar_pdfs(
+                conn, mes, consulta.endswith("=1"),
+                nomes={c: o.rotulo for c, o in cfg.orgaos.items()}))
+        return temporario
+
+    baixar(maquina, f"/certidoes/{mes}.zip{consulta}", temporario,
+           cfg.rede.senha)
+    return temporario
 
 
 def baixar(maquina: Maquina, rota: str, destino: Path, senha: str = "") -> Path:

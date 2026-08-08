@@ -19,8 +19,8 @@ from fastapi import APIRouter
 
 from cnd.core import breaker, tempo
 from cnd.infra import heartbeat
-from cnd.infra.config import Config
-from cnd.web import consultas
+from cnd.infra.config import Config, nome_do_orgao
+from cnd.web import consultas, relatorio
 
 # Quantas linhas de "o que o robô acabou de fazer" cada máquina devolve.
 # Suficiente para ver o ritmo sem transformar a resposta num relatório.
@@ -61,6 +61,10 @@ def montar(obter_config: Callable[[], Config],
                 estado_breaker = breaker.consultar(conn, codigo)
                 orgaos.append({
                     "orgao": codigo,
+                    # Quem conhece o nome de exibição é a máquina que atende
+                    # o órgão; o console só repassa o que ela mandar.
+                    "rotulo": (cfg.orgaos[codigo].rotulo if codigo in cfg.orgaos
+                               else nome_do_orgao(codigo)),
                     "total": resumo.total,
                     "concluidos": resumo.concluidos,
                     "pendentes": resumo.pendentes,
@@ -91,6 +95,10 @@ def montar(obter_config: Callable[[], Config],
                 # máquinas mostra os dois lado a lado, e uma segunda ida à
                 # rede dobraria a espera de cada máquina consultada.
                 "atividade": consultas.ultimas_tentativas(conn, ITENS_DE_ATIVIDADE),
+                # Os meses com certidão guardada. O pacote é entregue por
+                # mês, não por lote — cada máquina numera os lotes por conta,
+                # e "lote 7" não quer dizer nada fora dela.
+                "meses": relatorio.meses_com_certidao(conn),
                 "lotes": [{"id": lote["id"], "descricao": lote["descricao"],
                            "arquivo": lote["arquivo_origem"],
                            "itens": lote["jobs"],
