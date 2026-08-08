@@ -18,7 +18,7 @@ from collections.abc import Callable
 from fastapi import APIRouter
 
 from cnd.core import breaker, tempo
-from cnd.infra import heartbeat
+from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config, nome_do_orgao
 from cnd.web import consultas, relatorio
 
@@ -85,6 +85,14 @@ def montar(obter_config: Callable[[], Config],
             return {
                 "maquina": cfg.rede.nome or platform.node(),
                 "agora": tempo.agora_iso(),
+                # Memória, disco e tempo ligada. Disco cheio faz o robô
+                # emitir a certidão e não conseguir salvá-la, que é o pior
+                # jeito possível de descobrir que faltava espaço.
+                "saude": maquina.ler(cfg.pasta_certidoes).como_dicionario(),
+                "papel": "robo" if cfg.rede.roda_robo else "console",
+                # A própria máquina informa o AnyDesk dela — quem cadastrou
+                # foi quem estava na frente, na hora de instalar.
+                "anydesk": cfg.rede.anydesk,
                 "robo_ativo": (idade is not None
                                and idade <= cfg.alertas.heartbeat_timeout_s),
                 "ultimo_sinal_ha_s": round(idade) if idade is not None else None,

@@ -124,6 +124,44 @@ def desenhar_icone_app(tamanho: int = 256) -> Image.Image:
     return imagem.resize((tamanho, tamanho), Image.LANCZOS)
 
 
+ARQUIVOS_DE_ICONE = ("segoeicons.ttf", "segmdl2.ttf")
+
+
+def desenhar_glifo(codigo: str, cor: str, tamanho: int = 18) -> Image.Image | None:
+    """Rende um ícone do Windows como imagem de fundo transparente.
+
+    Rótulo de texto por cima de um botão carrega o próprio fundo, e ele
+    aparece como um retângulo recortado assim que o botão muda de cor no
+    hover ou na seleção. Imagem com canal alfa compõe sobre qualquer fundo.
+
+    Devolve None quando a fonte de ícones não existe — Windows mais antigo,
+    ou instalação sem ela. Aí o menu fica só com o texto, que é melhor do
+    que um quadradinho de glifo ausente.
+    """
+    from pathlib import Path
+
+    from PIL import ImageFont
+
+    for nome in ARQUIVOS_DE_ICONE:
+        caminho = Path("C:/Windows/Fonts") / nome
+        if not caminho.exists():
+            continue
+        try:
+            escala = 4
+            fonte = ImageFont.truetype(str(caminho), tamanho * escala)
+            lado = tamanho * escala
+            imagem = Image.new("RGBA", (lado, lado), (0, 0, 0, 0))
+            desenho = ImageDraw.Draw(imagem)
+            caixa = desenho.textbbox((0, 0), codigo, font=fonte)
+            desenho.text(((lado - caixa[2] - caixa[0]) / 2,
+                          (lado - caixa[3] - caixa[1]) / 2),
+                         codigo, font=fonte, fill=cor)
+            return imagem.resize((tamanho, tamanho), Image.LANCZOS)
+        except OSError:
+            continue
+    return None
+
+
 def salvar_icone_janela(caminho) -> None:
     """Grava o .ico da janela e da barra de tarefas."""
     desenhar_icone_app(256).save(

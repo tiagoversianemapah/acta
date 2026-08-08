@@ -13,12 +13,15 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import os
+import subprocess
 import sys
 import tempfile
 import threading
+import time
 import webbrowser
 from pathlib import Path
-from tkinter import TclError, filedialog, messagebox, ttk
+from tkinter import TclError, filedialog, messagebox, simpledialog, ttk
 from typing import ClassVar
 
 import customtkinter as ctk
@@ -279,9 +282,10 @@ class Aplicativo(ctk.CTk):
 
         self.botoes_menu: dict[str, ctk.CTkButton] = {}
         self.marcadores_menu: dict[str, ctk.CTkFrame] = {}
-        self.icones_menu: dict[str, ctk.CTkLabel] = {}
+        self.icones_menu: dict[str, tuple] = {}
         for indice, (chave, rotulo, icone) in enumerate(
             [("inicio", "Início", ""),
+             ("maquinas", "Máquinas", ""),
              ("itens", "Consultar itens", ""),
              ("registro", "Registro", ""),
              ("ajustes", "Ajustes", "")], start=1
@@ -297,28 +301,25 @@ class Aplicativo(ctk.CTk):
             marcador.grid(row=0, column=0, padx=(0, 12))
             marcador.grid_propagate(False)
 
-            # O ícone é um rótulo à parte, e não texto do botão: a fonte de
-            # ícones não serve para a palavra ao lado, e aplicá-la ao botão
-            # inteiro desalinha o rótulo.
+            # O ícone entra como IMAGEM do botão, não como rótulo por cima:
+            # rótulo carrega o próprio fundo e vira um retângulo recortado
+            # assim que o botão muda de cor no hover ou na seleção.
+            apagado = self._glifo(icone, marca.TEXTO_3)
+            aceso = self._glifo(icone, marca.AZUL_VIVO)
+
             botao = ctk.CTkButton(
-                item, text=f"      {rotulo}" if ICONES else f"  {rotulo}",
-                anchor="w", height=38, corner_radius=8, font=(FONTE, 13),
-                fg_color="transparent", hover_color=marca.PAPEL,
-                text_color=marca.TEXTO_2,
-                command=lambda c=chave: self.mostrar(c),
+                item, text=rotulo, anchor="w", height=38, corner_radius=8,
+                font=(FONTE, 13), fg_color="transparent",
+                hover_color=marca.PAPEL, text_color=marca.TEXTO_2,
+                image=apagado, compound="left", command=lambda c=chave:
+                self.mostrar(c),
             )
             botao.grid(row=0, column=1, sticky="ew")
 
-            if ICONES:
-                glifo = ctk.CTkLabel(item, text=icone, font=(ICONES, 14),
-                                     text_color=marca.TEXTO_3, width=16)
-                glifo.place(in_=botao, relx=0.0, rely=0.5, x=12, anchor="w")
-                glifo.bind("<Button-1>", lambda _e, c=chave: self.mostrar(c))
-                glifo.configure(cursor="hand2")
-                self.icones_menu[chave] = glifo
-
             self.botoes_menu[chave] = botao
             self.marcadores_menu[chave] = marcador
+            if apagado is not None:
+                self.icones_menu[chave] = (apagado, aceso)
 
         rodape = ctk.CTkFrame(lateral, fg_color=marca.BRANCO, corner_radius=10,
                               border_width=1, border_color=marca.BORDA)
@@ -338,6 +339,13 @@ class Aplicativo(ctk.CTk):
                                            justify="left")
         self.rotulo_detalhe.grid(row=1, column=0, columnspan=2, sticky="w",
                                  padx=16, pady=(2, 14))
+
+    def _glifo(self, codigo: str, cor: str):
+        """Ícone do Windows como CTkImage, ou None se a fonte não existir."""
+        imagem = marca.desenhar_glifo(codigo, cor, 17)
+        if imagem is None:
+            return None
+        return ctk.CTkImage(light_image=imagem, size=(17, 17))
 
     def _montar_rodape(self) -> None:
         """A faixa de baixo: versão, papel da máquina e última leitura.
@@ -381,9 +389,8 @@ class Aplicativo(ctk.CTk):
             self.marcadores_menu[nome].configure(
                 fg_color=marca.AZUL_VIVO if ativo else "transparent")
             if nome in self.icones_menu:
-                self.icones_menu[nome].configure(
-                    text_color=marca.AZUL_VIVO if ativo else marca.TEXTO_3,
-                    fg_color=marca.BARRA_ATIVO if ativo else marca.BARRA)
+                apagado, aceso = self.icones_menu[nome]
+                botao.configure(image=aceso if ativo else apagado)
         for nome, quadro in self.secoes.items():
             if nome == chave:
                 quadro.grid(row=0, column=0, sticky="nsew")
@@ -393,6 +400,8 @@ class Aplicativo(ctk.CTk):
             self._recarregar_itens()
         elif chave == "inicio":
             self._recarregar_maquinas()
+        elif chave == "maquinas":
+            self._recarregar_saude()
 
     # ------------------------------------------------------------------
     # Conteúdo
@@ -405,6 +414,7 @@ class Aplicativo(ctk.CTk):
 
         self.secoes = {
             "inicio": self._secao_inicio(area),
+            "maquinas": self._secao_maquinas(area),
             "itens": self._secao_itens(area),
             "registro": self._secao_registro(area),
             "ajustes": self._secao_ajustes(area),
@@ -479,7 +489,7 @@ class Aplicativo(ctk.CTk):
         self.botao_importar = self._botao_secundario(
             self.acoes_locais, "Importar planilha", self._importar, largura=148)
         self.botao_importar.grid(row=0, column=1)
-        if not self.cfg.rede.maquinas:
+        if self.cfg.rede.roda_robo:
             self.acoes_locais.grid(row=0, column=1, sticky="e")
 
         self._montar_veredito(quadro).grid(row=1, column=0, sticky="ew",
@@ -522,6 +532,147 @@ class Aplicativo(ctk.CTk):
                                   pady=(0, 24))
         self.painel_maquinas.grid_columnconfigure(0, weight=1)
         return quadro
+
+    # ---------------- Máquinas ----------------
+    def _secao_maquinas(self, pai) -> ctk.CTkFrame:
+        """A saúde dos computadores: memória, disco e há quanto tempo ligados.
+
+        Separada do Início de propósito. O Início responde "como vai a
+        emissão"; aqui a pergunta é outra — "a máquina aguenta?" — e é o
+        lugar de onde se acessa cada uma pelo AnyDesk.
+        """
+        quadro = ctk.CTkScrollableFrame(pai, fg_color=marca.FUNDO)
+        quadro.grid_columnconfigure(0, weight=1)
+
+        cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 16))
+        cabecalho.grid_columnconfigure(0, weight=1)
+        self._titulo(cabecalho, "Máquinas",
+                     "Memória, disco e acesso remoto de cada computador"
+                     ).grid(row=0, column=0, sticky="w")
+        self._botao_secundario(cabecalho, "Atualizar",
+                               self._recarregar_saude, largura=104).grid(
+            row=0, column=1, sticky="e")
+
+        self.painel_saude = ctk.CTkFrame(quadro, fg_color="transparent")
+        self.painel_saude.grid(row=1, column=0, sticky="ew", padx=30,
+                               pady=(0, 24))
+        self.painel_saude.grid_columnconfigure(0, weight=1)
+        return quadro
+
+    def _recarregar_saude(self) -> None:
+        for filho in self.painel_saude.winfo_children():
+            filho.destroy()
+        ctk.CTkLabel(self.painel_saude, text="Consultando as máquinas...",
+                     font=(FONTE, 12), text_color=marca.TEXTO_3).grid(
+            row=0, column=0, pady=30)
+
+        def trabalho():
+            estados = remoto.consultar_todas(self.cfg)
+            self.after(0, lambda: self._desenhar_saude(estados))
+
+        self._em_segundo_plano(trabalho, "consultar as máquinas")
+
+    def _desenhar_saude(self, estados: list) -> None:
+        for filho in self.painel_saude.winfo_children():
+            filho.destroy()
+
+        for indice, estado in enumerate(estados):
+            cartao = self._cartao(self.painel_saude)
+            cartao.grid(row=indice, column=0, sticky="ew", pady=(0, 12))
+            cartao.grid_columnconfigure(0, weight=1)
+
+            topo = ctk.CTkFrame(cartao, fg_color="transparent")
+            topo.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 0))
+            topo.grid_columnconfigure(0, weight=1)
+
+            titulo = ctk.CTkLabel(topo, text=estado.rotulo.upper(),
+                                  font=(FONTE, 15, "bold"), anchor="w",
+                                  text_color=marca.AZUL_VIVO
+                                  if estado.acessavel else marca.TEXTO)
+            titulo.grid(row=0, column=0, sticky="w")
+            if estado.acessavel:
+                self._transformar_em_link(titulo, estado)
+            self._etiqueta(topo, *estado.situacao).grid(row=0, column=1,
+                                                        sticky="e")
+
+            legenda = estado.subtitulo
+            saude = estado.saude
+            if saude.get("nome") and saude["nome"] not in legenda:
+                legenda = f"{saude['nome']}  ·  {legenda}" if legenda \
+                    else saude["nome"]
+            ctk.CTkLabel(topo, text=legenda, font=(FONTE, 11),
+                         text_color=marca.TEXTO_3, anchor="w").grid(
+                row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
+
+            if not saude:
+                ctk.CTkLabel(cartao, text=estado.erro or
+                             "sem informação de hardware", font=(FONTE, 11),
+                             text_color=marca.TEXTO_3, anchor="w").grid(
+                    row=1, column=0, sticky="w", padx=22, pady=(10, 18))
+                continue
+
+            medidas = ctk.CTkFrame(cartao, fg_color="transparent")
+            medidas.grid(row=1, column=0, sticky="ew", padx=22, pady=(14, 6))
+            medidas.grid_columnconfigure((0, 1), weight=1, uniform="medida")
+
+            usada, total = saude["ram_usada_gb"], saude["ram_total_gb"]
+            self._medidor(medidas, "Memória",
+                          f"{usada:.1f} de {total:.1f} GB".replace(".", ","),
+                          usada / total if total else 0,
+                          ).grid(row=0, column=0, sticky="ew", padx=(0, 18))
+
+            livre, disco = saude["disco_livre_gb"], saude["disco_total_gb"]
+            self._medidor(medidas, "Disco",
+                          f"{livre:.0f} GB livres de {disco:.0f} GB",
+                          (disco - livre) / disco if disco else 0,
+                          ).grid(row=0, column=1, sticky="ew")
+
+            rodape = f"ligada há {_duracao(saude['ligada_ha_h'])}"
+            if estado.roda_robo:
+                rodape += "   ·   emite certidões"
+            else:
+                rodape += "   ·   só acompanha"
+            ctk.CTkLabel(cartao, text=rodape, font=(FONTE, 11),
+                         text_color=marca.TEXTO_3, anchor="w").grid(
+                row=2, column=0, sticky="w", padx=22, pady=(4, 0))
+
+            if saude.get("avisos"):
+                ctk.CTkLabel(cartao, text="⚠  " + " · ".join(saude["avisos"]),
+                             font=(FONTE, 11, "bold"), text_color=marca.AMBAR,
+                             anchor="w").grid(row=3, column=0, sticky="w",
+                                              padx=22, pady=(6, 0))
+            ctk.CTkFrame(cartao, fg_color="transparent", height=14).grid(row=4,
+                                                                        column=0)
+
+    def _medidor(self, pai, titulo: str, detalhe: str, fracao: float):
+        """Barra de uso com legenda. Vermelha quando aperta.
+
+        O limiar é 90%: abaixo disso a máquina só está usando o que tem;
+        acima, é o ponto em que o Windows começa a paginar e o robô cego
+        passa a clicar atrasado.
+        """
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
+        caixa.grid_columnconfigure(0, weight=1)
+        apertado = fracao >= 0.9
+
+        ctk.CTkLabel(caixa, text=titulo, font=(FONTE, 11, "bold"),
+                     text_color=marca.TEXTO_2, anchor="w").grid(row=0, column=0,
+                                                                sticky="w")
+        ctk.CTkLabel(caixa, text=f"{fracao * 100:.0f}%", font=(FONTE, 11),
+                     text_color=marca.VERMELHO if apertado else marca.TEXTO_3
+                     ).grid(row=0, column=1, sticky="e")
+        barra = ctk.CTkProgressBar(caixa, height=6, corner_radius=3,
+                                   progress_color=marca.VERMELHO if apertado
+                                   else marca.AZUL_VIVO,
+                                   fg_color=marca.PAPEL_2)
+        barra.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 4))
+        barra.set(min(max(fracao, 0.0), 1.0))
+        ctk.CTkLabel(caixa, text=detalhe, font=(FONTE, 11),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=2, column=0,
+                                                                columnspan=2,
+                                                                sticky="w")
+        return caixa
 
     def _montar_veredito(self, pai) -> ctk.CTkFrame:
         """A frase que responde 'posso ir embora?' sem fazer conta.
@@ -820,7 +971,7 @@ class Aplicativo(ctk.CTk):
     def _acessar(self, estado) -> None:
         """Abre o AnyDesk já apontado para aquela máquina."""
         try:
-            acesso.abrir(estado.maquina.anydesk)
+            acesso.abrir(estado.anydesk)
         except RuntimeError as erro:
             messagebox.showwarning(f"Acessar {estado.rotulo}", str(erro))
 
@@ -1028,6 +1179,10 @@ class Aplicativo(ctk.CTk):
              "Abre o portal e desenha as marcas sobre uma foto da tela, para "
              "você ver se caíram nos lugares certos.",
              "Conferir", self._conferir_calibragem),
+            ("Número do AnyDesk desta máquina",
+             "Guarda o número aqui para que o computador que acompanha "
+             "consiga acessá-la clicando no nome dela.",
+             "Cadastrar", self._cadastrar_anydesk),
             ("Testar avisos",
              "Publica uma mensagem de teste no canal do Teams.",
              "Enviar teste", self._testar_alerta),
@@ -1214,20 +1369,104 @@ class Aplicativo(ctk.CTk):
         self._em_segundo_plano(trabalho, "devolver os itens à fila")
 
     def _calibrar(self) -> None:
-        messagebox.showinfo(
-            "Calibragem",
-            "A calibragem é feita no terminal, porque você precisa apontar o "
-            "mouse para os campos do portal — e esta janela na frente "
-            "atrapalharia a medição.\n\n"
-            "Abra o Prompt de Comando na pasta do projeto e rode:\n\n"
-            "    python -m cnd.cli calibrar")
+        """Abre a calibragem numa janela de console e sai da frente.
+
+        O aplicativo se minimiza porque a calibragem pede que você aponte o
+        mouse para os campos do portal — com esta janela na frente, os
+        pontos medidos seriam os dela.
+        """
+        if not messagebox.askyesno(
+            "Calibrar a tela",
+            "Vou abrir uma janela de comando com as instruções e minimizar "
+            "este aplicativo.\n\n"
+            "Deixe o portal da Receita aberto no Edge, em tela cheia, e siga "
+            "o que a janela pedir: apontar o mouse para cada campo e ficar "
+            "parado até ele registrar.\n\nComeçar agora?"
+        ):
+            return
+        self.iconify()
+        self._abrir_no_console(["calibrar"])
 
     def _conferir_calibragem(self) -> None:
+        """Desenha as marcas salvas sobre uma foto da tela e abre a imagem."""
+        destino = (RAIZ_PROJETO / "data" / "calibragem" /
+                   "rfb_cego-conferencia.png")
+        if not messagebox.askyesno(
+            "Conferir a calibragem",
+            "Vou tirar uma foto da tela e desenhar em cima os pontos "
+            "gravados, para você ver se caíram nos lugares certos.\n\n"
+            "Deixe o portal aberto no Edge como o robô vai encontrá-lo. "
+            "Este aplicativo se minimiza durante a foto.\n\nContinuar?"
+        ):
+            return
+
+        self.iconify()
+
+        def trabalho():
+            from cnd.adapters.calibragem import conferir
+
+            time.sleep(1.2)     # tempo de a janela sumir da foto
+            conferir(RAIZ_PROJETO / "data" / "calibragem" / "rfb_cego.json",
+                     destino)
+            self.after(0, lambda: self._mostrar_conferencia(destino))
+
+        self._em_segundo_plano(trabalho, "conferir a calibragem")
+
+    def _mostrar_conferencia(self, destino: Path) -> None:
+        self.deiconify()
+        if messagebox.askyesno(
+            "Conferência pronta",
+            f"Imagem salva em:\n{destino}\n\nAbrir agora?"
+        ):
+            with contextlib.suppress(OSError):
+                os.startfile(destino)
+
+    def _cadastrar_anydesk(self) -> None:
+        """Guarda o número do AnyDesk desta máquina no config.toml.
+
+        Mora no config da própria máquina, e não na lista do console: quem
+        sabe o número é quem está na frente dela, na hora de instalar. O
+        console lê pela rede e não precisa que ninguém redigite.
+        """
+        from cnd.infra import ajustes
+
+        atual = ajustes.ler_valor("rede", "anydesk")
+        numero = simpledialog.askstring(
+            "Número do AnyDesk",
+            "Abra o AnyDesk nesta máquina e copie o número que aparece em "
+            '"Este computador".\n\nPode colar com os espaços.',
+            initialvalue=atual, parent=self)
+        if numero is None:
+            return
+
+        limpo = acesso.normalizar(numero)
+        if numero.strip() and not limpo:
+            messagebox.showwarning(
+                "Número inválido",
+                "Não reconheci um número do AnyDesk aí. Ele tem só dígitos "
+                "(ex.: 123 456 789) ou é um apelido com @ (ex.: acta@ad).")
+            return
+
+        ajustes.gravar_valor("rede", "anydesk", limpo)
+        self.cfg = carregar()
         messagebox.showinfo(
-            "Conferir calibragem",
-            "Rode no terminal:\n\n    python -m cnd.cli calibrar --conferir\n\n"
-            "Ele salva uma imagem com as marcas desenhadas sobre a tela do "
-            "portal, na pasta data\\calibragem.")
+            "Número guardado",
+            f"AnyDesk desta máquina: {limpo or '(nenhum)'}\n\n"
+            "O computador que acompanha vai enxergar assim que consultar "
+            "esta máquina de novo.")
+
+    def _abrir_no_console(self, argumentos: list[str]) -> None:
+        """Roda um comando do cnd numa janela de console visível.
+
+        Visível de propósito: são comandos que conversam com quem está na
+        frente da máquina — pedem para apontar o mouse, esperam confirmação.
+        Escondê-los deixaria a pessoa esperando um robô que espera por ela.
+        """
+        from cnd.desktop.estado import _comando_base
+
+        subprocess.Popen(_comando_base() + argumentos, cwd=str(RAIZ_PROJETO),
+                         creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE",
+                                               0))
 
     def _testar_alerta(self) -> None:
         def trabalho():

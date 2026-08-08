@@ -49,14 +49,20 @@ class EstadoRemoto:
         return self.maquina.orgao or self.nome
 
     @property
-    def acessavel(self) -> bool:
-        """Se dá para entrar nela pelo AnyDesk.
+    def anydesk(self) -> str:
+        """O número para acessá-la.
 
-        Não depende de a máquina estar respondendo: quando ela some do
-        painel é exatamente quando alguém precisa entrar para ver o que
-        houve.
+        Vale primeiro o que a própria máquina informou, porque foi
+        cadastrado por quem estava na frente dela. O da lista do console é
+        a reserva — e é ele que salva quando ela está fora do ar, que é
+        justamente quando alguém precisa entrar.
         """
-        return bool(self.maquina.anydesk)
+        return self.dados.get("anydesk") or self.maquina.anydesk
+
+    @property
+    def acessavel(self) -> bool:
+        """Se dá para entrar nela pelo AnyDesk."""
+        return bool(self.anydesk)
 
     @property
     def local(self) -> bool:
@@ -90,6 +96,15 @@ class EstadoRemoto:
     def meses(self) -> list[str]:
         """Meses com certidão guardada, do mais recente para trás."""
         return self.dados.get("meses", [])
+
+    @property
+    def saude(self) -> dict:
+        """Memória, disco e tempo ligada daquele computador."""
+        return self.dados.get("saude", {})
+
+    @property
+    def roda_robo(self) -> bool:
+        return self.dados.get("papel", "robo") == "robo"
 
     @property
     def rotulo_do_orgao(self) -> str:
@@ -176,19 +191,22 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     import platform
 
     from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
+    from cnd.infra.maquina import ler as ler_saude
     from cnd.web.consultas import eta_horas
 
     panorama = ler_panorama(cfg)
-    # Sem AnyDesk de propósito: é o computador em que a pessoa já está, e
-    # oferecer acesso remoto a si mesmo só confundiria.
-    maquina = Maquina(cfg.rede.nome or platform.node(), "")
-    return EstadoRemoto(maquina, online=True, dados={
-        "maquina": maquina.nome,
+    # Sem AnyDesk no cartão local: é o computador em que a pessoa já está,
+    # e oferecer acesso remoto a si mesmo só confundiria.
+    esta = Maquina(cfg.rede.nome or platform.node(), "")
+    return EstadoRemoto(esta, online=True, dados={
+        "maquina": esta.nome,
         "robo_ativo": panorama.robo_ativo,
         "lote_id": panorama.lote_id,
         "lote_nome": panorama.lote_nome,
         "atividade": ler_atividade(cfg),
         "meses": ler_meses(cfg),
+        "saude": ler_saude(cfg.pasta_certidoes).como_dicionario(),
+        "papel": "robo" if cfg.rede.roda_robo else "console",
         "ultimo_sinal_ha_s": (round(panorama.robo_idade_s)
                               if panorama.robo_idade_s is not None else None),
         "orgaos": [{

@@ -190,7 +190,29 @@ class ConfigRede:
 
     nome: str = ""                              # como aparece no aplicativo
     senha: str = ""                             # senha compartilhada, opcional
+    # O AnyDesk DESTA máquina. Quem sabe o número é quem está na frente
+    # dela; o console lê pela rede em vez de alguém redigitar em dois
+    # lugares. O da lista `maquinas` continua valendo como reserva, para
+    # quando a máquina estiver fora do ar — que é quando mais se precisa.
+    anydesk: str = ""
     maquinas: tuple[Maquina, ...] = ()
+    # "robo" (emite certidões) ou "console" (só acompanha). Vazio decide
+    # sozinho: quem lista outras máquinas está acompanhando-as.
+    papel: str = ""
+
+    @property
+    def roda_robo(self) -> bool:
+        """Se esta máquina emite certidões.
+
+        Manda o que o operador escreveu; sem nada escrito, a presença de
+        outras máquinas na lista é o indício — quem acompanha três robôs
+        não é um deles. O que está em jogo é mostrar ou não o botão de
+        iniciar o robô, e botão que não serve àquela máquina é convite a
+        alguém apertar por engano.
+        """
+        if self.papel:
+            return self.papel.strip().lower() != "console"
+        return not self.maquinas
 
     def todas(self) -> tuple[Maquina, ...]:
         """As máquinas a consultar. Vazio = só esta, pelo endereço local."""
@@ -266,6 +288,8 @@ def carregar(caminho: Path | None = None) -> Config:
     rede = ConfigRede(
         nome=rede_bruta.get("nome", ""),
         senha=rede_bruta.get("senha", ""),
+        papel=rede_bruta.get("papel", ""),
+        anydesk=str(rede_bruta.get("anydesk", "")).strip(),
         maquinas=tuple(
             Maquina(nome=m.get("nome", m.get("url", "")), url=m.get("url", ""),
                     orgao=m.get("orgao", ""),
