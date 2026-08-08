@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import os
 import sys
 import tempfile
 import threading
@@ -456,6 +457,9 @@ class Aplicativo(ctk.CTk):
         for filho in self.painel_maquinas.winfo_children():
             filho.destroy()
 
+        if not self.cfg.rede.maquinas:
+            self._explicar_rede()
+
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_maquinas)
             cartao.grid(row=indice, column=0, sticky="ew", pady=(0, 12))
@@ -566,6 +570,65 @@ class Aplicativo(ctk.CTk):
         rotulo.bind("<Enter>", lambda _e: rotulo.configure(font=sobre))
         rotulo.bind("<Leave>", lambda _e: rotulo.configure(font=normal))
         rotulo.bind("<Button-1>", lambda _e: self._acessar(estado))
+
+    def _explicar_rede(self) -> None:
+        """Diz como pôr as outras máquinas nesta tela.
+
+        Sem isto, quem abre a tela vê um cartão só e não tem como adivinhar
+        que faltam três linhas num arquivo de configuração. A explicação
+        some sozinha assim que houver máquinas cadastradas.
+        """
+        cartao = ctk.CTkFrame(self.painel_maquinas, fg_color=marca.BRANCO,
+                              corner_radius=12, border_width=1,
+                              border_color=marca.BORDA_FORTE)
+        cartao.grid(row=99, column=0, sticky="ew", pady=(4, 0))
+        cartao.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(cartao, text="Só esta máquina está cadastrada",
+                     font=(FONTE, 14, "bold"), text_color=marca.TEXTO,
+                     anchor="w").grid(row=0, column=0, sticky="w",
+                                      padx=22, pady=(18, 6))
+        ctk.CTkLabel(
+            cartao, anchor="w", justify="left", font=(FONTE, 12),
+            text_color=marca.TEXTO_2, wraplength=820,
+            text=("Cada computador do robô roda o seu próprio ACTA e responde "
+                  "pela rede. Este aqui pergunta a todos e junta o quadro — não "
+                  "existe banco central nem pasta compartilhada.\n\n"
+                  "EM CADA MÁQUINA DO ROBÔ\n"
+                  "1.  no config.toml dela, preencha  [rede] nome\n"
+                  "2.  libere a porta no Firewall (uma vez, como "
+                  "administrador):\n"
+                  "        netsh advfirewall firewall add rule name=\"ACTA\" "
+                  "dir=in action=allow protocol=TCP localport=8000\n"
+                  "3.  deixe o painel no ar:   cnd.exe painel --host 0.0.0.0\n"
+                  "        para subir sozinho no logon, ponha um atalho desse "
+                  "comando em  shell:startup\n\n"
+                  "NESTE COMPUTADOR\n"
+                  "4.  liste as máquinas em  [rede] maquinas  do config.toml, "
+                  "com orgao, nome, url e anydesk\n"
+                  "5.  volte aqui e clique em Atualizar")
+        ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 14))
+
+        rodape = ctk.CTkFrame(cartao, fg_color="transparent")
+        rodape.grid(row=2, column=0, sticky="w", padx=22, pady=(0, 18))
+        self._botao_secundario(rodape, "Abrir o config.toml",
+                               self._abrir_config, largura=170).grid(row=0,
+                                                                     column=0)
+        ctk.CTkLabel(rodape, text="As instruções completas estão em "
+                                  "docs/07-instalacao-nas-maquinas.md",
+                     font=(FONTE, 11), text_color=marca.TEXTO_3).grid(
+            row=0, column=1, padx=(14, 0))
+
+    def _abrir_config(self) -> None:
+        """Abre o config.toml no editor padrão do Windows."""
+        caminho = RAIZ_PROJETO / "config.toml"
+        if not caminho.exists():
+            messagebox.showwarning(
+                "Configuração não encontrada",
+                f"Não achei o arquivo em:\n{caminho}")
+            return
+        with contextlib.suppress(OSError):
+            os.startfile(caminho)
 
     def _acessar(self, estado) -> None:
         """Abre o AnyDesk já apontado para aquela máquina."""

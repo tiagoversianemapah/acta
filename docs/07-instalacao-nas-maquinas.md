@@ -176,11 +176,42 @@ sem utilidade. O pacote fica em 50 MB.
 3. calibre o robô cego naquela tela:
    `cnd.exe calibrar` — a calibragem é guardada em proporções da janela,
    mas a posição dos campos ainda depende do zoom e da resolução dela;
-4. suba o painel para que o aplicativo a enxergue:
+4. **libere a porta 8000 no Firewall do Windows** (uma vez, num prompt como
+   administrador):
+
+   ```
+   netsh advfirewall firewall add rule name="ACTA" dir=in action=allow protocol=TCP localport=8000
+   ```
+
+   Sem isso o painel sobe, responde em `127.0.0.1` na própria máquina, e é
+   silenciosamente recusado para qualquer outro computador — o sintoma é a
+   máquina aparecer como "Sem resposta" no aplicativo, sem erro nenhum no
+   log dela. É a causa número um de a tela Máquinas não funcionar.
+5. **dê um endereço fixo à máquina.** O `config.toml` do seu computador
+   guarda o IP dela; se o DHCP trocar o número num reinício, o cartão
+   simplesmente para de responder. Ou reserve o IP no roteador, ou use o
+   nome da máquina na URL (`http://PC-CND-01:8000`), que a rede Windows
+   resolve sozinha e não muda;
+6. suba o painel para que o aplicativo a enxergue:
    `cnd.exe painel --host 0.0.0.0`
-   (para subir sozinho no logon, ponha um atalho desse comando em
-   `shell:startup`);
-5. instale o AnyDesk e anote o número que aparece em "Este computador".
+
+   Para subir sozinho quando alguém liga a máquina: `Win+R`,
+   `shell:startup`, e ponha ali um atalho para esse comando. O robô também
+   precisa estar rodando — o painel só mostra, quem trabalha é o `cnd rodar`;
+7. instale o AnyDesk e anote o número que aparece em "Este computador".
+
+### Conferir antes de sair da máquina
+
+Do **seu** computador, com a máquina do robô ligada:
+
+```powershell
+curl http://192.168.0.21:8000/ping
+```
+
+- respondeu um JSON → está tudo certo, pode cadastrar no `config.toml`
+- "não foi possível conectar" → firewall, ou o painel não está no ar
+- pediu senha (401) → certo também: significa que `[rede] senha` está
+  valendo. O aplicativo manda a senha; o `curl` não.
 
 ## Instalar no seu computador
 
