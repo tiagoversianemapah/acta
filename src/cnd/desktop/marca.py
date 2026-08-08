@@ -19,33 +19,43 @@ NOME_PRODUTO = "ACTA"
 DESCRICAO_PRODUTO = "Emissão de Certidões"
 
 # --- marca -------------------------------------------------------------
-AZUL = "#2B2A6B"          # azul-marinho do logotipo
-AZUL_CLARO = "#3E3D91"
-AZUL_ESCURO = "#1E1D4E"
+AZUL = "#2B2A6B"          # azul-marinho do logotipo: ações principais
+AZUL_CLARO = "#3B3A8F"    # o mesmo azul sob o cursor
+AZUL_ESCURO = "#242353"   # item selecionado na barra lateral
+AZUL_PROFUNDO = "#17163C" # a própria barra lateral
 AMARELO = "#FCB817"       # a seta do logotipo
 AMARELO_ESCURO = "#D99A0A"
 
-# --- superfícies (tema claro) -----------------------------------------
-BRANCO = "#FFFFFF"
-FUNDO = "#FFFFFF"
-PAPEL = "#F5F7FA"         # cartões e faixas
-PAPEL_2 = "#EDF0F4"
-BORDA = "#E4E8ED"
+# --- superfícies -------------------------------------------------------
+# A página é cinza e os cartões são brancos, não o contrário. É o que cria
+# profundidade sem sombra nenhuma: cartão branco sobre cinza se destaca
+# sozinho, enquanto branco sobre branco depende de uma borda que, fina o
+# bastante para ser elegante, fica invisível na tela do escritório.
+BRANCO = "#FFFFFF"        # cartões, campos, tabela
+FUNDO = "#F4F6F9"         # a página
+ZEBRA = "#FAFBFD"         # linha alternada da tabela — quase imperceptível
+PAPEL = "#EEF1F6"         # sob o cursor, cabeçalho de tabela
+PAPEL_2 = "#E1E6EE"       # trilho da barra de progresso
+BORDA = "#E2E6ED"
+BORDA_FORTE = "#CFD5DF"   # borda de campo, que precisa se ver
 
 # --- texto -------------------------------------------------------------
-TEXTO = "#171A21"
-TEXTO_2 = "#59626F"
-TEXTO_3 = "#8A94A2"
-TEXTO_NA_BARRA = "#EDEEF5"
-TEXTO_NA_BARRA_2 = "#9E9FC4"
+TEXTO = "#111827"
+TEXTO_2 = "#4B5563"
+TEXTO_3 = "#8892A4"
+TEXTO_NA_BARRA = "#F1F2FA"
+TEXTO_NA_BARRA_2 = "#9695C8"
 
 # --- estados -----------------------------------------------------------
-VERDE = "#1B7F4E"
-VERDE_FUNDO = "#E9F5EE"
-AMBAR = "#8A5D00"
-AMBAR_FUNDO = "#FDF4E0"
-VERMELHO = "#B02A1C"
-VERMELHO_FUNDO = "#FBECEA"
+# Escolhidos para passar em contraste sobre branco (AA), porque são eles
+# que dizem se a empresa está limpa — informação que não pode depender de
+# quem enxerga bem.
+VERDE = "#0F7A45"
+VERDE_FUNDO = "#E6F4EC"
+AMBAR = "#8A5A0B"
+AMBAR_FUNDO = "#FDF3E0"
+VERMELHO = "#B3261E"
+VERMELHO_FUNDO = "#FBEBE9"
 
 
 def desenhar_marca(tamanho: int = 128, sobre_escuro: bool = False) -> Image.Image:

@@ -19,6 +19,7 @@ import threading
 import webbrowser
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from typing import ClassVar
 
 import customtkinter as ctk
 from PIL import Image, ImageDraw, ImageTk
@@ -126,47 +127,71 @@ class Aplicativo(ctk.CTk):
     # Barra lateral
     # ------------------------------------------------------------------
     def _montar_lateral(self) -> None:
-        lateral = ctk.CTkFrame(self, width=236, corner_radius=0, fg_color=marca.AZUL)
+        lateral = ctk.CTkFrame(self, width=240, corner_radius=0,
+                               fg_color=marca.AZUL_PROFUNDO)
         lateral.grid(row=0, column=0, sticky="nsew")
-        lateral.grid_rowconfigure(5, weight=1)
+        lateral.grid_rowconfigure(6, weight=1)
+        lateral.grid_columnconfigure(0, weight=1)
         lateral.grid_propagate(False)
 
         topo = ctk.CTkFrame(lateral, fg_color="transparent")
-        topo.grid(row=0, column=0, sticky="ew", padx=22, pady=(26, 30))
+        topo.grid(row=0, column=0, sticky="ew", padx=20, pady=(28, 26))
 
-        self._marca = ctk.CTkImage(marca.desenhar_marca(96), size=(26, 26))
+        self._marca = ctk.CTkImage(marca.desenhar_marca(128), size=(30, 30))
         ctk.CTkLabel(topo, image=self._marca, text="").grid(row=0, column=0,
-                                                            rowspan=2, padx=(0, 12))
-        ctk.CTkLabel(topo, text=marca.NOME_PRODUTO, font=(FONTE, 20, "bold"),
-                     text_color=marca.TEXTO_NA_BARRA).grid(row=0, column=1, sticky="w")
+                                                            rowspan=2, padx=(0, 13))
+        ctk.CTkLabel(topo, text=marca.NOME_PRODUTO, font=(FONTE, 21, "bold"),
+                     text_color=marca.TEXTO_NA_BARRA).grid(row=0, column=1,
+                                                           sticky="w")
         ctk.CTkLabel(topo, text="Certidões · Mapah", font=(FONTE, 11),
                      text_color=marca.TEXTO_NA_BARRA_2).grid(row=1, column=1,
                                                              sticky="w")
 
+        # Cada item é uma barrinha + um botão. A barrinha é o único lugar
+        # onde o amarelo do logotipo aparece na janela: cor que marca uma
+        # coisa só é cor que quer dizer alguma coisa.
         self.botoes_menu: dict[str, ctk.CTkButton] = {}
+        self.marcadores_menu: dict[str, ctk.CTkFrame] = {}
         for indice, (chave, rotulo) in enumerate(
             [("inicio", "Início"), ("maquinas", "Máquinas"),
              ("itens", "Consultar itens"), ("registro", "Registro"),
              ("ajustes", "Ajustes")], start=1
         ):
+            item = ctk.CTkFrame(lateral, fg_color="transparent")
+            item.grid(row=indice, column=0, sticky="ew", padx=(0, 12), pady=1)
+            item.grid_columnconfigure(1, weight=1)
+
+            # Altura explícita: um CTkFrame sem altura declarada assume 200px,
+            # e com grid_propagate desligado ele impõe isso à linha inteira.
+            marcador = ctk.CTkFrame(item, width=3, height=22, corner_radius=2,
+                                    fg_color="transparent")
+            marcador.grid(row=0, column=0, padx=(9, 10))
+            marcador.grid_propagate(False)
+
             botao = ctk.CTkButton(
-                lateral, text=rotulo, anchor="w", height=40, corner_radius=9,
+                item, text=rotulo, anchor="w", height=38, corner_radius=8,
                 font=(FONTE, 13), fg_color="transparent",
-                hover_color=marca.AZUL_CLARO, text_color=marca.TEXTO_NA_BARRA_2,
+                hover_color=marca.AZUL_ESCURO, text_color=marca.TEXTO_NA_BARRA_2,
                 command=lambda c=chave: self.mostrar(c),
             )
-            botao.grid(row=indice, column=0, sticky="ew", padx=14, pady=2)
+            botao.grid(row=0, column=1, sticky="ew")
             self.botoes_menu[chave] = botao
+            self.marcadores_menu[chave] = marcador
 
         rodape = ctk.CTkFrame(lateral, fg_color=marca.AZUL_ESCURO, corner_radius=10)
-        rodape.grid(row=6, column=0, sticky="ew", padx=14, pady=18)
-        self.pastilha = ctk.CTkLabel(rodape, text="●", font=(FONTE, 15),
+        rodape.grid(row=7, column=0, sticky="ew", padx=16, pady=16)
+        self.pastilha = ctk.CTkLabel(rodape, text="●", font=(FONTE, 14),
                                      text_color=marca.TEXTO_NA_BARRA_2)
-        self.pastilha.grid(row=0, column=0, padx=(13, 8), pady=13)
+        self.pastilha.grid(row=0, column=0, padx=(14, 9), pady=(13, 2))
         self.rotulo_situacao = ctk.CTkLabel(rodape, text="Verificando...",
-                                            font=(FONTE, 12),
-                                            text_color=marca.TEXTO_NA_BARRA)
-        self.rotulo_situacao.grid(row=0, column=1, sticky="w", pady=13)
+                                            font=(FONTE, 12, "bold"),
+                                            text_color=marca.TEXTO_NA_BARRA,
+                                            anchor="w")
+        self.rotulo_situacao.grid(row=0, column=1, sticky="w", pady=(13, 2))
+        self.rotulo_detalhe = ctk.CTkLabel(rodape, text="", font=(FONTE, 11),
+                                           text_color=marca.TEXTO_NA_BARRA_2,
+                                           anchor="w")
+        self.rotulo_detalhe.grid(row=1, column=1, sticky="w", pady=(0, 13))
 
     def mostrar(self, chave: str) -> None:
         self.secao_atual = chave
@@ -177,6 +202,8 @@ class Aplicativo(ctk.CTk):
                 text_color=marca.BRANCO if ativo else marca.TEXTO_NA_BARRA_2,
                 font=(FONTE, 13, "bold" if ativo else "normal"),
             )
+            self.marcadores_menu[nome].configure(
+                fg_color=marca.AMARELO if ativo else "transparent")
         for nome, quadro in self.secoes.items():
             if nome == chave:
                 quadro.grid(row=0, column=0, sticky="nsew")
@@ -206,18 +233,48 @@ class Aplicativo(ctk.CTk):
 
     def _titulo(self, pai, texto: str, subtitulo: str) -> ctk.CTkFrame:
         quadro = ctk.CTkFrame(pai, fg_color="transparent")
-        ctk.CTkLabel(quadro, text=texto, font=(FONTE, 25, "bold"),
+        ctk.CTkLabel(quadro, text=texto, font=(FONTE, 22, "bold"),
                      text_color=marca.TEXTO, anchor="w").grid(row=0, column=0,
                                                               sticky="w")
         ctk.CTkLabel(quadro, text=subtitulo, font=(FONTE, 12),
                      text_color=marca.TEXTO_3, anchor="w").grid(row=1, column=0,
                                                                 sticky="w",
-                                                                pady=(3, 0))
+                                                                pady=(4, 0))
         return quadro
 
     def _cartao(self, pai) -> ctk.CTkFrame:
         return ctk.CTkFrame(pai, fg_color=marca.BRANCO, corner_radius=12,
                             border_width=1, border_color=marca.BORDA)
+
+    # Cada situação tem um par de cores: a do texto e a do fundo da
+    # etiqueta. Texto colorido solto se perde no meio do cartão; com o fundo
+    # tingido, a situação da máquina é a primeira coisa que se enxerga.
+    CORES_DE_SITUACAO: ClassVar[dict[str, tuple[str, str]]] = {
+        "verde": (marca.VERDE, marca.VERDE_FUNDO),
+        "vermelho": (marca.VERMELHO, marca.VERMELHO_FUNDO),
+        "ambar": (marca.AMBAR, marca.AMBAR_FUNDO),
+        "cinza": (marca.TEXTO_2, marca.PAPEL),
+    }
+
+    def _etiqueta(self, pai, texto: str, cor: str) -> ctk.CTkFrame:
+        """Pastilha de situação: texto curto sobre fundo tingido."""
+        frente, fundo = self.CORES_DE_SITUACAO[cor]
+        quadro = ctk.CTkFrame(pai, fg_color=fundo, corner_radius=11, height=22)
+        ctk.CTkLabel(quadro, text=texto, font=(FONTE, 11, "bold"),
+                     text_color=frente).grid(row=0, column=0, padx=11, pady=4)
+        return quadro
+
+    def _botao_secundario(self, pai, texto: str, acao, largura: int = 160):
+        """Ação de apoio: contorno, não preenchimento.
+
+        Só uma ação por tela é preenchida de azul. Quando tudo é destacado,
+        nada é — e quem chega na tela não sabe por onde começar.
+        """
+        return ctk.CTkButton(
+            pai, text=texto, height=40, width=largura, corner_radius=8,
+            font=(FONTE, 13), fg_color=marca.BRANCO, hover_color=marca.PAPEL,
+            text_color=marca.TEXTO_2, border_width=1,
+            border_color=marca.BORDA_FORTE, command=acao)
 
     # ---------------- Início ----------------
     def _secao_inicio(self, pai) -> ctk.CTkFrame:
@@ -228,63 +285,64 @@ class Aplicativo(ctk.CTk):
                      ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 22))
 
         acoes = ctk.CTkFrame(quadro, fg_color="transparent")
-        acoes.grid(row=1, column=0, sticky="ew", padx=34, pady=(0, 22))
+        acoes.grid(row=1, column=0, sticky="ew", padx=34, pady=(0, 20))
 
         self.botao_robo = ctk.CTkButton(
-            acoes, text="Iniciar robô", height=44, width=170, corner_radius=22,
+            acoes, text="Iniciar robô", height=40, width=152, corner_radius=8,
             font=(FONTE, 13, "bold"), fg_color=marca.AZUL,
             hover_color=marca.AZUL_CLARO, text_color=marca.BRANCO,
             command=self._alternar_robo)
-        self.botao_robo.grid(row=0, column=0, padx=(0, 10))
+        self.botao_robo.grid(row=0, column=0, padx=(0, 8))
 
-        self.botao_importar = ctk.CTkButton(
-            acoes, text="Importar planilha", height=44, width=168, corner_radius=22,
-            font=(FONTE, 13), fg_color=marca.BRANCO, hover_color=marca.PAPEL,
-            text_color=marca.TEXTO, border_width=1, border_color=marca.BORDA,
-            command=self._importar)
-        self.botao_importar.grid(row=0, column=1, padx=(0, 10))
+        self.botao_importar = self._botao_secundario(
+            acoes, "Importar planilha", self._importar)
+        self.botao_importar.grid(row=0, column=1, padx=(0, 8))
 
         for coluna, (rotulo, acao) in enumerate(
             [("Exportar planilha", self._exportar_planilha),
              ("Baixar certidões", self._baixar_zip)], start=2
         ):
-            ctk.CTkButton(acoes, text=rotulo, height=44, width=158,
-                          corner_radius=22, font=(FONTE, 13),
-                          fg_color=marca.BRANCO, hover_color=marca.PAPEL,
-                          text_color=marca.TEXTO, border_width=1,
-                          border_color=marca.BORDA, command=acao
-                          ).grid(row=0, column=coluna, padx=(0, 10))
+            self._botao_secundario(acoes, rotulo, acao, largura=150).grid(
+                row=0, column=coluna, padx=(0, 8))
+
+        self.faixa_aviso = ctk.CTkFrame(quadro, fg_color=marca.AMBAR_FUNDO,
+                                        corner_radius=10)
+        self.rotulo_aviso = ctk.CTkLabel(self.faixa_aviso, text="",
+                                         font=(FONTE, 12), text_color=marca.AMBAR,
+                                         anchor="w", justify="left", wraplength=740)
+        self.rotulo_aviso.grid(row=0, column=0, sticky="w", padx=18, pady=13)
 
         cartao = self._cartao(quadro)
-        cartao.grid(row=2, column=0, sticky="ew", padx=34, pady=(0, 16))
+        cartao.grid(row=3, column=0, sticky="ew", padx=34, pady=(0, 14))
         cartao.grid_columnconfigure(0, weight=1)
 
         cabecalho = ctk.CTkFrame(cartao, fg_color="transparent")
-        cabecalho.grid(row=0, column=0, sticky="ew", padx=24, pady=(22, 0))
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=24, pady=(20, 0))
         cabecalho.grid_columnconfigure(1, weight=1)
 
         self.rotulo_lote = ctk.CTkLabel(cabecalho, text="Nenhum lote",
                                         font=(FONTE, 15, "bold"),
                                         text_color=marca.TEXTO, anchor="w")
         self.rotulo_lote.grid(row=0, column=0, sticky="w")
-        self.rotulo_percentual = ctk.CTkLabel(cabecalho, text="", font=(FONTE, 13),
-                                              text_color=marca.TEXTO_2, anchor="e")
+        self.rotulo_percentual = ctk.CTkLabel(cabecalho, text="",
+                                              font=(FONTE, 13, "bold"),
+                                              text_color=marca.AZUL, anchor="e")
         self.rotulo_percentual.grid(row=0, column=1, sticky="e")
 
-        self.barra = ctk.CTkProgressBar(cartao, height=8, corner_radius=4,
+        self.barra = ctk.CTkProgressBar(cartao, height=6, corner_radius=3,
                                         progress_color=marca.AZUL,
                                         fg_color=marca.PAPEL_2)
-        self.barra.grid(row=1, column=0, sticky="ew", padx=24, pady=(15, 5))
+        self.barra.grid(row=1, column=0, sticky="ew", padx=24, pady=(14, 9))
         self.barra.set(0)
 
         self.rotulo_restante = ctk.CTkLabel(cartao, text="", font=(FONTE, 11),
                                             text_color=marca.TEXTO_3, anchor="w")
-        self.rotulo_restante.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 22))
+        self.rotulo_restante.grid(row=2, column=0, sticky="w", padx=24, pady=(0, 20))
 
         numeros = ctk.CTkFrame(quadro, fg_color="transparent")
-        numeros.grid(row=3, column=0, sticky="ew", padx=34)
+        numeros.grid(row=4, column=0, sticky="ew", padx=34)
         for coluna in range(4):
-            numeros.grid_columnconfigure(coluna, weight=1)
+            numeros.grid_columnconfigure(coluna, weight=1, uniform="metrica")
 
         self.metricas: dict[str, ctk.CTkLabel] = {}
         for coluna, (chave, rotulo, cor) in enumerate([
@@ -295,22 +353,68 @@ class Aplicativo(ctk.CTk):
         ]):
             caixa = self._cartao(numeros)
             caixa.grid(row=0, column=coluna, sticky="ew",
-                       padx=(0 if coluna == 0 else 9, 0))
-            valor = ctk.CTkLabel(caixa, text="0", font=(FONTE, 30, "bold"),
-                                 text_color=cor)
-            valor.grid(row=0, column=0, sticky="w", padx=20, pady=(18, 0))
+                       padx=(0 if coluna == 0 else 10, 0))
+            caixa.grid_columnconfigure(1, weight=1)
+
+            # Rótulo em cima, número embaixo: lê-se o que é antes de quanto
+            # é. O ponto colorido carrega a cor, e o número fica escuro —
+            # quatro números berrantes lado a lado disputam atenção e
+            # nenhum ganha.
+            ctk.CTkLabel(caixa, text="●", font=(FONTE, 11),
+                         text_color=cor).grid(row=0, column=0, sticky="w",
+                                              padx=(18, 7), pady=(16, 0))
             ctk.CTkLabel(caixa, text=rotulo, font=(FONTE, 11),
-                         text_color=marca.TEXTO_3, anchor="w", wraplength=160
-                         ).grid(row=1, column=0, sticky="w", padx=20, pady=(3, 18))
+                         text_color=marca.TEXTO_2, anchor="w").grid(
+                row=0, column=1, sticky="w", padx=(0, 18), pady=(16, 0))
+
+            valor = ctk.CTkLabel(caixa, text="0", font=(FONTE, 28, "bold"),
+                                 text_color=marca.TEXTO, anchor="w")
+            valor.grid(row=1, column=0, columnspan=2, sticky="w",
+                       padx=18, pady=(2, 16))
             self.metricas[chave] = valor
 
-        self.faixa_aviso = ctk.CTkFrame(quadro, fg_color=marca.AMBAR_FUNDO,
-                                        corner_radius=10)
-        self.rotulo_aviso = ctk.CTkLabel(self.faixa_aviso, text="",
-                                         font=(FONTE, 12), text_color=marca.AMBAR,
-                                         anchor="w", justify="left", wraplength=740)
-        self.rotulo_aviso.grid(row=0, column=0, sticky="w", padx=18, pady=13)
+        # Os órgãos: o que fica embaixo do painel e explica o número de
+        # cima. Antes esta parte da tela era um vazio branco.
+        painel_orgaos = self._cartao(quadro)
+        painel_orgaos.grid(row=5, column=0, sticky="ew", padx=34, pady=(14, 28))
+        painel_orgaos.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(painel_orgaos, text="ÓRGÃOS", font=(FONTE, 10, "bold"),
+                     text_color=marca.TEXTO_3, anchor="w").grid(
+            row=0, column=0, sticky="w", padx=24, pady=(18, 4))
+        self.lista_orgaos = ctk.CTkFrame(painel_orgaos, fg_color="transparent")
+        self.lista_orgaos.grid(row=1, column=0, sticky="ew", padx=24,
+                               pady=(0, 18))
+        self.lista_orgaos.grid_columnconfigure(0, weight=1)
+        self._linhas_de_orgao: dict[str, dict] = {}
         return quadro
+
+    def _linha_de_orgao(self, codigo: str) -> dict:
+        """Cria (uma vez) a linha de um órgão e devolve seus rótulos.
+
+        Reaproveitar em vez de recriar a cada ciclo de 2s: destruir e montar
+        widgets duas vezes por segundo faz a janela piscar.
+        """
+        if codigo in self._linhas_de_orgao:
+            return self._linhas_de_orgao[codigo]
+
+        linha = ctk.CTkFrame(self.lista_orgaos, fg_color="transparent")
+        linha.grid(row=len(self._linhas_de_orgao), column=0, sticky="ew", pady=5)
+        linha.grid_columnconfigure(1, weight=1)
+
+        pastilha = ctk.CTkLabel(linha, text="●", font=(FONTE, 12),
+                                text_color=marca.TEXTO_3)
+        pastilha.grid(row=0, column=0, padx=(0, 9))
+        ctk.CTkLabel(linha, text=codigo, font=(FONTE, 12, "bold"),
+                     text_color=marca.TEXTO, anchor="w").grid(row=0, column=1,
+                                                              sticky="w")
+        detalhe = ctk.CTkLabel(linha, text="", font=(FONTE, 11),
+                               text_color=marca.TEXTO_3, anchor="e")
+        detalhe.grid(row=0, column=2, sticky="e")
+
+        self._linhas_de_orgao[codigo] = {"pastilha": pastilha,
+                                         "detalhe": detalhe}
+        return self._linhas_de_orgao[codigo]
 
     # ---------------- Máquinas ----------------
     def _secao_maquinas(self, pai) -> ctk.CTkFrame:
@@ -325,12 +429,8 @@ class Aplicativo(ctk.CTk):
                      "Cada computador roda o robô de um órgão. "
                      "Clique no nome para acessá-lo pelo AnyDesk."
                      ).grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(cabecalho, text="Atualizar", height=38, width=112,
-                      corner_radius=19, font=(FONTE, 12), fg_color=marca.BRANCO,
-                      hover_color=marca.PAPEL, text_color=marca.TEXTO,
-                      border_width=1, border_color=marca.BORDA,
-                      command=self._recarregar_maquinas).grid(row=0, column=1,
-                                                              sticky="e")
+        self._botao_secundario(cabecalho, "Atualizar", self._recarregar_maquinas,
+                               largura=104).grid(row=0, column=1, sticky="e")
 
         self.painel_maquinas = ctk.CTkFrame(quadro, fg_color="transparent")
         self.painel_maquinas.grid(row=1, column=0, sticky="ew", padx=34,
@@ -356,9 +456,6 @@ class Aplicativo(ctk.CTk):
         for filho in self.painel_maquinas.winfo_children():
             filho.destroy()
 
-        cores = {"verde": marca.VERDE, "vermelho": marca.VERMELHO,
-                 "cinza": marca.TEXTO_3}
-
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_maquinas)
             cartao.grid(row=indice, column=0, sticky="ew", pady=(0, 12))
@@ -366,12 +463,8 @@ class Aplicativo(ctk.CTk):
 
             topo = ctk.CTkFrame(cartao, fg_color="transparent")
             topo.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 0))
-            topo.grid_columnconfigure(1, weight=1)
+            topo.grid_columnconfigure(0, weight=1)
 
-            texto_situacao, cor = estado.situacao
-            ctk.CTkLabel(topo, text="●", font=(FONTE, 14),
-                         text_color=cores[cor]).grid(row=0, column=0, rowspan=2,
-                                                     padx=(0, 10))
             # O nome é o próprio acesso: clicar nele abre o AnyDesk já
             # apontado para aquela máquina. Azul e sublinhado porque é
             # assim que se lê "isto leva a algum lugar" — botão separado
@@ -380,15 +473,16 @@ class Aplicativo(ctk.CTk):
                                   font=(FONTE, 15, "bold"), anchor="w",
                                   text_color=marca.AZUL if estado.acessavel
                                   else marca.TEXTO)
-            titulo.grid(row=0, column=1, sticky="w")
+            titulo.grid(row=0, column=0, sticky="w")
             if estado.acessavel:
                 self._transformar_em_link(titulo, estado)
-            ctk.CTkLabel(topo, text=texto_situacao, font=(FONTE, 12),
-                         text_color=cores[cor]).grid(row=0, column=2, sticky="e")
+
+            self._etiqueta(topo, *estado.situacao).grid(row=0, column=1,
+                                                        sticky="e")
             if estado.subtitulo:
                 ctk.CTkLabel(topo, text=estado.subtitulo, font=(FONTE, 11),
                              text_color=marca.TEXTO_3, anchor="w").grid(
-                    row=1, column=1, columnspan=2, sticky="w")
+                    row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
             linha = 1
             if not estado.online:
@@ -453,12 +547,8 @@ class Aplicativo(ctk.CTk):
                 ]
 
             for coluna, (rotulo, acao) in enumerate(botoes):
-                ctk.CTkButton(
-                    acoes, text=rotulo, height=34, width=152,
-                    corner_radius=17, font=(FONTE, 12), fg_color=marca.BRANCO,
-                    hover_color=marca.PAPEL, text_color=marca.AZUL,
-                    border_width=1, border_color=marca.BORDA, command=acao,
-                ).grid(row=0, column=coluna, padx=(0, 9))
+                self._botao_secundario(acoes, rotulo, acao, largura=150).grid(
+                    row=0, column=coluna, padx=(0, 8))
             if not botoes:
                 acoes.grid_remove()
 
@@ -519,35 +609,42 @@ class Aplicativo(ctk.CTk):
         filtros.grid(row=1, column=0, sticky="ew", padx=34, pady=(0, 14))
 
         self.busca = ctk.CTkEntry(filtros, placeholder_text="CNPJ ou razão social",
-                                  width=250, height=38, corner_radius=19,
-                                  fg_color=marca.BRANCO, border_color=marca.BORDA,
+                                  width=250, height=40, corner_radius=8,
+                                  fg_color=marca.BRANCO,
+                                  border_color=marca.BORDA_FORTE,
                                   text_color=marca.TEXTO, font=(FONTE, 12))
-        self.busca.grid(row=0, column=0, padx=(0, 9))
+        self.busca.grid(row=0, column=0, padx=(0, 8))
         self.busca.bind("<Return>", lambda _: self._recarregar_itens())
 
         def seletor(valores: list[str], largura: int) -> ctk.CTkOptionMenu:
-            return ctk.CTkOptionMenu(
-                filtros, width=largura, height=38, corner_radius=19,
-                values=valores, fg_color=marca.BRANCO, button_color=marca.PAPEL,
-                button_hover_color=marca.PAPEL_2, text_color=marca.TEXTO,
-                dropdown_fg_color=marca.BRANCO, dropdown_text_color=marca.TEXTO,
-                dropdown_hover_color=marca.PAPEL, font=(FONTE, 12),
+            # A seta na mesma cor do campo: com cor própria, o CustomTkinter
+            # a desenha como uma pastilha colada ao lado, e o filtro parece
+            # dois controles em vez de um.
+            moldura = ctk.CTkFrame(filtros, fg_color=marca.BORDA_FORTE,
+                                   corner_radius=8)
+            menu = ctk.CTkOptionMenu(
+                moldura, width=largura, height=38, corner_radius=7,
+                values=valores, fg_color=marca.BRANCO,
+                button_color=marca.BRANCO, button_hover_color=marca.PAPEL,
+                text_color=marca.TEXTO_2, dropdown_fg_color=marca.BRANCO,
+                dropdown_text_color=marca.TEXTO, dropdown_hover_color=marca.PAPEL,
+                font=(FONTE, 12), dropdown_font=(FONTE, 12),
                 command=lambda _: self._recarregar_itens())
+            menu.grid(row=0, column=0, padx=1, pady=1)
+            menu.moldura = moldura      # quem posiciona é a moldura
+            return menu
 
         # Filtrar por RESULTADO é o que a operação pede na prática: separar
         # quem está limpa de quem tem pendência. Situação (na fila, falhou)
         # interessa a quem acompanha o processamento, não o resultado.
-        self.filtro_resultado = seletor(list(RESULTADOS), 212)
-        self.filtro_resultado.grid(row=0, column=1, padx=(0, 9))
+        self.filtro_resultado = seletor(list(RESULTADOS), 210)
+        self.filtro_resultado.moldura.grid(row=0, column=1, padx=(0, 8))
 
-        self.filtro_situacao = seletor(list(SITUACOES), 170)
-        self.filtro_situacao.grid(row=0, column=2, padx=(0, 9))
+        self.filtro_situacao = seletor(list(SITUACOES), 168)
+        self.filtro_situacao.moldura.grid(row=0, column=2, padx=(0, 8))
 
-        ctk.CTkButton(filtros, text="Atualizar", height=38, width=104,
-                      corner_radius=19, font=(FONTE, 12), fg_color=marca.BRANCO,
-                      hover_color=marca.PAPEL, text_color=marca.TEXTO,
-                      border_width=1, border_color=marca.BORDA,
-                      command=self._recarregar_itens).grid(row=0, column=3)
+        self._botao_secundario(filtros, "Atualizar", self._recarregar_itens,
+                               largura=104).grid(row=0, column=3)
 
         self.contador = ctk.CTkLabel(filtros, text="", font=(FONTE, 12),
                                      text_color=marca.TEXTO_3)
@@ -653,9 +750,11 @@ class Aplicativo(ctk.CTk):
                      ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
 
         self.caixa_log = ctk.CTkTextbox(
-            quadro, fg_color=marca.PAPEL, corner_radius=12, border_width=1,
+            quadro, fg_color=marca.BRANCO, corner_radius=12, border_width=1,
             border_color=marca.BORDA, font=("Consolas", 11),
-            text_color=marca.TEXTO_2, wrap="none")
+            text_color=marca.TEXTO_2, wrap="none",
+            scrollbar_button_color=marca.BORDA,
+            scrollbar_button_hover_color=marca.TEXTO_3)
         self.caixa_log.grid(row=1, column=0, sticky="nsew", padx=34, pady=(0, 28))
         self.caixa_log.insert("end",
                               "O registro aparece aqui quando o robô estiver rodando.\n")
@@ -698,11 +797,7 @@ class Aplicativo(ctk.CTk):
                          text_color=marca.TEXTO_3, anchor="w", justify="left",
                          wraplength=580).grid(row=1, column=0, sticky="w",
                                               padx=22, pady=(0, 18))
-            ctk.CTkButton(cartao, text=rotulo, height=36, width=142,
-                          corner_radius=18, font=(FONTE, 12),
-                          fg_color=marca.BRANCO, hover_color=marca.PAPEL,
-                          text_color=marca.AZUL, border_width=1,
-                          border_color=marca.BORDA, command=acao).grid(
+            self._botao_secundario(cartao, rotulo, acao, largura=140).grid(
                 row=0, column=1, rowspan=2, padx=22, pady=18)
         return quadro
 
@@ -891,6 +986,9 @@ class Aplicativo(ctk.CTk):
                  "ambar": marca.AMARELO, "cinza": marca.TEXTO_NA_BARRA_2}
         self.pastilha.configure(text_color=cores[cor])
         self.rotulo_situacao.configure(text=texto)
+        self.rotulo_detalhe.configure(
+            text=f"{panorama.percentual:.0f}% do lote #{panorama.lote_id}"
+                 if panorama.lote_id else "nenhum lote importado")
 
         self.botao_robo.configure(
             text="Parar robô" if rodando else "Iniciar robô",
@@ -924,16 +1022,45 @@ class Aplicativo(ctk.CTk):
                         + panorama.por_desfecho("PENDENCIA_MANUAL")))
         self.metricas["FALHAS"].configure(text=numero(panorama.falhados))
 
+        self._atualizar_orgaos(panorama, numero)
+
         suspensos = [codigo for codigo, estado in estado_dos_orgaos(self.cfg).items()
                      if estado == "ABERTO"]
         if suspensos:
             self.rotulo_aviso.configure(
                 text=f"{', '.join(suspensos)} suspenso — o portal recusou várias "
                      f"consultas seguidas. O robô retoma sozinho.")
-            self.faixa_aviso.grid(row=4, column=0, sticky="ew", padx=34,
-                                  pady=(18, 28))
+            self.faixa_aviso.grid(row=2, column=0, sticky="ew", padx=34,
+                                  pady=(0, 16))
         else:
             self.faixa_aviso.grid_remove()
+
+    def _atualizar_orgaos(self, panorama, numero) -> None:
+        """A situação de cada órgão, embaixo dos números do lote."""
+        if not panorama.resumos:
+            linha = self._linha_de_orgao("—")
+            linha["detalhe"].configure(text="nenhum órgão com itens na fila")
+            return
+
+        cores = {"FECHADO": marca.VERDE, "MEIO_ABERTO": marca.AMBAR,
+                 "ABERTO": marca.VERMELHO}
+        for resumo in panorama.resumos:
+            linha = self._linha_de_orgao(resumo.orgao)
+            linha["pastilha"].configure(
+                text_color=cores.get(resumo.breaker_estado, marca.TEXTO_3))
+
+            partes = [f"{numero(resumo.concluidos)} de {numero(resumo.total)}"]
+            if resumo.intervalo_s:
+                # Uma casa decimal abaixo de 10s: o simulador roda a 0,05s e
+                # arredondar para inteiro mostraria "1 a cada 0s".
+                ritmo = (f"{resumo.intervalo_s:.1f}".replace(".", ",")
+                         if resumo.intervalo_s < 10 else f"{resumo.intervalo_s:.0f}")
+                partes.append(f"1 a cada {ritmo}s")
+            if resumo.breaker_estado == "ABERTO":
+                partes.append("suspenso")
+            elif resumo.falhados:
+                partes.append(f"{numero(resumo.falhados)} falhas")
+            linha["detalhe"].configure(text="   ·   ".join(partes))
 
     def _drenar_registro(self) -> None:
         linhas = self.robo.drenar()
