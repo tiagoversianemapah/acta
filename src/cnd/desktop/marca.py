@@ -39,12 +39,23 @@ PAPEL_2 = "#E1E6EE"       # trilho da barra de progresso
 BORDA = "#E2E6ED"
 BORDA_FORTE = "#CFD5DF"   # borda de campo, que precisa se ver
 
+# O azul de leitura: números, links e o item selecionado. Mais vivo que o
+# azul-marinho da marca, que é escuro demais para número grande e para
+# texto pequeno — e continua da mesma família, então não briga com a logo.
+AZUL_VIVO = "#1F53CC"
+AZUL_VIVO_FUNDO = "#EAF0FD"
+
+# --- barra lateral (clara) ---------------------------------------------
+BARRA = "#FFFFFF"
+BARRA_BORDA = "#E6E9EF"
+BARRA_ATIVO = AZUL_VIVO_FUNDO
+
 # --- texto -------------------------------------------------------------
 TEXTO = "#111827"
 TEXTO_2 = "#4B5563"
 TEXTO_3 = "#8892A4"
-TEXTO_NA_BARRA = "#F1F2FA"
-TEXTO_NA_BARRA_2 = "#9695C8"
+TEXTO_NA_BARRA = "#111827"
+TEXTO_NA_BARRA_2 = "#5A6474"
 
 # --- estados -----------------------------------------------------------
 # Escolhidos para passar em contraste sobre branco (AA), porque são eles
