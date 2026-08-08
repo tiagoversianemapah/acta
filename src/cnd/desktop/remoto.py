@@ -71,6 +71,11 @@ class EstadoRemoto:
         return self.dados.get("orgaos", [])
 
     @property
+    def atividade(self) -> list[dict]:
+        """As últimas consultas daquela máquina, da mais recente para trás."""
+        return self.dados.get("atividade", [])
+
+    @property
     def lote_id(self) -> int | None:
         return self.dados.get("lote_id")
 
@@ -141,7 +146,7 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     que o painel web esteja no ar — e o resto da tela não precisa saber a
     diferença, porque o formato é o mesmo.
     """
-    from cnd.desktop.estado import ler_panorama
+    from cnd.desktop.estado import ler_atividade, ler_panorama
 
     panorama = ler_panorama(cfg)
     maquina = Maquina(cfg.rede.nome or "Esta máquina", "")
@@ -150,6 +155,7 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
         "robo_ativo": panorama.robo_ativo,
         "lote_id": panorama.lote_id,
         "lote_nome": panorama.lote_nome,
+        "atividade": ler_atividade(cfg),
         "orgaos": [{
             "orgao": r.orgao, "total": r.total, "concluidos": r.concluidos,
             "pendentes": r.pendentes, "em_execucao": r.em_execucao,

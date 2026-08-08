@@ -100,6 +100,20 @@ def listar_itens(cfg: Config, **filtros) -> list:
         conn.close()
 
 
+def ler_atividade(cfg: Config, limite: int = 6) -> list[dict]:
+    """As últimas consultas desta máquina. Nunca levanta exceção."""
+    try:
+        conn = conectar_leitura(cfg.banco)
+    except Exception:
+        return []
+    try:
+        return consultas.ultimas_tentativas(conn, limite)
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def _comando_base() -> list[str]:
     """Como chamar a linha de comando a partir daqui.
 

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
-import os
 import sys
 import tempfile
 import threading
@@ -40,6 +39,8 @@ ID_DO_APLICATIVO = "Mapah.Acta.Certidoes"
 # A tabela nativa aguenta a carteira inteira sem engasgar; o teto existe só
 # para uma busca vazia não puxar o banco todo de uma vez.
 LIMITE_DE_ITENS = 3000
+# A cada quantos ciclos de 2s a tela de máquinas vai à rede de novo.
+CICLOS_ENTRE_CONSULTAS_DE_REDE = 5
 
 # O que a operação pergunta: a empresa está limpa ou não. Os nomes internos
 # (CPEN, PENDENCIA_MANUAL) ficam no banco; na tela, português.
@@ -100,6 +101,7 @@ class Aplicativo(ctk.CTk):
         self.robo = Robo(RAIZ_PROJETO)
         self.secao_atual = "inicio"
         self._pontos: dict[str, ImageTk.PhotoImage] = {}
+        self._ciclos_ate_renovar = 0
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1200x760")
@@ -439,13 +441,17 @@ class Aplicativo(ctk.CTk):
         self.painel_maquinas.grid_columnconfigure(0, weight=1)
         return quadro
 
-    def _recarregar_maquinas(self) -> None:
-        for filho in self.painel_maquinas.winfo_children():
-            filho.destroy()
-        ctk.CTkLabel(self.painel_maquinas, text="Consultando as máquinas...",
-                     font=(FONTE, 12), text_color=marca.TEXTO_3).grid(row=0,
-                                                                      column=0,
-                                                                      pady=30)
+    def _recarregar_maquinas(self, silencioso: bool = False) -> None:
+        # Na renovação automática não se limpa a tela antes: piscar
+        # "Consultando..." a cada dez segundos, por cima do que a pessoa
+        # está lendo, é pior que esperar a resposta chegar.
+        if not silencioso:
+            for filho in self.painel_maquinas.winfo_children():
+                filho.destroy()
+            ctk.CTkLabel(self.painel_maquinas,
+                         text="Consultando as máquinas...", font=(FONTE, 12),
+                         text_color=marca.TEXTO_3).grid(row=0, column=0,
+                                                        pady=30)
 
         def trabalho():
             estados = remoto.consultar_todas(self.cfg)
@@ -456,9 +462,6 @@ class Aplicativo(ctk.CTk):
     def _desenhar_maquinas(self, estados: list) -> None:
         for filho in self.painel_maquinas.winfo_children():
             filho.destroy()
-
-        if not self.cfg.rede.maquinas:
-            self._explicar_rede()
 
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_maquinas)
@@ -526,6 +529,10 @@ class Aplicativo(ctk.CTk):
                     row=linha, column=0, sticky="w", padx=22, pady=(0, 6))
                 linha += 1
 
+                self._desenhar_atividade(cartao, estado).grid(
+                    row=linha, column=0, sticky="ew", padx=22, pady=(10, 2))
+                linha += 1
+
                 if estado.suspensos:
                     ctk.CTkLabel(cartao,
                                  text=f"{', '.join(estado.suspensos)} suspenso — "
@@ -571,64 +578,52 @@ class Aplicativo(ctk.CTk):
         rotulo.bind("<Leave>", lambda _e: rotulo.configure(font=normal))
         rotulo.bind("<Button-1>", lambda _e: self._acessar(estado))
 
-    def _explicar_rede(self) -> None:
-        """Diz como pôr as outras máquinas nesta tela.
+    def _desenhar_atividade(self, pai, estado) -> ctk.CTkFrame:
+        """O que aquela máquina acabou de fazer, linha a linha.
 
-        Sem isto, quem abre a tela vê um cartão só e não tem como adivinhar
-        que faltam três linhas num arquivo de configuração. A explicação
-        some sozinha assim que houver máquinas cadastradas.
+        É a diferença entre saber que ela está em 42% e saber que ela está
+        viva: o percentual demora minutos para mudar, mas a última empresa
+        consultada muda a cada consulta.
         """
-        cartao = ctk.CTkFrame(self.painel_maquinas, fg_color=marca.BRANCO,
-                              corner_radius=12, border_width=1,
-                              border_color=marca.BORDA_FORTE)
-        cartao.grid(row=99, column=0, sticky="ew", pady=(4, 0))
-        cartao.grid_columnconfigure(0, weight=1)
+        painel = ctk.CTkFrame(pai, fg_color=marca.FUNDO, corner_radius=8)
+        painel.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(cartao, text="Só esta máquina está cadastrada",
-                     font=(FONTE, 14, "bold"), text_color=marca.TEXTO,
-                     anchor="w").grid(row=0, column=0, sticky="w",
-                                      padx=22, pady=(18, 6))
-        ctk.CTkLabel(
-            cartao, anchor="w", justify="left", font=(FONTE, 12),
-            text_color=marca.TEXTO_2, wraplength=820,
-            text=("Cada computador do robô roda o seu próprio ACTA e responde "
-                  "pela rede. Este aqui pergunta a todos e junta o quadro — não "
-                  "existe banco central nem pasta compartilhada.\n\n"
-                  "EM CADA MÁQUINA DO ROBÔ\n"
-                  "1.  no config.toml dela, preencha  [rede] nome\n"
-                  "2.  libere a porta no Firewall (uma vez, como "
-                  "administrador):\n"
-                  "        netsh advfirewall firewall add rule name=\"ACTA\" "
-                  "dir=in action=allow protocol=TCP localport=8000\n"
-                  "3.  deixe o painel no ar:   cnd.exe painel --host 0.0.0.0\n"
-                  "        para subir sozinho no logon, ponha um atalho desse "
-                  "comando em  shell:startup\n\n"
-                  "NESTE COMPUTADOR\n"
-                  "4.  liste as máquinas em  [rede] maquinas  do config.toml, "
-                  "com orgao, nome, url e anydesk\n"
-                  "5.  volte aqui e clique em Atualizar")
-        ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 14))
+        if not estado.atividade:
+            ctk.CTkLabel(painel, text="Nenhuma consulta registrada ainda",
+                         font=(FONTE, 11), text_color=marca.TEXTO_3,
+                         anchor="w").grid(row=0, column=0, columnspan=3,
+                                          sticky="w", padx=14, pady=11)
+            return painel
 
-        rodape = ctk.CTkFrame(cartao, fg_color="transparent")
-        rodape.grid(row=2, column=0, sticky="w", padx=22, pady=(0, 18))
-        self._botao_secundario(rodape, "Abrir o config.toml",
-                               self._abrir_config, largura=170).grid(row=0,
-                                                                     column=0)
-        ctk.CTkLabel(rodape, text="As instruções completas estão em "
-                                  "docs/07-instalacao-nas-maquinas.md",
-                     font=(FONTE, 11), text_color=marca.TEXTO_3).grid(
-            row=0, column=1, padx=(14, 0))
+        for indice, evento in enumerate(estado.atividade):
+            if evento.get("em_curso"):
+                rotulo, cor = "consultando...", marca.AZUL
+            elif evento.get("interrompida"):
+                rotulo, cor = "interrompida", marca.TEXTO_3
+            else:
+                rotulo, cor = ROTULOS_DE_RESULTADO.get(
+                    evento.get("desfecho"), ("—", marca.TEXTO_3))
 
-    def _abrir_config(self) -> None:
-        """Abre o config.toml no editor padrão do Windows."""
-        caminho = RAIZ_PROJETO / "config.toml"
-        if not caminho.exists():
-            messagebox.showwarning(
-                "Configuração não encontrada",
-                f"Não achei o arquivo em:\n{caminho}")
-            return
-        with contextlib.suppress(OSError):
-            os.startfile(caminho)
+            ctk.CTkLabel(painel, text=self._hora(evento.get("quando")),
+                         font=("Consolas", 10), text_color=marca.TEXTO_3,
+                         anchor="w").grid(row=indice, column=0, sticky="w",
+                                          padx=(14, 12),
+                                          pady=(9 if indice == 0 else 2,
+                                                9 if indice == len(estado.atividade) - 1 else 2))
+            ctk.CTkLabel(painel, text=(evento.get("nome") or "")[:52],
+                         font=(FONTE, 11), text_color=marca.TEXTO_2,
+                         anchor="w").grid(row=indice, column=1, sticky="w")
+            ctk.CTkLabel(painel, text=rotulo, font=(FONTE, 11, "bold"),
+                         text_color=cor, anchor="e").grid(row=indice, column=2,
+                                                          sticky="e", padx=(12, 14))
+        return painel
+
+    @staticmethod
+    def _hora(momento: str | None) -> str:
+        """Só a hora do carimbo ISO — a data polui e quase sempre é hoje."""
+        if not momento or "T" not in momento:
+            return "--:--:--"
+        return momento.split("T", 1)[1][:8]
 
     def _acessar(self, estado) -> None:
         """Abre o AnyDesk já apontado para aquela máquina."""
@@ -1036,7 +1031,24 @@ class Aplicativo(ctk.CTk):
         with contextlib.suppress(Exception):
             self._atualizar_situacao()
             self._drenar_registro()
+            self._ciclo_das_maquinas()
         self.after(INTERVALO_ATUALIZACAO_MS, self._ciclo)
+
+    def _ciclo_das_maquinas(self) -> None:
+        """Renova a tela de máquinas enquanto ela estiver aberta.
+
+        Mais devagar que o resto de propósito: cada renovação é uma ida à
+        rede por máquina, e o que a pessoa acompanha ali — a última empresa
+        consultada — muda na casa das dezenas de segundos, não dos dois.
+        """
+        if self.secao_atual != "maquinas":
+            self._ciclos_ate_renovar = 0
+            return
+
+        self._ciclos_ate_renovar -= 1
+        if self._ciclos_ate_renovar <= 0:
+            self._ciclos_ate_renovar = CICLOS_ENTRE_CONSULTAS_DE_REDE
+            self._recarregar_maquinas(silencioso=True)
 
     def _atualizar_situacao(self) -> None:
         panorama = ler_panorama(self.cfg)

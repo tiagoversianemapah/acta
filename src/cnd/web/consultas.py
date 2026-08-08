@@ -192,6 +192,55 @@ def tentativas_do_job(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row
     ).fetchall()
 
 
+# Depois disso, uma tentativa sem fim gravado não está mais em curso: o
+# processo morreu no meio. O robô cego leva ~25s por consulta, então cinco
+# minutos é folga larga.
+MINUTOS_EM_CURSO = 5
+
+
+def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8) -> list[dict]:
+    """O que o robô fez por último, da mais recente para a mais antiga.
+
+    É o "o que está acontecendo agora" da tela de máquinas. Ordena por id e
+    não por data: `finalizada_em` é nulo enquanto a tentativa está em curso,
+    e é justamente a que está em curso que interessa aparecer no topo.
+
+    Nulo, porém, não basta para dizer "está consultando": quando o robô é
+    encerrado no meio, a linha fica sem fim para sempre. `recuperar_orfaos`
+    devolve o job à fila, mas não reescreve a tentativa. Daí a janela de
+    tempo — sem ela, a tela mostraria uma consulta de uma hora atrás como se
+    estivesse acontecendo agora, que é o pior tipo de informação: a que
+    parece certa.
+    """
+    # O limiar vem do Python e não do strftime do SQLite: o carimbo gravado
+    # tem milissegundos ('...:22.481Z') e o do strftime não ('...:22Z'), e a
+    # comparação é de texto — o ponto vem antes do Z na tabela ASCII, então
+    # tempos do mesmo segundo sairiam invertidos.
+    limiar = tempo.daqui_a(-60 * MINUTOS_EM_CURSO)
+    linhas = conn.execute(
+        """
+        SELECT t.id, t.desfecho, t.iniciada_em, t.finalizada_em,
+               t.mensagem_portal, e.nome, e.documento, j.orgao,
+               (t.finalizada_em IS NULL AND t.iniciada_em > ?) AS em_curso
+          FROM tentativa t
+          JOIN job j     ON j.id = t.job_id
+          JOIN empresa e ON e.id = j.empresa_id
+         ORDER BY t.id DESC
+         LIMIT ?
+        """,
+        (limiar, limite),
+    ).fetchall()
+    return [{
+        "nome": linha["nome"],
+        "documento": linha["documento"],
+        "orgao": linha["orgao"],
+        "desfecho": linha["desfecho"],
+        "quando": linha["finalizada_em"] or linha["iniciada_em"],
+        "em_curso": bool(linha["em_curso"]),
+        "interrompida": linha["finalizada_em"] is None and not linha["em_curso"],
+    } for linha in linhas]
+
+
 def captcha_por_hora(conn: sqlite3.Connection, orgao: str, dias: int = 7) -> list[dict]:
     """Alimenta a decisão sobre janela ativa e sobre a hipótese de IP (risco R4)."""
     desde = tempo.daqui_a(-dias * 86400)

@@ -22,6 +22,10 @@ from cnd.infra import heartbeat
 from cnd.infra.config import Config
 from cnd.web import consultas
 
+# Quantas linhas de "o que o robô acabou de fazer" cada máquina devolve.
+# Suficiente para ver o ritmo sem transformar a resposta num relatório.
+ITENS_DE_ATIVIDADE = 6
+
 
 def montar(obter_config: Callable[[], Config],
            abrir_leitura: Callable[[], sqlite3.Connection]) -> APIRouter:
@@ -83,6 +87,10 @@ def montar(obter_config: Callable[[], Config],
                 "lote_id": lote_id,
                 "lote_nome": (lotes[0]["arquivo_origem"] or lotes[0]["descricao"])
                              if lotes else None,
+                # Vai junto do panorama, e não numa rota própria: a tela de
+                # máquinas mostra os dois lado a lado, e uma segunda ida à
+                # rede dobraria a espera de cada máquina consultada.
+                "atividade": consultas.ultimas_tentativas(conn, ITENS_DE_ATIVIDADE),
                 "lotes": [{"id": lote["id"], "descricao": lote["descricao"],
                            "arquivo": lote["arquivo_origem"],
                            "itens": lote["jobs"],
