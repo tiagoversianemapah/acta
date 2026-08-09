@@ -44,32 +44,47 @@ def escrever() -> sqlite3.Connection:
 
 
 async def vigiar_orquestrador() -> None:
-    """Se o orquestrador ficar mudo além do timeout, avisa por e-mail.
+    """Avisa quando o robô emudece TENDO TRABALHO NA FILA.
 
-    É o mecanismo que responde ao requisito "quero saber quando o robô
-    parar de funcionar, por qualquer motivo" (docs/05, seção 4).
+    A condição da fila é o coração disto. O robô não é um serviço de pé o
+    ano inteiro — é tarefa mensal, e ficar parado é o estado normal em uns
+    28 dias de cada 30. A versão anterior cobrava sinal de vida sempre, e
+    teria disparado "Orquestrador fora do ar" o mês inteiro dizendo que
+    está tudo errado justamente quando está tudo certo.
+
+    Isso não seria só ruído: é o mecanismo que mata o canal. Depois de duas
+    semanas de alarme falso ninguém abre mais o aviso, e o de lote travado
+    morre junto com os outros. Alerta que dispara sem motivo é pior do que
+    alerta nenhum.
     """
     while True:
         try:
             with contextlib.closing(ler()) as conn:
                 idade = heartbeat.segundos_desde(conn, "orquestrador")
+                na_fila = consultas.pendentes(conn)
             limite = cfg.alertas.heartbeat_timeout_s
+            mudo = idade is not None and idade > limite
 
-            if idade is None:
-                pass  # nunca rodou: não é incidente
-            elif idade > limite:
+            if mudo and na_fila:
                 alertas.abrir_incidente(
                     cfg.alertas, "heartbeat",
-                    "Orquestrador fora do ar",
-                    f"O orquestrador não dá sinal de vida há "
-                    f"{int(idade // 60)} minutos.\n"
-                    f"Verifique o serviço na máquina do robô.",
+                    "Robô parado com trabalho na fila",
+                    f"O robô não dá sinal de vida há {int(idade // 60)} "
+                    f"minutos e ainda há {na_fila} itens para consultar.",
+                    acao="1. Conferir se a máquina está ligada e com o "
+                         "Windows logado.\n"
+                         "2. Abrir o ACTA nela e apertar Iniciar robô.\n"
+                         "3. Se voltar a parar, ver o Registro para o motivo.",
+                    dados={"Itens na fila": str(na_fila),
+                           "Sem sinal há": f"{int(idade // 60)} min"},
                 )
             else:
+                # Fila vazia é fim de trabalho, não incidente. O incidente
+                # só fecha se algum dia chegou a abrir.
                 alertas.fechar_incidente(
-                    cfg.alertas, "heartbeat",
-                    "Orquestrador normalizado",
-                    "O orquestrador voltou a dar sinal de vida.",
+                    cfg.alertas, "heartbeat", "Robô normalizado",
+                    "O robô voltou a trabalhar." if na_fila else
+                    "A fila esvaziou.",
                 )
         except Exception:
             log.exception("falha_ao_vigiar_heartbeat")
@@ -247,31 +262,35 @@ def ping():
     responder 503, a máquina ou o robô estão fora — e aí o aviso sai de um
     lugar que não depende deles.
 
-    Devolve 200 quando o robô está de pé, 503 quando não está, para o
-    verificador poder decidir só pelo código HTTP.
+    503 apenas quando há TRABALHO NA FILA e o robô está mudo. Fila vazia é
+    fim de tarefa, não pane: o robô roda por temporada, e devolver 503 o
+    mês inteiro faria o verificador externo chamar todo dia sem motivo —
+    até alguém desligá-lo, justamente antes do dia em que ele importaria.
     """
     try:
         with contextlib.closing(ler()) as conn:
             idade = heartbeat.segundos_desde(conn, "orquestrador")
-            pendentes = conn.execute(
-                "SELECT COUNT(*) AS n FROM job WHERE status IN ('PENDING','RETRY_WAIT')"
-            ).fetchone()["n"]
+            pendentes = consultas.pendentes(conn)
     except Exception as erro:
         return JSONResponse({"ok": False, "motivo": f"banco inacessível: {erro}"},
                             status_code=503)
 
-    vivo = idade is not None and idade <= cfg.alertas.heartbeat_timeout_s
+    ativo = idade is not None and idade <= cfg.alertas.heartbeat_timeout_s
+    vivo = ativo or not pendentes
     corpo = {
         "ok": vivo,
-        "robo": "em execução" if vivo else "parado",
+        "robo": "em execução" if ativo else
+                ("ocioso" if not pendentes else "parado"),
         "ultimo_sinal_ha_s": round(idade) if idade is not None else None,
         "itens_na_fila": pendentes,
         "agora": tempo.agora_iso(),
     }
     if not vivo:
-        corpo["motivo"] = ("o robô nunca foi iniciado nesta máquina"
-                           if idade is None else
-                           f"sem sinal de vida há {idade / 60:.0f} minutos")
+        corpo["motivo"] = (
+            f"{pendentes} itens na fila e o robô nunca foi iniciado"
+            if idade is None else
+            f"{pendentes} itens na fila e sem sinal de vida há "
+            f"{idade / 60:.0f} minutos")
     return JSONResponse(corpo, status_code=200 if vivo else 503)
 
 

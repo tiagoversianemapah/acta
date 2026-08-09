@@ -77,6 +77,65 @@ RAM_LIVRE_MINIMA_GB = 1.0
 DISCO_LIVRE_MINIMO_GB = 5.0
 
 
+def versao() -> str:
+    """A versão do ACTA nesta máquina.
+
+    Com instalação por cópia de pasta, a deriva de versão entre máquinas é
+    questão de tempo — e hoje é invisível. Saber que só uma delas ficou
+    para trás evita dois dias caçando um defeito que só existe ali.
+    """
+    from importlib.metadata import PackageNotFoundError
+    from importlib.metadata import version as instalada
+
+    try:
+        return instalada("cnd")
+    except PackageNotFoundError:
+        return ""
+
+
+def calibragem(pasta: Path, orgao: str = "rfb_cego") -> dict:
+    """Quando a tela foi calibrada e com quantos pontos.
+
+    O robô cego não roda sem isso, e a calibragem quebra quando alguém muda
+    a resolução do monitor. Sem esta informação na tela, só se descobre
+    errando o lote inteiro.
+    """
+    import json
+    from datetime import datetime
+
+    arquivo = Path(pasta) / f"{orgao}.json"
+    if not arquivo.exists():
+        return {}
+    try:
+        dados = json.loads(arquivo.read_text(encoding="utf-8"))
+        pontos = dados.get("pontos") or dados
+        quando = datetime.fromtimestamp(arquivo.stat().st_mtime)
+        return {"pontos": len(pontos) if hasattr(pontos, "__len__") else 0,
+                "quando": quando.strftime("%d/%m")}
+    except (OSError, ValueError):
+        return {}
+
+
+def certidoes(pasta: Path) -> dict:
+    """Quanto as certidões ocupam, e o tamanho médio de cada uma.
+
+    A média é o que permite prever se o próximo lote cabe no disco — e essa
+    previsão é o que evita o pior caso, que é o robô emitir a certidão no
+    portal e não conseguir salvar o arquivo, com a consulta já gasta.
+    """
+    try:
+        arquivos = list(Path(pasta).rglob("*.pdf"))
+    except OSError:
+        return {}
+    if not arquivos:
+        return {"arquivos": 0, "gb": 0.0, "media_kb": 0.0}
+
+    total = sum(a.stat().st_size for a in arquivos)
+    return {"arquivos": len(arquivos),
+            "gb": round(total / GIGA, 2),
+            "media_kb": round(total / len(arquivos) / 1024, 1)}
+
+
 def ler(caminho_dos_dados: Path | None = None) -> Saude:
     """Lê a saúde da máquina. Nunca levanta exceção.
 

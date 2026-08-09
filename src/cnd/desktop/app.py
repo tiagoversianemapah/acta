@@ -58,6 +58,11 @@ ID_DO_APLICATIVO = "Mapah.Acta.Certidoes"
 LIMITE_DE_ITENS = 3000
 # A cada quantos ciclos de 2s a tela de máquinas vai à rede de novo.
 CICLOS_ENTRE_CONSULTAS_DE_REDE = 5
+# Abaixo disso o disco é apertado o bastante para virar vermelho na tela.
+LIMITE_DISCO_GB = 5.0
+# Margem sobre o tamanho estimado do lote. Certidão que sai do portal e não
+# encontra espaço é consulta gasta e documento perdido — vale pedir dobro.
+FOLGA_DE_DISCO = 2.0
 
 # O que a operação pergunta: a empresa está limpa ou não. Os nomes internos
 # (CPEN, PENDENCIA_MANUAL) ficam no banco; na tela, português.
@@ -162,6 +167,84 @@ def _resumo_da_maquina(estado) -> str:
     if estado.falhados:
         partes.append(f"{_numero(estado.falhados)} exigem atendimento")
     return "   ·   ".join(partes)
+
+
+def _detalhe_da_situacao(estado) -> str:
+    """A segunda linha da situação — sempre com HÁ QUANTO TEMPO.
+
+    Sem duração, "parada" e "sem resposta" não dizem se é o intervalo entre
+    dois lotes ou um incidente de quatro horas que ninguém viu.
+    """
+    if not estado.online:
+        return f"{estado.erro or 'sem resposta'} · último dado desconhecido"
+
+    if estado.suspensa:
+        return "o portal recusou várias consultas · retoma sozinho"
+
+    parado_ha = estado.dados.get("ultimo_sinal_ha_s")
+    if estado.robo_ativo:
+        partes = [f"{_numero(estado.pendentes)} na fila"] if estado.pendentes \
+            else []
+        horas = [o["eta_horas"] for o in estado.orgaos if o.get("eta_horas")]
+        if horas:
+            partes.append(f"faltam {_duracao(max(horas))}")
+        return "   ·   ".join(partes) or "trabalhando"
+
+    if estado.pendentes:
+        quando = (f" · sem sinal há {_duracao(parado_ha / 3600)}"
+                  if parado_ha else "")
+        return f"{_numero(estado.pendentes)} itens esperando{quando}"
+    return "sem trabalho na fila"
+
+
+def _preparo(estado) -> list[tuple[bool | None, str]]:
+    """O checklist do que o robô precisa naquela máquina.
+
+    `None` é "não dá para saber daqui" — é o caso da máquina muda, e mentir
+    um ✓ ou um ! ali seria pior que admitir a ignorância.
+    """
+    if not estado.online:
+        return [(None, "Calibração"), (None, "AnyDesk"), (None, "Painel"),
+                (None, "Órgão")]
+
+    calibragem = estado.dados.get("calibragem") or {}
+    itens: list[tuple[bool | None, str]] = []
+    if calibragem.get("pontos"):
+        itens.append((True, f"Calibrada em {calibragem.get('quando', '—')}, "
+                            f"{calibragem['pontos']} pontos"))
+    elif estado.roda_robo:
+        itens.append((False, "Nunca calibrada — o robô não roda"))
+    else:
+        itens.append((None, "Calibração não se aplica"))
+
+    itens.append((True, "AnyDesk cadastrado") if estado.acessavel
+                 else (False, "Sem AnyDesk cadastrado"))
+    itens.append((True, "Painel respondendo"))
+
+    rotulos = estado.rotulo_do_orgao
+    itens.append((True, f"Órgão {rotulos}") if rotulos
+                 else (False, "Nenhum órgão com trabalho"))
+    return itens
+
+
+def _linhas_de_disco(estado) -> list[str]:
+    saude = estado.saude
+    livre, total = saude["disco_livre_gb"], saude["disco_total_gb"]
+    linhas = [f"{livre:.0f} GB livres de {total:.0f} GB"]
+
+    certidoes = estado.dados.get("certidoes") or {}
+    if certidoes.get("arquivos"):
+        linhas.append(f"certidões: {certidoes['gb']:.1f} GB em "
+                      f"{_numero(certidoes['arquivos'])} arquivos"
+                      .replace(".", ",", 1))
+
+    # A conta que evita o prejuízo: emitir a certidão e não ter onde salvar.
+    if estado.pendentes and certidoes.get("media_kb"):
+        precisa_mb = estado.pendentes * certidoes["media_kb"] / 1024
+        cabe = (livre * 1024) > precisa_mb * FOLGA_DE_DISCO
+        linhas.append(f"próximo lote precisa de ~{precisa_mb:.0f} MB — "
+                      + ("cabe" if cabe else "NÃO CABE"))
+    return linhas
 
 
 def _ritmo_do_panorama(panorama) -> str:
@@ -545,17 +628,25 @@ class Aplicativo(ctk.CTk):
         quadro.grid_columnconfigure(0, weight=1)
 
         cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
-        cabecalho.grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 16))
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 14))
         cabecalho.grid_columnconfigure(0, weight=1)
         self._titulo(cabecalho, "Máquinas",
-                     "Memória, disco e acesso remoto de cada computador"
+                     "Estado das máquinas e robôs registrados"
                      ).grid(row=0, column=0, sticky="w")
-        self._botao_secundario(cabecalho, "Atualizar",
-                               self._recarregar_saude, largura=104).grid(
+        self._botao_secundario(cabecalho, "Atualizar agora",
+                               self._recarregar_saude, largura=136).grid(
             row=0, column=1, sticky="e")
 
+        # Resumo em uma linha: com quatro máquinas, é o que se lê antes de
+        # olhar cartão por cartão.
+        self.resumo_maquinas = ctk.CTkLabel(quadro, text="", font=(FONTE, 12),
+                                            text_color=marca.TEXTO_2,
+                                            anchor="w")
+        self.resumo_maquinas.grid(row=1, column=0, sticky="w", padx=30,
+                                  pady=(0, 12))
+
         self.painel_saude = ctk.CTkFrame(quadro, fg_color="transparent")
-        self.painel_saude.grid(row=1, column=0, sticky="ew", padx=30,
+        self.painel_saude.grid(row=2, column=0, sticky="ew", padx=30,
                                pady=(0, 24))
         self.painel_saude.grid_columnconfigure(0, weight=1)
         return quadro
@@ -577,73 +668,194 @@ class Aplicativo(ctk.CTk):
         for filho in self.painel_saude.winfo_children():
             filho.destroy()
 
+        # Problema primeiro. Com quatro máquinas, a quebrada não pode ficar
+        # em terceiro por ordem alfabética: ela é o motivo de abrir a tela.
+        estados = sorted(estados, key=lambda e: (e.gravidade, e.rotulo))
+        self._resumir_maquinas(estados)
+
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_saude)
             cartao.grid(row=indice, column=0, sticky="ew", pady=(0, 12))
-            cartao.grid_columnconfigure(0, weight=1)
+            cartao.grid_columnconfigure(1, weight=1)
+            cartao.grid_columnconfigure(2, weight=1)
 
-            topo = ctk.CTkFrame(cartao, fg_color="transparent")
-            topo.grid(row=0, column=0, sticky="ew", padx=22, pady=(18, 0))
-            topo.grid_columnconfigure(0, weight=1)
+            self._coluna_identidade(cartao, estado).grid(
+                row=0, column=0, sticky="nsw", padx=(22, 26), pady=(18, 16))
+            self._coluna_preparo(cartao, estado).grid(
+                row=0, column=1, sticky="nsw", padx=(0, 26), pady=(18, 16))
+            self._coluna_disco(cartao, estado).grid(
+                row=0, column=2, sticky="nsew", padx=(0, 26), pady=(18, 16))
+            self._coluna_acoes(cartao, estado).grid(
+                row=0, column=3, sticky="ne", padx=(0, 22), pady=(18, 16))
 
-            titulo = ctk.CTkLabel(topo, text=estado.rotulo.upper(),
-                                  font=(FONTE, 15, "bold"), anchor="w",
-                                  text_color=marca.AZUL_VIVO
-                                  if estado.acessavel else marca.TEXTO)
-            titulo.grid(row=0, column=0, sticky="w")
-            if estado.acessavel:
-                self._transformar_em_link(titulo, estado)
-            self._etiqueta(topo, *estado.situacao).grid(row=0, column=1,
-                                                        sticky="e")
-
-            legenda = estado.subtitulo
-            saude = estado.saude
-            if saude.get("nome") and saude["nome"] not in legenda:
-                legenda = f"{saude['nome']}  ·  {legenda}" if legenda \
-                    else saude["nome"]
-            ctk.CTkLabel(topo, text=legenda, font=(FONTE, 11),
-                         text_color=marca.TEXTO_3, anchor="w").grid(
-                row=1, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
-            if not saude:
-                ctk.CTkLabel(cartao, text=estado.erro or
-                             "sem informação de hardware", font=(FONTE, 11),
+            if rodape := self._rodape_da_maquina(estado):
+                risco = ctk.CTkFrame(cartao, height=1, corner_radius=0,
+                                     fg_color=marca.BORDA)
+                risco.grid(row=1, column=0, columnspan=4, sticky="ew")
+                ctk.CTkLabel(cartao, text=rodape, font=(FONTE, 11),
                              text_color=marca.TEXTO_3, anchor="w").grid(
-                    row=1, column=0, sticky="w", padx=22, pady=(10, 18))
-                continue
+                    row=2, column=0, columnspan=4, sticky="w", padx=22,
+                    pady=(12, 14))
 
-            medidas = ctk.CTkFrame(cartao, fg_color="transparent")
-            medidas.grid(row=1, column=0, sticky="ew", padx=22, pady=(14, 6))
-            medidas.grid_columnconfigure((0, 1), weight=1, uniform="medida")
+    def _resumir_maquinas(self, estados: list) -> None:
+        prontas = sum(1 for e in estados if e.online)
+        mudas = len(estados) - prontas
+        texto = f"{prontas} de {len(estados)} respondendo"
+        if mudas:
+            texto += f"   ·   {mudas} sem resposta"
+        if travadas := [e for e in estados if e.online and e.pendentes
+                        and not e.robo_ativo]:
+            texto += f"   ·   {len(travadas)} com fila parada"
+        self.resumo_maquinas.configure(text=texto)
 
-            usada, total = saude["ram_usada_gb"], saude["ram_total_gb"]
-            self._medidor(medidas, "Memória",
-                          f"{usada:.1f} de {total:.1f} GB".replace(".", ","),
-                          usada / total if total else 0,
-                          ).grid(row=0, column=0, sticky="ew", padx=(0, 18))
+    def _coluna_identidade(self, pai, estado) -> ctk.CTkFrame:
+        """Quem é a máquina e como ela está, com duração.
 
-            livre, disco = saude["disco_livre_gb"], saude["disco_total_gb"]
-            self._medidor(medidas, "Disco",
-                          f"{livre:.0f} GB livres de {disco:.0f} GB",
-                          (disco - livre) / disco if disco else 0,
-                          ).grid(row=0, column=1, sticky="ew")
+        A duração é o que faltava: parada há 40 segundos entre lotes e
+        parada há 4 horas sem ninguém notar são situações opostas, e a tela
+        antiga mostrava as duas igual.
+        """
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
 
-            rodape = f"ligada há {_duracao(saude['ligada_ha_h'])}"
-            if estado.roda_robo:
-                rodape += "   ·   emite certidões"
-            else:
-                rodape += "   ·   só acompanha"
-            ctk.CTkLabel(cartao, text=rodape, font=(FONTE, 11),
+        titulo = ctk.CTkLabel(caixa, text=estado.rotulo,
+                              font=(FONTE, 14, "bold"), anchor="w",
+                              text_color=marca.AZUL_VIVO if estado.acessavel
+                              else marca.TEXTO)
+        titulo.grid(row=0, column=0, sticky="w")
+        if estado.acessavel:
+            self._transformar_em_link(titulo, estado, tamanho=14)
+
+        ctk.CTkLabel(caixa, text=estado.subtitulo, font=(FONTE, 11),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=1, column=0,
+                                                                sticky="w",
+                                                                pady=(2, 0))
+        versao = estado.dados.get("versao") or "versão desconhecida"
+        ctk.CTkLabel(caixa, text=f"ACTA {versao}", font=(FONTE, 11),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=2, column=0,
+                                                                sticky="w")
+
+        texto, cor = estado.situacao
+        frente, _ = self.CORES_DE_SITUACAO[cor]
+        linha = ctk.CTkFrame(caixa, fg_color="transparent")
+        linha.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        ctk.CTkLabel(linha, text="●", font=(FONTE, 12),
+                     text_color=frente).grid(row=0, column=0, padx=(0, 8))
+        ctk.CTkLabel(linha, text=texto, font=(FONTE, 12, "bold"),
+                     text_color=frente, anchor="w").grid(row=0, column=1,
+                                                         sticky="w")
+        ctk.CTkLabel(caixa, text=_detalhe_da_situacao(estado),
+                     font=(FONTE, 11), text_color=marca.TEXTO_3, anchor="w",
+                     justify="left", wraplength=210).grid(row=4, column=0,
+                                                          sticky="w",
+                                                          pady=(3, 0))
+        return caixa
+
+    def _coluna_preparo(self, pai, estado) -> ctk.CTkFrame:
+        """A máquina consegue trabalhar se eu mandar agora?
+
+        A calibragem é o item crítico: o robô cego não roda sem ela, e ela
+        quebra quando alguém muda a resolução do monitor. Sem esta coluna,
+        isso só se descobre errando um lote inteiro.
+        """
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
+        ctk.CTkLabel(caixa, text="PREPARO", font=(FONTE, 10, "bold"),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=0,
+                                                                columnspan=2,
+                                                                sticky="w",
+                                                                pady=(0, 8))
+        for linha, (ok, texto) in enumerate(_preparo(estado), start=1):
+            simbolo, cor = (("✓", marca.VERDE) if ok is True else
+                            ("—", marca.TEXTO_3) if ok is None else
+                            ("!", marca.AMBAR))
+            ctk.CTkLabel(caixa, text=simbolo, font=(FONTE, 11, "bold"),
+                         text_color=cor, width=14).grid(row=linha, column=0,
+                                                        sticky="w")
+            ctk.CTkLabel(caixa, text=texto, font=(FONTE, 11),
+                         text_color=marca.TEXTO_2 if ok is not None
+                         else marca.TEXTO_3, anchor="w").grid(row=linha,
+                                                              column=1,
+                                                              sticky="w",
+                                                              pady=1)
+        return caixa
+
+    def _coluna_disco(self, pai, estado) -> ctk.CTkFrame:
+        """Espaço, e o número que decide: o próximo lote cabe?
+
+        A porcentagem sozinha é genérica. O que evita o prejuízo é saber
+        antes de começar — disco cheio faz o robô emitir a certidão no
+        portal e não conseguir salvar o PDF, com a consulta já gasta.
+        """
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
+        caixa.grid_columnconfigure(0, weight=1)
+        saude = estado.saude
+
+        ctk.CTkLabel(caixa, text="DISCO", font=(FONTE, 10, "bold"),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=0,
+                                                                columnspan=2,
+                                                                sticky="w",
+                                                                pady=(0, 8))
+        if not saude:
+            ctk.CTkLabel(caixa, text="—", font=(FONTE, 12),
+                         text_color=marca.TEXTO_3, anchor="w").grid(row=1,
+                                                                    column=0,
+                                                                    sticky="w")
+            return caixa
+
+        livre, total = saude["disco_livre_gb"], saude["disco_total_gb"]
+        fracao = (total - livre) / total if total else 0
+        apertado = livre < LIMITE_DISCO_GB
+
+        barra = ctk.CTkProgressBar(caixa, height=6, corner_radius=3,
+                                   progress_color=marca.VERMELHO if apertado
+                                   else marca.AZUL_VIVO,
+                                   fg_color=marca.PAPEL_2)
+        barra.grid(row=1, column=0, sticky="ew", padx=(0, 12))
+        barra.set(min(max(fracao, 0.0), 1.0))
+        ctk.CTkLabel(caixa, text=f"{fracao * 100:.0f}%", font=(FONTE, 11),
+                     text_color=marca.VERMELHO if apertado
+                     else marca.TEXTO_3).grid(row=1, column=1, sticky="e")
+
+        for linha, texto in enumerate(_linhas_de_disco(estado), start=2):
+            ctk.CTkLabel(caixa, text=texto, font=(FONTE, 11),
                          text_color=marca.TEXTO_3, anchor="w").grid(
-                row=2, column=0, sticky="w", padx=22, pady=(4, 0))
+                row=linha, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        return caixa
 
-            if saude.get("avisos"):
-                ctk.CTkLabel(cartao, text="⚠  " + " · ".join(saude["avisos"]),
-                             font=(FONTE, 11, "bold"), text_color=marca.AMBAR,
-                             anchor="w").grid(row=3, column=0, sticky="w",
-                                              padx=22, pady=(6, 0))
-            ctk.CTkFrame(cartao, fg_color="transparent", height=14).grid(row=4,
-                                                                        column=0)
+    def _coluna_acoes(self, pai, estado) -> ctk.CTkFrame:
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
+        if estado.acessavel:
+            ctk.CTkButton(caixa, text="Acessar AnyDesk", height=36, width=150,
+                          corner_radius=8, font=(FONTE, 12, "bold"),
+                          fg_color=marca.BRANCO, hover_color=marca.PAPEL,
+                          text_color=marca.AZUL_VIVO, border_width=1,
+                          border_color=marca.BORDA_FORTE,
+                          command=lambda e=estado: self._acessar(e)).grid(
+                row=0, column=0, pady=(0, 8))
+        if not estado.local:
+            self._botao_secundario(
+                caixa, "Abrir painel",
+                lambda e=estado: webbrowser.open(e.maquina.base),
+                largura=150).grid(row=1, column=0)
+        return caixa
+
+    def _rodape_da_maquina(self, estado) -> str:
+        """Histórico curto: já rodou este mês? quando foi o último lote?
+
+        No ritmo mensal essa é a pergunta do dia 1, e nenhuma outra tela
+        responde.
+        """
+        if not estado.online:
+            return ""
+        partes = []
+        if estado.lote_id:
+            partes.append(f"Último lote: #{estado.lote_id} · "
+                          f"{_numero(estado.total)} itens")
+        emitidas = estado.por_desfecho("NEGATIVA") + estado.por_desfecho("CPEN")
+        partes.append(f"{_numero(emitidas)} certidões emitidas")
+        if (ligada := estado.saude.get("ligada_ha_h")) is not None:
+            partes.append(f"ligada há {_duracao(ligada)}")
+        partes.append("emite certidões" if estado.roda_robo else "só acompanha")
+        return "   ·   ".join(partes)
 
     def _medidor(self, pai, titulo: str, detalhe: str, fracao: float):
         """Barra de uso com legenda. Vermelha quando aperta.
@@ -906,15 +1118,15 @@ class Aplicativo(ctk.CTk):
             ctk.CTkFrame(cartao, fg_color="transparent", height=6).grid(
                 row=linha, column=0)
 
-    def _transformar_em_link(self, rotulo, estado) -> None:
+    def _transformar_em_link(self, rotulo, estado, tamanho: int = 15) -> None:
         """Deixa o texto com cara e comportamento de link.
 
         O CustomTkinter não tem widget de link, e o sublinhado do Tk vive na
         fonte — daí trocar a fonte no hover em vez de uma propriedade de
         estilo.
         """
-        normal = (FONTE, 15, "bold")
-        sobre = (FONTE, 15, "bold underline")
+        normal = (FONTE, tamanho, "bold")
+        sobre = (FONTE, tamanho, "bold underline")
 
         rotulo.configure(cursor="hand2")
         rotulo.bind("<Enter>", lambda _e: rotulo.configure(font=sobre))

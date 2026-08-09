@@ -198,6 +198,20 @@ def tentativas_do_job(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row
 MINUTOS_EM_CURSO = 5
 
 
+def pendentes(conn: sqlite3.Connection) -> int:
+    """Itens esperando processamento, em qualquer órgão.
+
+    É o que define a JANELA DE TRABALHO do sistema. O robô não é um serviço
+    de pé o ano inteiro: é tarefa mensal, e ficar parado é o estado normal
+    na maior parte do mês. Só faz sentido cobrar que ele esteja de pé quando
+    existe algo para fazer — e é esta contagem que diz isso.
+    """
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM job WHERE status IN (?, ?)",
+        (Status.PENDING, Status.RETRY_WAIT),
+    ).fetchone()["n"]
+
+
 def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8) -> list[dict]:
     """O que o robô fez por último, da mais recente para a mais antiga.
 

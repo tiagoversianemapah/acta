@@ -90,6 +90,10 @@ def montar(obter_config: Callable[[], Config],
                 # jeito possível de descobrir que faltava espaço.
                 "saude": maquina.ler(cfg.pasta_certidoes).como_dicionario(),
                 "papel": "robo" if cfg.rede.roda_robo else "console",
+                "versao": maquina.versao(),
+                "calibragem": maquina.calibragem(
+                    cfg.pasta_certidoes.parent / "calibragem"),
+                "certidoes": maquina.certidoes(cfg.pasta_certidoes),
                 # A própria máquina informa o AnyDesk dela — quem cadastrou
                 # foi quem estava na frente, na hora de instalar.
                 "anydesk": cfg.rede.anydesk,

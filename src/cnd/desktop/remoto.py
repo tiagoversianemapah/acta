@@ -149,12 +149,50 @@ class EstadoRemoto:
         return [o["orgao"] for o in self.orgaos if o.get("disjuntor") == "ABERTO"]
 
     @property
+    def pendentes(self) -> int:
+        """Itens esperando consulta. Define se parar é normal ou incidente."""
+        return sum(o.get("pendentes", 0) for o in self.orgaos)
+
+    @property
+    def suspensa(self) -> bool:
+        return bool(self.suspensos)
+
+    @property
     def situacao(self) -> tuple[str, str]:
+        """Situação em uma palavra, e a cor dela.
+
+        "Ociosa" em cinza, e não "parado" em vermelho, é a correção mais
+        importante daqui: o robô roda por temporada, e ficar parado é o
+        estado normal em uns 28 dias de cada 30. Vermelho o mês inteiro
+        ensina a ignorar o vermelho — e aí ele não serve no dia em que a
+        máquina realmente parar no meio do lote.
+        """
         if not self.online:
             return "Sem resposta", "cinza"
+        if self.suspensa:
+            return "Suspensa", "ambar"
         if self.robo_ativo:
             return "Trabalhando", "verde"
-        return "Robô parado", "vermelho"
+        if self.pendentes:
+            return "Parada com fila", "vermelho"
+        return "Ociosa", "cinza"
+
+    @property
+    def gravidade(self) -> int:
+        """Para ordenar: quem tem problema aparece primeiro.
+
+        Com quatro máquinas, a quebrada não pode ficar em terceiro por
+        ordem alfabética — ela é o motivo de a tela ter sido aberta.
+        """
+        if not self.online:
+            return 0
+        if self.pendentes and not self.robo_ativo:
+            return 1
+        if self.suspensa:
+            return 2
+        if self.robo_ativo:
+            return 3
+        return 4
 
 
 def _pedir(maquina: Maquina, rota: str, senha: str, parametros: str = "") -> object:
@@ -191,6 +229,7 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     import platform
 
     from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
+    from cnd.infra import maquina
     from cnd.infra.maquina import ler as ler_saude
     from cnd.web.consultas import eta_horas
 
@@ -207,6 +246,10 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
         "meses": ler_meses(cfg),
         "saude": ler_saude(cfg.pasta_certidoes).como_dicionario(),
         "papel": "robo" if cfg.rede.roda_robo else "console",
+        "versao": maquina.versao(),
+        "calibragem": maquina.calibragem(
+            cfg.pasta_certidoes.parent / "calibragem"),
+        "certidoes": maquina.certidoes(cfg.pasta_certidoes),
         "ultimo_sinal_ha_s": (round(panorama.robo_idade_s)
                               if panorama.robo_idade_s is not None else None),
         "orgaos": [{
