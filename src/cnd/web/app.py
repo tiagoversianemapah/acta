@@ -25,10 +25,10 @@ from fastapi.templating import Jinja2Templates
 from cnd.core import breaker, fila, tempo
 from cnd.infra import alertas, heartbeat
 from cnd.infra.config import carregar as carregar_config
-from cnd.infra.db import conectar, conectar_leitura
+from cnd.infra.db import RAIZ_PROJETO, conectar, conectar_leitura
 from cnd.infra.log import configurar as configurar_log
 from cnd.infra.log import obter
-from cnd.web import api, consultas, relatorio
+from cnd.web import api, comandos, consultas, relatorio
 
 log = obter("web")
 cfg = carregar_config()
@@ -102,6 +102,9 @@ async def ciclo_de_vida(app: FastAPI):
 
 app = FastAPI(title="CND Bot", lifespan=ciclo_de_vida)
 app.include_router(api.montar(lambda: cfg, ler))
+# As rotas que mexem na máquina ficam num roteador separado, e exigem senha
+# configurada — a capacidade perigosa nasce desligada.
+app.include_router(comandos.montar(lambda: cfg, RAIZ_PROJETO))
 
 
 # ----------------------------------------------------------------------

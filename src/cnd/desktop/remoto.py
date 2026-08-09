@@ -390,6 +390,45 @@ def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
     return temporario
 
 
+def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "") -> dict:
+    """Sobe a planilha para a máquina e devolve o resumo da importação."""
+    limite = b"----acta" + str(id(arquivo)).encode()
+    corpo = b"".join([
+        b"--", limite, b"\r\n",
+        b'Content-Disposition: form-data; name="arquivo"; filename="',
+        arquivo.name.encode("utf-8"), b'"\r\n',
+        b"Content-Type: application/vnd.openxmlformats-officedocument"
+        b".spreadsheetml.sheet\r\n\r\n",
+        arquivo.read_bytes(), b"\r\n--", limite, b"--\r\n",
+    ])
+    pedido = urllib.request.Request(
+        f"{maquina.base}/api/planilha", data=corpo, method="POST")
+    pedido.add_header("Content-Type",
+                      f"multipart/form-data; boundary={limite.decode()}")
+    if senha:
+        pedido.add_header("X-CND-Senha", senha)
+    with urllib.request.urlopen(pedido, timeout=120) as resposta:
+        return json.loads(resposta.read())
+
+
+def comandar_robo(maquina: Maquina, iniciar: bool, senha: str = "") -> dict:
+    """Liga ou para o robô daquela máquina."""
+    rota = "/api/robo/iniciar" if iniciar else "/api/robo/parar"
+    pedido = urllib.request.Request(f"{maquina.base}{rota}", data=b"",
+                                    method="POST")
+    if senha:
+        pedido.add_header("X-CND-Senha", senha)
+    try:
+        with urllib.request.urlopen(pedido, timeout=30) as resposta:
+            return json.loads(resposta.read())
+    except urllib.error.HTTPError as erro:
+        # O corpo traz o motivo em português — área de trabalho bloqueada,
+        # senha não configurada. Perdê-lo deixaria só "HTTP 409".
+        with contextlib.suppress(Exception):
+            raise RuntimeError(json.loads(erro.read())["detail"]) from erro
+        raise
+
+
 def baixar(maquina: Maquina, rota: str, destino: Path, senha: str = "") -> Path:
     """Traz um arquivo da máquina (planilha ou pacote de certidões).
 

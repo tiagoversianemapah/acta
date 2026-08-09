@@ -881,16 +881,37 @@ class Aplicativo(ctk.CTk):
         na máquina — e é isso que sobrou aqui.
         """
         caixa = ctk.CTkFrame(pai, fg_color="transparent")
-        if not estado.acessavel:
-            return caixa
+
+        # O botão aparece SEMPRE, mesmo sem número cadastrado. Botão que
+        # some conforme a configuração faz a tela parecer quebrada, e a
+        # pessoa não descobre que existe a possibilidade. Sem número, ele
+        # fica apagado e diz o que falta ao ser clicado.
+        pronto = estado.acessavel
         ctk.CTkButton(
-            caixa, text="Acessar AnyDesk", height=36, width=158,
+            caixa, text="Acessar AnyDesk", height=36, width=162,
             corner_radius=8, font=(FONTE, 12, "bold"), fg_color=marca.BRANCO,
-            hover_color=marca.PAPEL, text_color=marca.AZUL_VIVO,
-            border_width=1, border_color=marca.BORDA_FORTE,
-            image=self._glifo(ICONE_ABRIR_FORA, marca.AZUL_VIVO, 13),
+            hover_color=marca.PAPEL,
+            text_color=marca.AZUL_VIVO if pronto else marca.TEXTO_3,
+            border_width=1,
+            border_color=marca.BORDA_FORTE if pronto else marca.BORDA,
+            image=self._glifo(ICONE_ABRIR_FORA,
+                              marca.AZUL_VIVO if pronto else marca.TEXTO_3, 13),
             compound="right", anchor="w",
-            command=lambda e=estado: self._acessar(e)).grid(row=0, column=0)
+            command=lambda e=estado: self._acessar(e)).grid(row=0, column=0,
+                                                            pady=(0, 8))
+
+        # Enviar planilha e ligar o robô só fazem sentido em máquina que
+        # emite — e só de outro computador, não do próprio.
+        if not estado.local and estado.roda_robo:
+            self._botao_secundario(
+                caixa, "Enviar planilha",
+                lambda e=estado: self._enviar_planilha(e), largura=162).grid(
+                row=1, column=0, pady=(0, 8))
+            rodando = estado.robo_ativo
+            self._botao_secundario(
+                caixa, "Parar robô" if rodando else "Iniciar robô",
+                lambda e=estado, r=rodando: self._comandar_robo(e, r),
+                largura=162).grid(row=2, column=0)
         return caixa
 
     def _rodape_da_maquina(self, estado) -> str:
@@ -1260,6 +1281,76 @@ class Aplicativo(ctk.CTk):
         except RuntimeError as erro:
             messagebox.showwarning(f"Acessar {estado.rotulo}", str(erro))
 
+    def _enviar_planilha(self, estado) -> None:
+        """Manda a planilha daqui para a máquina que vai trabalhar.
+
+        Sem isto, importar exige entrar por AnyDesk em cada máquina só para
+        arrastar um arquivo — quatro sessões remotas por mês para uma
+        tarefa de dez segundos.
+        """
+        caminho = filedialog.askopenfilename(
+            title=f"Planilha para {estado.rotulo}",
+            filetypes=[("Planilha do Excel", "*.xlsx *.xlsm")])
+        if not caminho:
+            return
+        if not messagebox.askyesno(
+            "Enviar planilha",
+            f"Enviar\n{Path(caminho).name}\n\npara {estado.rotulo} "
+            f"({estado.nome})?\n\nOs itens entram na fila dela. O robô só "
+            f"começa quando você mandar."
+        ):
+            return
+
+        def trabalho():
+            resposta = remoto.enviar_planilha(estado.maquina, Path(caminho),
+                                              self.cfg.rede.senha)
+            self.after(0, lambda: self._avisar_importacao(estado, resposta))
+
+        self._em_segundo_plano(trabalho, f"enviar a planilha para "
+                                         f"{estado.rotulo}")
+
+    def _avisar_importacao(self, estado, resposta: dict) -> None:
+        corpo = (f"{_numero(resposta.get('criados', 0))} itens entraram na "
+                 f"fila de {estado.rotulo}.")
+        if rejeitados := resposta.get("total_rejeitados"):
+            exemplos = "\n".join(
+                f"  linha {r['linha']}: {r['valor']} — {r['motivo']}"
+                for r in resposta.get("rejeitados", [])[:8])
+            corpo += (f"\n\n{_numero(rejeitados)} não entraram (documento "
+                      f"inválido ou repetido):\n{exemplos}")
+        messagebox.showinfo("Planilha enviada", corpo)
+        self._recarregar_saude()
+
+    def _comandar_robo(self, estado, rodando: bool) -> None:
+        """Liga ou para o robô da outra máquina, sempre confirmando antes.
+
+        Confirmação obrigatória porque o efeito é remoto e imediato: um
+        clique sem querer aqui põe uma máquina a consultar o portal, e o
+        portal conta essas consultas contra nós.
+        """
+        acao = "Parar" if rodando else "Iniciar"
+        detalhe = ("O robô encerra ao terminar o item em andamento. O que já "
+                   "saiu fica salvo."
+                   if rodando else
+                   "A máquina precisa estar ligada e com a sessão do Windows "
+                   "destravada — o robô mexe no mouse de verdade. Se estiver "
+                   "bloqueada, ele recusa e avisa.")
+        if not messagebox.askyesno(f"{acao} o robô",
+                                   f"{acao} o robô de {estado.rotulo} "
+                                   f"({estado.nome})?\n\n{detalhe}"):
+            return
+
+        def trabalho():
+            resposta = remoto.comandar_robo(estado.maquina, not rodando,
+                                            self.cfg.rede.senha)
+            self.after(0, lambda: messagebox.showinfo(
+                f"{acao} o robô",
+                f"{estado.rotulo}: {resposta.get('situacao', 'ok')}"))
+            self.after(600, self._recarregar_saude)
+
+        self._em_segundo_plano(trabalho, f"{acao.lower()} o robô de "
+                                         f"{estado.rotulo}")
+
     def _baixar_de(self, estado, rota: str, extensao: str) -> None:
         """Traz o arquivo da outra máquina.
 
@@ -1332,7 +1423,10 @@ class Aplicativo(ctk.CTk):
         # Sem recorte de mês, a lista mistura agosto com julho e junho — e a
         # emissão é mensal, então "o que saiu neste mês" é a pergunta que a
         # tela existe para responder.
-        self.filtro_mes = seletor([TODOS_OS_MESES], 150)
+        # Nasce no mês corrente: a emissão é mensal, e "todos" mostra a
+        # mesma empresa repetida uma vez por mês.
+        self.filtro_mes = seletor(
+            [_mes_por_extenso(relatorio_mes_corrente()), TODOS_OS_MESES], 150)
         self.filtro_mes.moldura.grid(row=0, column=3, padx=(0, 8))
 
         self._botao_secundario(filtros, "Atualizar", self._recarregar_itens,
@@ -1359,14 +1453,18 @@ class Aplicativo(ctk.CTk):
         # a linha inteira, e a razão social sairia verde ou vermelha junto.
         self.tabela = ttk.Treeview(
             moldura, style="Acta.Treeview", show="tree headings",
-            selectmode="browse", columns=("empresa", "documento", "resultado"),
+            selectmode="browse",
+            columns=("empresa", "documento", "mes", "resultado"),
         )
         self.tabela.column("#0", width=34, minwidth=34, stretch=False)
         self.tabela.heading("#0", text="")
         for chave, titulo, largura, minimo in (
-            ("empresa", "EMPRESA", 440, 220),
-            ("documento", "DOCUMENTO", 190, 160),
-            ("resultado", "RESULTADO", 220, 150),
+            ("empresa", "EMPRESA", 400, 220),
+            ("documento", "DOCUMENTO", 180, 160),
+            # A mesma empresa reaparece a cada mês com resultado próprio;
+            # sem esta coluna, as repetições parecem duplicidade.
+            ("mes", "MÊS", 120, 100),
+            ("resultado", "RESULTADO", 200, 150),
         ):
             self.tabela.heading(chave, text=titulo, anchor="w")
             self.tabela.column(chave, width=largura, minwidth=minimo,
@@ -1628,17 +1726,27 @@ class Aplicativo(ctk.CTk):
         messagebox.showinfo("Pacote salvo", "\n".join(corpo))
 
     def _atualizar_filtro_de_mes(self) -> None:
-        """Oferece só os meses que existem no banco desta máquina."""
+        """Oferece os meses que existem, começando pelo corrente.
+
+        A emissão se repete todo mês, então a MESMA empresa aparece uma vez
+        por mês, com resultado que pode mudar. Sem escolher o mês, a lista
+        mostra a mesma razão social várias vezes e nada explica por quê —
+        por isso o padrão é o mês corrente, e a coluna Mês fica sempre à
+        vista para quando alguém abrir "Todos".
+        """
         from cnd.desktop.estado import ler_meses_de_itens
 
-        valores = [TODOS_OS_MESES,
-                   *(_mes_por_extenso(m) for m in ler_meses_de_itens(self.cfg))]
+        meses = ler_meses_de_itens(self.cfg)
+        valores = [*(_mes_por_extenso(m) for m in meses), TODOS_OS_MESES]
         if valores == self._meses_no_filtro:
             return
         self._meses_no_filtro = valores
         atual = self.filtro_mes.get()
         self.filtro_mes.configure(values=valores)
-        self.filtro_mes.set(atual if atual in valores else TODOS_OS_MESES)
+        if atual not in valores:
+            corrente = _mes_por_extenso(relatorio_mes_corrente())
+            self.filtro_mes.set(corrente if corrente in valores
+                                else valores[0])
 
     def _ver_pendencias(self) -> None:
         """Leva à lista já filtrada — a pergunta seguinte é sempre 'quais?'."""
@@ -1926,11 +2034,16 @@ class Aplicativo(ctk.CTk):
 
         com_certidao = por_desfecho("NEGATIVA") + por_desfecho("CPEN")
         sem_certidao = por_desfecho("POSITIVA") + por_desfecho("PENDENCIA_MANUAL")
-        alcance = ("uma pasta por órgão dentro do pacote"
-                   if escolhido == TODOS_OS_ORGAOS else f"só de {escolhido}")
+
+        # Dizer POR EXTENSO o que vai no pacote. O filtro fica no bloco de
+        # cima e o botão aqui embaixo; sem esta frase, não é óbvio que um
+        # comanda o outro — e a pessoa baixa achando que levou tudo.
+        alvo = ("todos os órgãos, um em cada pasta"
+                if escolhido == TODOS_OS_ORGAOS else f"só de {escolhido}")
         self.rotulo_entrega.configure(
-            text=f"{_numero(com_certidao)} com certidão  ·  "
-                 f"{_numero(sem_certidao)} sem certidão\n{alcance}")
+            text=f"Vai baixar: certidões de {_mes_por_extenso(mes)}, {alvo}\n"
+                 f"{_numero(com_certidao)} com certidão  ·  "
+                 f"{_numero(sem_certidao)} sem certidão")
         return falhados
 
     def _orgaos_visiveis(self) -> list[dict]:
@@ -1985,7 +2098,8 @@ class Aplicativo(ctk.CTk):
         if not itens:
             # Tabela vazia sem explicação parece tela quebrada.
             self.tabela.insert("", "end", tags=("par",),
-                               values=("Nenhum item com esses filtros", "", ""))
+                               values=("Nenhum item com esses filtros",
+                                       "", "", ""))
             return
 
         for indice, item in enumerate(itens):
@@ -1995,7 +2109,9 @@ class Aplicativo(ctk.CTk):
             self.tabela.insert(
                 "", "end", image=self._ponto(cor),
                 tags=("impar" if indice % 2 else "par",),
-                values=(item["nome"], formatar(item["documento"]), rotulo),
+                values=(item["nome"], formatar(item["documento"]),
+                        _mes_por_extenso((item["atualizado_em"] or "")[:7]),
+                        rotulo),
             )
 
     # ------------------------------------------------------------------

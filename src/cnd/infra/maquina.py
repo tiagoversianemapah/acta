@@ -77,6 +77,29 @@ RAM_LIVRE_MINIMA_GB = 1.0
 DISCO_LIVRE_MINIMO_GB = 5.0
 
 
+def area_de_trabalho_disponivel() -> bool:
+    """Se existe uma área de trabalho interativa e destravada AGORA.
+
+    É a condição física para o robô cego funcionar. Ele não fala com o
+    portal por HTTP: move o mouse de verdade e lê a tela pixel a pixel. Com
+    a estação bloqueada, `SendInput` não chega a lugar nenhum e a captura
+    devolve preto — o robô rodaria "com sucesso" gastando consultas e
+    gravando erro atrás de erro.
+
+    `OpenInputDesktop` é a checagem clássica: ela falha justamente quando a
+    estação está bloqueada ou a sessão não é interativa.
+    """
+    try:
+        user32 = ctypes.windll.user32
+        desktop = user32.OpenInputDesktop(0, False, 0x0001)  # READOBJECTS
+        if not desktop:
+            return False
+        user32.CloseDesktop(desktop)
+        return True
+    except Exception:
+        return False
+
+
 def versao() -> str:
     """A versão do ACTA nesta máquina.
 
