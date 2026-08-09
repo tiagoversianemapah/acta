@@ -32,18 +32,22 @@ AMARELO_ESCURO = "#D99A0A"
 # sozinho, enquanto branco sobre branco depende de uma borda que, fina o
 # bastante para ser elegante, fica invisível na tela do escritório.
 BRANCO = "#FFFFFF"        # cartões, campos, tabela
-FUNDO = "#F4F6F9"         # a página
-ZEBRA = "#FAFBFD"         # linha alternada da tabela — quase imperceptível
-PAPEL = "#EEF1F6"         # sob o cursor, cabeçalho de tabela
-PAPEL_2 = "#E1E6EE"       # trilho da barra de progresso
-BORDA = "#E2E6ED"
-BORDA_FORTE = "#CFD5DF"   # borda de campo, que precisa se ver
+FUNDO = "#F5F7FA"         # a página
+ZEBRA = "#FAFBFC"         # linha alternada da tabela — quase imperceptível
+PAPEL = "#EFF3F8"         # sob o cursor, cabeçalho de tabela
+PAPEL_2 = "#E3E9F1"       # trilho da barra de progresso
+# Bordas claras de propósito. O que separa os blocos é o contraste entre o
+# branco do cartão e o cinza da página; a borda só fecha a forma. Escura,
+# ela vira grade e a tela fica pesada.
+BORDA = "#E8ECF2"
+BORDA_FORTE = "#D2D9E4"   # borda de campo, que precisa se ver
 
 # O azul de leitura: números, links e o item selecionado. Mais vivo que o
 # azul-marinho da marca, que é escuro demais para número grande e para
 # texto pequeno — e continua da mesma família, então não briga com a logo.
-AZUL_VIVO = "#1F53CC"
-AZUL_VIVO_FUNDO = "#EAF0FD"
+AZUL_VIVO = "#2563EB"
+AZUL_VIVO_FUNDO = "#EFF4FE"
+AZUL_VIVO_BORDA = "#D3E1FB"
 
 # --- barra lateral (clara) ---------------------------------------------
 BARRA = "#FFFFFF"
@@ -51,9 +55,9 @@ BARRA_BORDA = "#E6E9EF"
 BARRA_ATIVO = AZUL_VIVO_FUNDO
 
 # --- texto -------------------------------------------------------------
-TEXTO = "#111827"
-TEXTO_2 = "#4B5563"
-TEXTO_3 = "#8892A4"
+TEXTO = "#0F172A"
+TEXTO_2 = "#475569"
+TEXTO_3 = "#94A3B8"
 TEXTO_NA_BARRA = "#111827"
 TEXTO_NA_BARRA_2 = "#5A6474"
 

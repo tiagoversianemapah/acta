@@ -181,6 +181,15 @@ def _numero(valor: int) -> str:
     return f"{valor:,}".replace(",", ".")
 
 
+def _data_curta(momento: str) -> str:
+    """'2026-08-09T...' vira '09/08/2026'."""
+    try:
+        ano, mes, dia = momento[:10].split("-")
+        return f"{dia}/{mes}/{ano}"
+    except ValueError:
+        return ""
+
+
 def _resumo_da_maquina(estado) -> str:
     """A linha que responde 'como vai' — quanto, quão rápido e até quando."""
     partes = [f"{_numero(estado.concluidos)} de {_numero(estado.total)}"]
@@ -519,17 +528,41 @@ class Aplicativo(ctk.CTk):
 
         papel = ("Máquina de robô — emite certidões" if self.cfg.rede.roda_robo
                  else "Console — acompanha as máquinas")
-        for coluna, texto in enumerate([f"v{VERSAO}", papel], start=0):
-            ctk.CTkLabel(rodape, text=texto, font=(FONTE, 11),
-                         text_color=marca.TEXTO_3).grid(
-                row=1, column=coluna, padx=(24 if not coluna else 22, 0),
-                pady=(0, 2))
+        esquerda = ctk.CTkFrame(rodape, fg_color="transparent")
+        esquerda.grid(row=1, column=0, sticky="w", padx=(24, 0), pady=(0, 2))
+
+        ctk.CTkLabel(esquerda, text=f"v{VERSAO}", font=(FONTE, 11),
+                     text_color=marca.TEXTO_3).grid(row=0, column=0)
+        ctk.CTkLabel(esquerda, text="·", font=(FONTE, 11),
+                     text_color=marca.BORDA_FORTE).grid(row=0, column=1,
+                                                        padx=10)
+        ctk.CTkLabel(esquerda, text=papel, font=(FONTE, 11),
+                     text_color=marca.TEXTO_3).grid(row=0, column=2)
+        ctk.CTkLabel(esquerda, text="·", font=(FONTE, 11),
+                     text_color=marca.BORDA_FORTE).grid(row=0, column=3,
+                                                        padx=10)
+        ajuda = ctk.CTkLabel(esquerda, text="Ajuda", font=(FONTE, 11),
+                             text_color=marca.AZUL_VIVO, cursor="hand2")
+        ajuda.grid(row=0, column=4)
+        ajuda.bind("<Button-1>", lambda _e: self._abrir_ajuda())
 
         self.rotulo_sincronia = ctk.CTkLabel(rodape, text="", font=(FONTE, 11),
                                              text_color=marca.TEXTO_3,
                                              anchor="e")
         self.rotulo_sincronia.grid(row=1, column=3, sticky="e", padx=(0, 24),
                                    pady=(0, 2))
+
+    def _abrir_ajuda(self) -> None:
+        """Abre a documentação de instalação, que é onde estão as respostas."""
+        caminho = RAIZ_PROJETO / "docs" / "07-instalacao-nas-maquinas.md"
+        if caminho.exists():
+            with contextlib.suppress(OSError):
+                os.startfile(caminho)
+            return
+        messagebox.showinfo(
+            "Ajuda",
+            "As instruções completas estão em docs/07-instalacao-nas-"
+            "maquinas.md, na pasta do projeto.")
 
     def mostrar(self, chave: str) -> None:
         self.secao_atual = chave
@@ -652,8 +685,8 @@ class Aplicativo(ctk.CTk):
                                             padx=30, pady=(0, 12))
 
         self.faixa_aviso = ctk.CTkFrame(quadro, fg_color=marca.AMBAR_FUNDO,
-                                        corner_radius=10, border_width=1,
-                                        border_color="#F0DFBA")
+                                        corner_radius=12, border_width=1,
+                                        border_color="#F1E2C0")
         self.faixa_aviso.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(self.faixa_aviso, text="⚠", font=(FONTE, 15),
                      text_color=marca.AMBAR).grid(row=0, column=0,
@@ -1177,8 +1210,8 @@ class Aplicativo(ctk.CTk):
         quer dizer nada fora dela.
         """
         cartao = ctk.CTkFrame(pai, fg_color=marca.AZUL_VIVO_FUNDO,
-                              corner_radius=10, border_width=1,
-                              border_color="#D5E1F8")
+                              corner_radius=12, border_width=1,
+                              border_color=marca.AZUL_VIVO_BORDA)
         cartao.grid_columnconfigure(1, weight=1)
 
         ctk.CTkLabel(cartao, text="↓", font=(FONTE, 15, "bold"),
@@ -1251,8 +1284,10 @@ class Aplicativo(ctk.CTk):
         # no computador que só acompanha, o banco local está vazio.
         self._maquinas = estados
         self._atualizar_filtro_de_orgao()
+        agora = tempo.agora_iso()
         self.rotulo_sincronia.configure(
-            text=f"Última leitura: {self._hora(tempo.agora_iso())}")
+            text=f"Última leitura: {self._hora(agora)}"
+                 f"      {_data_curta(agora)}")
 
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_maquinas)
@@ -1753,28 +1788,46 @@ class Aplicativo(ctk.CTk):
         quadro.grid_rowconfigure(1, weight=1)
         quadro.grid_columnconfigure(0, weight=1)
 
-        self._titulo(quadro, "Registro", "O que o robô está fazendo agora"
-                     ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
+        cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 16))
+        cabecalho.grid_columnconfigure(0, weight=1)
+        self._titulo(cabecalho, "Registro",
+                     "O que o robô está fazendo agora, linha a linha"
+                     ).grid(row=0, column=0, sticky="w")
+        self._botao_secundario(cabecalho, "Limpar", self._limpar_registro,
+                               largura=96).grid(row=0, column=1, sticky="e")
 
+        moldura = self._cartao(quadro)
+        moldura.grid(row=1, column=0, sticky="nsew", padx=30, pady=(0, 24))
+        moldura.grid_rowconfigure(0, weight=1)
+        moldura.grid_columnconfigure(0, weight=1)
+
+        # Fundo levemente cinza e texto monoespaçado: é saída de terminal, e
+        # fingir que é texto corrido só atrapalha quem procura uma linha.
         self.caixa_log = ctk.CTkTextbox(
-            quadro, fg_color=marca.BRANCO, corner_radius=12, border_width=1,
-            border_color=marca.BORDA, font=("Consolas", 11),
-            text_color=marca.TEXTO_2, wrap="none",
-            scrollbar_button_color=marca.BORDA,
+            moldura, fg_color=marca.FUNDO, corner_radius=8, border_width=0,
+            font=("Consolas", 11), text_color=marca.TEXTO_2, wrap="none",
+            scrollbar_button_color=marca.BORDA_FORTE,
             scrollbar_button_hover_color=marca.TEXTO_3)
-        self.caixa_log.grid(row=1, column=0, sticky="nsew", padx=34, pady=(0, 28))
-        self.caixa_log.insert("end",
-                              "O registro aparece aqui quando o robô estiver rodando.\n")
+        self.caixa_log.grid(row=0, column=0, sticky="nsew", padx=14, pady=14)
+        self.caixa_log.insert(
+            "end", "O registro aparece aqui quando o robô estiver rodando.\n")
         self.caixa_log.configure(state="disabled")
         return quadro
+
+    def _limpar_registro(self) -> None:
+        self.caixa_log.configure(state="normal")
+        self.caixa_log.delete("1.0", "end")
+        self.caixa_log.configure(state="disabled")
 
     # ---------------- Ajustes ----------------
     def _secao_ajustes(self, pai) -> ctk.CTkFrame:
         quadro = ctk.CTkScrollableFrame(pai, fg_color=marca.FUNDO)
         quadro.grid_columnconfigure(0, weight=1)
 
-        self._titulo(quadro, "Ajustes", "Preparo da máquina e avisos"
-                     ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
+        self._titulo(quadro, "Ajustes",
+                     "Preparo desta máquina, avisos e acesso"
+                     ).grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 18))
 
         for linha, (titulo, descricao, rotulo, acao) in enumerate([
             ("Calibrar a tela",
@@ -1798,18 +1851,18 @@ class Aplicativo(ctk.CTk):
              "Abrir painel", self._abrir_painel),
         ], start=1):
             cartao = self._cartao(quadro)
-            cartao.grid(row=linha, column=0, sticky="ew", padx=34, pady=(0, 11))
+            cartao.grid(row=linha, column=0, sticky="ew", padx=30, pady=(0, 10))
             cartao.grid_columnconfigure(0, weight=1)
 
             ctk.CTkLabel(cartao, text=titulo, font=(FONTE, 14, "bold"),
                          text_color=marca.TEXTO, anchor="w").grid(
-                row=0, column=0, sticky="w", padx=22, pady=(18, 3))
-            ctk.CTkLabel(cartao, text=descricao, font=(FONTE, 11),
-                         text_color=marca.TEXTO_3, anchor="w", justify="left",
-                         wraplength=580).grid(row=1, column=0, sticky="w",
-                                              padx=22, pady=(0, 18))
-            self._botao_secundario(cartao, rotulo, acao, largura=140).grid(
-                row=0, column=1, rowspan=2, padx=22, pady=18)
+                row=0, column=0, sticky="w", padx=22, pady=(20, 4))
+            ctk.CTkLabel(cartao, text=descricao, font=(FONTE, 12),
+                         text_color=marca.TEXTO_2, anchor="w", justify="left",
+                         wraplength=620).grid(row=1, column=0, sticky="w",
+                                              padx=22, pady=(0, 20))
+            self._botao_secundario(cartao, rotulo, acao, largura=148).grid(
+                row=0, column=1, rowspan=2, padx=22, pady=20)
         return quadro
 
     # ------------------------------------------------------------------
