@@ -118,7 +118,10 @@ SITUACOES = {
 
 ROTULOS_DE_RESULTADO = {
     "NEGATIVA": ("Negativa", "#1B7F4E"),
-    "CPEN": ("Com efeito de negativa", "#2B2A6B"),
+    # Verde igual ao da negativa: na prática vale como negativa, entra no
+    # pacote e a empresa está regular. Cor diferente sugeria uma terceira
+    # categoria a conferir, quando o que se faz com as duas é o mesmo.
+    "CPEN": ("Com efeito de negativa", "#1B7F4E"),
     # Vermelho, e não âmbar: positiva é o resultado que IMPEDE a entrega —
     # a empresa tem pendência real e o documento não vai no pacote. Âmbar
     # sugeria "atenção", quando o certo é "esta não sai".
