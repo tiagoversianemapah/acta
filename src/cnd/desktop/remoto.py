@@ -175,7 +175,10 @@ class EstadoRemoto:
             return "Trabalhando", "verde"
         if self.pendentes:
             return "Parada com fila", "vermelho"
-        return "Ociosa", "cinza"
+        # Verde, e não cinza: ociosa com a fila limpa é o estado saudável
+        # do mês — a máquina fez o que tinha para fazer. Cinza sugeriria
+        # que não se sabe o que está acontecendo com ela.
+        return "Ociosa", "verde"
 
     @property
     def gravidade(self) -> int:

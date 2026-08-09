@@ -71,6 +71,19 @@ ICONE_DISCO = "\ueda2"
 ICONE_ABRIR_FORA = "\ue8a7"
 ICONE_ATUALIZAR = "\ue72c"
 TODOS_OS_MESES = "Todos os meses"
+
+# As colunas da tela de M\u00e1quinas, numa defini\u00e7\u00e3o s\u00f3: (t\u00edtulo, peso, largura
+# m\u00ednima). O cabe\u00e7alho e cada cart\u00e3o aplicam ESTA tupla. Com dois conjuntos
+# de larguras, o t\u00edtulo "PREPARO" acaba parando sobre a coluna do disco \u2014 e
+# foi exatamente o que deixou a tabela torta.
+COLUNAS_DE_MAQUINA = (
+    ("\u00d3RG\u00c3O / M\u00c1QUINA", 0, 200),
+    ("SITUA\u00c7\u00c3O", 0, 180),
+    ("PREPARO", 1, 230),
+    ("DISCO", 1, 250),
+    ("A\u00c7\u00d5ES", 0, 180),
+)
+RECUO_DO_CARTAO = 22
 # Margem sobre o tamanho estimado do lote. Certidão que sai do portal e não
 # encontra espaço é consulta gasta e documento perdido — vale pedir dobro.
 FOLGA_DE_DISCO = 2.0
@@ -178,6 +191,13 @@ def _resumo_da_maquina(estado) -> str:
     if estado.falhados:
         partes.append(f"{_numero(estado.falhados)} exigem atendimento")
     return "   ·   ".join(partes)
+
+
+def _configurar_colunas_de_maquina(quadro) -> None:
+    """Aplica as mesmas larguras ao cabeçalho e a cada cartão."""
+    for coluna, (_, peso, minimo) in enumerate(COLUNAS_DE_MAQUINA):
+        quadro.grid_columnconfigure(coluna, weight=peso, minsize=minimo,
+                                    uniform="" if peso else f"fixa{coluna}")
 
 
 def _detalhe_da_situacao(estado) -> str:
@@ -472,8 +492,8 @@ class Aplicativo(ctk.CTk):
                      fg_color=marca.BARRA_BORDA).grid(row=0, column=0,
                                                       columnspan=4, sticky="ew")
 
-        papel = ("Console — acompanha as máquinas" if self.cfg.rede.maquinas
-                 else "Máquina de robô")
+        papel = ("Máquina de robô — emite certidões" if self.cfg.rede.roda_robo
+                 else "Console — acompanha as máquinas")
         for coluna, texto in enumerate([f"v{VERSAO}", papel], start=0):
             ctk.CTkLabel(rodape, text=texto, font=(FONTE, 11),
                          text_color=marca.TEXTO_3).grid(
@@ -657,11 +677,16 @@ class Aplicativo(ctk.CTk):
         cabecalho.grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 14))
         cabecalho.grid_columnconfigure(0, weight=1)
         self._titulo(cabecalho, "Máquinas",
-                     "Estado das máquinas e robôs registrados"
-                     ).grid(row=0, column=0, sticky="w")
-        self._botao_secundario(cabecalho, "Atualizar agora",
-                               self._recarregar_saude, largura=136).grid(
-            row=0, column=1, sticky="e")
+                     "Acompanhe o estado das máquinas e os trabalhos "
+                     "registrados").grid(row=0, column=0, sticky="w")
+        ctk.CTkButton(cabecalho, text="Atualizar agora", height=40, width=164,
+                      corner_radius=8, font=(FONTE, 13, "bold"),
+                      fg_color=marca.AZUL_VIVO, hover_color=marca.AZUL,
+                      text_color=marca.BRANCO, anchor="w",
+                      image=self._glifo(ICONE_ATUALIZAR, marca.BRANCO, 15),
+                      compound="left",
+                      command=self._recarregar_saude).grid(row=0, column=1,
+                                                           sticky="e")
 
         # Resumo em uma linha: com quatro máquinas, é o que se lê antes de
         # olhar cartão por cartão.
@@ -674,19 +699,17 @@ class Aplicativo(ctk.CTk):
                                             anchor="w")
         self.resumo_maquinas.grid(row=0, column=1, sticky="w")
 
-        # Cabeçalho das colunas, fora dos cartões: repetir os títulos em
-        # cada cartão custaria quatro linhas de ruído por máquina.
+        # Cabeçalho fora dos cartões, com as MESMAS colunas que eles: os
+        # títulos só valem se caírem exatamente sobre o conteúdo.
         titulos = ctk.CTkFrame(quadro, fg_color="transparent")
-        titulos.grid(row=2, column=0, sticky="ew", padx=52, pady=(0, 6))
-        for coluna, (texto, peso) in enumerate([
-            ("ÓRGÃO / MÁQUINA", 0), ("SITUAÇÃO", 1), ("PREPARO", 1),
-            ("DISCO", 1), ("AÇÕES", 0),
-        ]):
-            titulos.grid_columnconfigure(coluna, weight=peso,
-                                         minsize=210 if not coluna else 0)
+        titulos.grid(row=2, column=0, sticky="ew",
+                     padx=(30 + RECUO_DO_CARTAO, 30 + RECUO_DO_CARTAO),
+                     pady=(0, 8))
+        _configurar_colunas_de_maquina(titulos)
+        for coluna, (texto, _, _) in enumerate(COLUNAS_DE_MAQUINA):
             ctk.CTkLabel(titulos, text=texto, font=(FONTE, 10, "bold"),
                          text_color=marca.TEXTO_3, anchor="w").grid(
-                row=0, column=coluna, sticky="w", padx=(0, 26))
+                row=0, column=coluna, sticky="w")
 
         self.painel_saude = ctk.CTkFrame(quadro, fg_color="transparent")
         self.painel_saude.grid(row=3, column=0, sticky="ew", padx=30,
@@ -719,26 +742,35 @@ class Aplicativo(ctk.CTk):
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_saude)
             cartao.grid(row=indice, column=0, sticky="ew", pady=(0, 12))
-            cartao.grid_columnconfigure(1, weight=1)
-            cartao.grid_columnconfigure(2, weight=1)
 
-            self._coluna_identidade(cartao, estado).grid(
-                row=0, column=0, sticky="nsw", padx=(22, 26), pady=(18, 16))
-            self._coluna_preparo(cartao, estado).grid(
-                row=0, column=1, sticky="nsw", padx=(0, 26), pady=(18, 16))
-            self._coluna_disco(cartao, estado).grid(
-                row=0, column=2, sticky="nsew", padx=(0, 26), pady=(18, 16))
-            self._coluna_acoes(cartao, estado).grid(
-                row=0, column=3, sticky="ne", padx=(0, 22), pady=(18, 16))
+            corpo = ctk.CTkFrame(cartao, fg_color="transparent")
+            corpo.grid(row=0, column=0, sticky="ew",
+                       padx=RECUO_DO_CARTAO, pady=(20, 16))
+            corpo.grid_columnconfigure(0, weight=1)
+            cartao.grid_columnconfigure(0, weight=1)
+
+            colunas = ctk.CTkFrame(corpo, fg_color="transparent")
+            colunas.grid(row=0, column=0, sticky="ew")
+            _configurar_colunas_de_maquina(colunas)
+
+            for coluna, montar in enumerate([
+                self._coluna_identidade, self._coluna_situacao,
+                self._coluna_preparo, self._coluna_disco, self._coluna_acoes,
+            ]):
+                # A última fica centrada na vertical; as outras alinham pelo
+                # topo, senão os textos de alturas diferentes flutuam.
+                montar(colunas, estado).grid(
+                    row=0, column=coluna, padx=(0, 24 if coluna < 4 else 0),
+                    sticky="new" if coluna < 4 else "e")
 
             if rodape := self._rodape_da_maquina(estado):
-                risco = ctk.CTkFrame(cartao, height=1, corner_radius=0,
-                                     fg_color=marca.BORDA)
-                risco.grid(row=1, column=0, columnspan=4, sticky="ew")
-                ctk.CTkLabel(cartao, text=rodape, font=(FONTE, 11),
+                ctk.CTkFrame(corpo, height=1, corner_radius=0,
+                             fg_color=marca.BORDA).grid(row=1, column=0,
+                                                        sticky="ew",
+                                                        pady=(16, 0))
+                ctk.CTkLabel(corpo, text=rodape, font=(FONTE, 11),
                              text_color=marca.TEXTO_3, anchor="w").grid(
-                    row=2, column=0, columnspan=4, sticky="w", padx=22,
-                    pady=(12, 14))
+                    row=2, column=0, sticky="w", pady=(12, 0))
 
     def _resumir_maquinas(self, estados: list) -> None:
         prontas = sum(1 for e in estados if e.online)
@@ -758,12 +790,7 @@ class Aplicativo(ctk.CTk):
             marca.VERDE if tudo_certo else marca.AMBAR, 16))
 
     def _coluna_identidade(self, pai, estado) -> ctk.CTkFrame:
-        """Quem é a máquina e como ela está, com duração.
-
-        A duração é o que faltava: parada há 40 segundos entre lotes e
-        parada há 4 horas sem ninguém notar são situações opostas, e a tela
-        antiga mostrava as duas igual.
-        """
+        """Quem é a máquina: órgão, computador e versão instalada."""
         caixa = ctk.CTkFrame(pai, fg_color="transparent")
 
         titulo = ctk.CTkLabel(caixa, text=estado.rotulo,
@@ -775,28 +802,40 @@ class Aplicativo(ctk.CTk):
             self._transformar_em_link(titulo, estado, tamanho=14)
 
         ctk.CTkLabel(caixa, text=estado.subtitulo, font=(FONTE, 11),
-                     text_color=marca.TEXTO_3, anchor="w").grid(row=1, column=0,
-                                                                sticky="w",
-                                                                pady=(2, 0))
-        versao = estado.dados.get("versao") or "versão desconhecida"
+                     text_color=marca.TEXTO_3, anchor="w",
+                     wraplength=180, justify="left").grid(row=1, column=0,
+                                                          sticky="w",
+                                                          pady=(4, 0))
+        versao = estado.dados.get("versao") or "?"
         ctk.CTkLabel(caixa, text=f"ACTA {versao}", font=(FONTE, 11),
                      text_color=marca.TEXTO_3, anchor="w").grid(row=2, column=0,
-                                                                sticky="w")
+                                                                sticky="w",
+                                                                pady=(2, 0))
+        return caixa
 
+    def _coluna_situacao(self, pai, estado) -> ctk.CTkFrame:
+        """Como ela está AGORA, sempre com há quanto tempo.
+
+        A duração é o que faltava: parada há 40 segundos entre lotes e
+        parada há 4 horas sem ninguém notar são situações opostas, e a tela
+        antiga mostrava as duas igual.
+        """
+        caixa = ctk.CTkFrame(pai, fg_color="transparent")
         texto, cor = estado.situacao
         frente, _ = self.CORES_DE_SITUACAO[cor]
+
         linha = ctk.CTkFrame(caixa, fg_color="transparent")
-        linha.grid(row=3, column=0, sticky="w", pady=(12, 0))
+        linha.grid(row=0, column=0, sticky="w")
         ctk.CTkLabel(linha, text="●", font=(FONTE, 12),
                      text_color=frente).grid(row=0, column=0, padx=(0, 8))
-        ctk.CTkLabel(linha, text=texto, font=(FONTE, 12, "bold"),
+        ctk.CTkLabel(linha, text=texto, font=(FONTE, 13, "bold"),
                      text_color=frente, anchor="w").grid(row=0, column=1,
                                                          sticky="w")
         ctk.CTkLabel(caixa, text=_detalhe_da_situacao(estado),
                      font=(FONTE, 11), text_color=marca.TEXTO_3, anchor="w",
-                     justify="left", wraplength=210).grid(row=4, column=0,
+                     justify="left", wraplength=165).grid(row=1, column=0,
                                                           sticky="w",
-                                                          pady=(3, 0))
+                                                          pady=(5, 0))
         return caixa
 
     def _coluna_preparo(self, pai, estado) -> ctk.CTkFrame:
@@ -806,13 +845,10 @@ class Aplicativo(ctk.CTk):
         quebra quando alguém muda a resolução do monitor. Sem esta coluna,
         isso só se descobre errando um lote inteiro.
         """
+        # Sem título aqui dentro: quem nomeia a coluna é o cabeçalho da
+        # tabela. Repetir "PREPARO" em cada cartão é ruído.
         caixa = ctk.CTkFrame(pai, fg_color="transparent")
-        ctk.CTkLabel(caixa, text="PREPARO", font=(FONTE, 10, "bold"),
-                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=0,
-                                                                columnspan=2,
-                                                                sticky="w",
-                                                                pady=(0, 8))
-        for linha, (ok, texto) in enumerate(_preparo(estado), start=1):
+        for linha, (ok, texto) in enumerate(_preparo(estado)):
             codigo, cor = ((ICONE_OK, marca.VERDE) if ok is True else
                            (ICONE_VAZIO, marca.TEXTO_3) if ok is None else
                            (ICONE_ALERTA, marca.AMBAR))
@@ -838,14 +874,6 @@ class Aplicativo(ctk.CTk):
         caixa.grid_columnconfigure(0, weight=1)
         saude = estado.saude
 
-        titulo = ctk.CTkFrame(caixa, fg_color="transparent")
-        titulo.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        ctk.CTkLabel(titulo, text="", width=18,
-                     image=self._glifo(ICONE_DISCO, marca.TEXTO_3, 14)).grid(
-            row=0, column=0)
-        ctk.CTkLabel(titulo, text="DISCO", font=(FONTE, 10, "bold"),
-                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=1,
-                                                                sticky="w")
         if not saude:
             ctk.CTkLabel(caixa, text="último dado desconhecido",
                          font=(FONTE, 11), text_color=marca.TEXTO_3,

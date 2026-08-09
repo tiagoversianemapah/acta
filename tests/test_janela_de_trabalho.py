@@ -121,9 +121,13 @@ def _maquina(pendentes: int = 0, ativo: bool = False,
 
 
 class TestSituacaoNaTela:
-    def test_parado_sem_fila_e_ocioso_e_cinza(self):
-        """Vermelho o mês inteiro ensina a ignorar o vermelho."""
-        assert _maquina(pendentes=0).situacao == ("Ociosa", "cinza")
+    def test_parado_sem_fila_e_ocioso_e_verde(self):
+        """Vermelho o mês inteiro ensina a ignorar o vermelho.
+
+        Verde e não cinza: a fila limpa é o estado saudável do mês, não uma
+        incógnita — a máquina fez o que tinha para fazer.
+        """
+        assert _maquina(pendentes=0).situacao == ("Ociosa", "verde")
 
     def test_parado_com_fila_e_vermelho(self):
         assert _maquina(pendentes=5).situacao == ("Parada com fila", "vermelho")

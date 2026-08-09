@@ -48,13 +48,23 @@ class Panorama:
         return (self.concluidos / self.total * 100) if self.total else 0.0
 
     @property
+    def pendentes(self) -> int:
+        return sum(r.pendentes for r in self.resumos)
+
+    @property
     def situacao(self) -> tuple[str, str]:
-        """(texto, cor) do indicador de estado."""
+        """(texto, cor) do indicador de estado.
+
+        A mesma regra do cartão da máquina, para a barra lateral não dizer
+        "parado" em vermelho enquanto o cartão diz "ociosa" em verde sobre
+        o mesmo computador. Parar com a fila limpa é o estado saudável do
+        mês; o que é incidente é parar tendo trabalho a fazer.
+        """
         if self.robo_ativo:
             return "Robô em execução", "verde"
-        if self.robo_idade_s is None:
-            return "Robô parado", "cinza"
-        return "Robô parado", "vermelho"
+        if self.pendentes:
+            return "Parado com fila", "vermelho"
+        return "Ocioso", "verde"
 
     def por_desfecho(self, desfecho: str) -> int:
         return sum(r.por_desfecho.get(desfecho, 0) for r in self.resumos)
