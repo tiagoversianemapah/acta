@@ -149,10 +149,26 @@ def eta_horas(resumo_orgao: ResumoOrgao) -> float | None:
     return resumo_orgao.restantes / resumo_orgao.ritmo_por_hora
 
 
+def meses_com_itens(conn: sqlite3.Connection) -> list[str]:
+    """Os meses que têm item, do mais recente para trás.
+
+    O trabalho é mensal: emite-se a carteira inteira uma vez por mês. Sem
+    recorte de mês, a lista mistura agosto com julho e junho, e a pergunta
+    real — "o que saiu neste mês?" — fica sem resposta.
+    """
+    return [linha["mes"] for linha in conn.execute(
+        "SELECT DISTINCT strftime('%Y-%m', atualizado_em) AS mes FROM job "
+        "WHERE atualizado_em IS NOT NULL ORDER BY mes DESC")]
+
+
 def jobs(conn: sqlite3.Connection, lote_id: int | None = None, orgao: str | None = None,
          status: str | None = None, desfecho: str | None = None,
-         busca: str | None = None, limite: int = 200) -> list[sqlite3.Row]:
+         busca: str | None = None, limite: int = 200,
+         mes: str | None = None) -> list[sqlite3.Row]:
     condicoes, args = [], []
+    if mes:
+        condicoes.append("strftime('%Y-%m', j.atualizado_em) = ?")
+        args.append(mes)
     # Os nomes de coluna são literais desta tupla — nunca vêm de fora. O
     # que vem do usuário é sempre o valor, e vai por parâmetro.
     for coluna, valor in (("j.lote_id", lote_id), ("j.orgao", orgao),

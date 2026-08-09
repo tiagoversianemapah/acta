@@ -310,7 +310,8 @@ class Entrega:
 
 
 def baixar_certidoes(cfg: Config, mes: str, destino: Path,
-                     somente_negativas: bool = False) -> Entrega:
+                     somente_negativas: bool = False,
+                     orgao: str | None = None) -> Entrega:
     """Junta num pacote só as certidões do mês de todas as máquinas.
 
     Cada máquina monta o pacote dela, já com uma pasta por órgão, e aqui as
@@ -329,6 +330,8 @@ def baixar_certidoes(cfg: Config, mes: str, destino: Path,
     """
     entrega = Entrega()
     consulta = f"?somente_negativas={'1' if somente_negativas else '0'}"
+    if orgao:
+        consulta += f"&orgao={urllib.parse.quote(orgao)}"
     destino.parent.mkdir(parents=True, exist_ok=True)
 
     with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
@@ -374,10 +377,12 @@ def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
         from cnd.infra.db import conectar_leitura
         from cnd.web.relatorio import zipar_pdfs
 
+        pedido = urllib.parse.parse_qs(consulta.lstrip("?"))
         with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
             temporario.write_bytes(zipar_pdfs(
-                conn, mes, consulta.endswith("=1"),
-                nomes={c: o.rotulo for c, o in cfg.orgaos.items()}))
+                conn, mes, pedido.get("somente_negativas") == ["1"],
+                nomes={c: o.rotulo for c, o in cfg.orgaos.items()},
+                orgao=(pedido.get("orgao") or [None])[0]))
         return temporario
 
     baixar(maquina, f"/certidoes/{mes}.zip{consulta}", temporario,

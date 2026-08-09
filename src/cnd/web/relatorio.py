@@ -235,7 +235,8 @@ def mes_corrente() -> str:
 
 def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
                somente_negativas: bool = False,
-               nomes: dict[str, str] | None = None) -> bytes:
+               nomes: dict[str, str] | None = None,
+               orgao: str | None = None) -> bytes:
     """Pacote com as certidões emitidas no mês, separadas por órgão.
 
     O corte é o MÊS, e não o lote, por dois motivos. O primeiro é a regra do
@@ -264,6 +265,13 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
     mes = mes or mes_corrente()
     nomes = nomes or {}
     filtro = "AND c.tipo = 'NEGATIVA'" if somente_negativas else ""
+    # Um órgão de cada vez quando só ele fechou: no fim do mês entrega-se
+    # tudo, mas a federal costuma terminar antes das estaduais, e não faz
+    # sentido segurar a entrega dela esperando as outras.
+    parametros: list = [mes]
+    if orgao:
+        filtro += " AND j.orgao = ?"
+        parametros.append(orgao)
 
     buffer = BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as pacote:
@@ -279,7 +287,7 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
              WHERE strftime('%Y-%m', c.emitida_em) = ? {filtro}
              ORDER BY j.orgao, c.tipo, e.nome
             """,
-            (mes,),
+            parametros,
         ):
             origem = Path(linha["caminho_pdf"])
             if not origem.exists():

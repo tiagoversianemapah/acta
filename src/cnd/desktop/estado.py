@@ -114,6 +114,20 @@ def ler_atividade(cfg: Config, limite: int = 6) -> list[dict]:
         conn.close()
 
 
+def ler_meses_de_itens(cfg: Config) -> list[str]:
+    """Meses que têm item na fila ou processado. Nunca levanta exceção."""
+    try:
+        conn = conectar_leitura(cfg.banco)
+    except Exception:
+        return []
+    try:
+        return consultas.meses_com_itens(conn)
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 def ler_meses(cfg: Config) -> list[str]:
     """Meses com certidão guardada. Nunca levanta exceção."""
     from cnd.web.relatorio import meses_com_certidao

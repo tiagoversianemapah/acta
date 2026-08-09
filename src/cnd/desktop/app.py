@@ -60,6 +60,17 @@ LIMITE_DE_ITENS = 3000
 CICLOS_ENTRE_CONSULTAS_DE_REDE = 5
 # Abaixo disso o disco é apertado o bastante para virar vermelho na tela.
 LIMITE_DISCO_GB = 5.0
+TODOS_OS_ORGAOS = "Todos os órgãos"
+
+# Glifos do Segoe Fluent, escolhidos olhando: renderizei os candidatos numa
+# folha e conferi o desenho de cada um antes de fixar o codigo.
+ICONE_OK = "\ue930"          # circulo com check
+ICONE_VAZIO = "\uea3a"       # circulo vazio: "nao da para saber"
+ICONE_ALERTA = "\ue7ba"      # triangulo de atencao
+ICONE_DISCO = "\ueda2"
+ICONE_ABRIR_FORA = "\ue8a7"
+ICONE_ATUALIZAR = "\ue72c"
+TODOS_OS_MESES = "Todos os meses"
 # Margem sobre o tamanho estimado do lote. Certidão que sai do portal e não
 # encontra espaço é consulta gasta e documento perdido — vale pedir dobro.
 FOLGA_DE_DISCO = 2.0
@@ -308,7 +319,14 @@ class Aplicativo(ctk.CTk):
         self.robo = Robo(RAIZ_PROJETO)
         self.secao_atual = "inicio"
         self._pontos: dict[str, ImageTk.PhotoImage] = {}
+        self._glifos: dict[tuple, object] = {}
         self._ciclos_ate_renovar = 0
+        # O que as máquinas responderam por último. O bloco do mês soma
+        # daqui, e não do banco local — no computador que só acompanha, o
+        # banco local está vazio e mostraria zero com quatro robôs rodando.
+        self._maquinas: list = []
+        self._orgaos_no_filtro: list[str] = []
+        self._meses_no_filtro: list[str] = []
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1200x760")
@@ -423,12 +441,20 @@ class Aplicativo(ctk.CTk):
         self.rotulo_detalhe.grid(row=1, column=0, columnspan=2, sticky="w",
                                  padx=16, pady=(2, 14))
 
-    def _glifo(self, codigo: str, cor: str):
-        """Ícone do Windows como CTkImage, ou None se a fonte não existir."""
-        imagem = marca.desenhar_glifo(codigo, cor, 17)
-        if imagem is None:
-            return None
-        return ctk.CTkImage(light_image=imagem, size=(17, 17))
+    def _glifo(self, codigo: str, cor: str, tamanho: int = 17):
+        """Ícone do Windows como CTkImage, ou None se a fonte não existir.
+
+        Guardado em cache e preso a `self`: o Tk não segura a imagem, e sem
+        alguém guardando a referência ela some no coletor de lixo e o ícone
+        aparece em branco.
+        """
+        chave = (codigo, cor, tamanho)
+        if chave not in self._glifos:
+            imagem = marca.desenhar_glifo(codigo, cor, tamanho)
+            self._glifos[chave] = (
+                ctk.CTkImage(light_image=imagem, size=(tamanho, tamanho))
+                if imagem is not None else None)
+        return self._glifos[chave]
 
     def _montar_rodape(self) -> None:
         """A faixa de baixo: versão, papel da máquina e última leitura.
@@ -639,14 +665,31 @@ class Aplicativo(ctk.CTk):
 
         # Resumo em uma linha: com quatro máquinas, é o que se lê antes de
         # olhar cartão por cartão.
-        self.resumo_maquinas = ctk.CTkLabel(quadro, text="", font=(FONTE, 12),
+        faixa = ctk.CTkFrame(quadro, fg_color="transparent")
+        faixa.grid(row=1, column=0, sticky="ew", padx=30, pady=(0, 14))
+        self.icone_resumo = ctk.CTkLabel(faixa, text="", width=20)
+        self.icone_resumo.grid(row=0, column=0, padx=(0, 8))
+        self.resumo_maquinas = ctk.CTkLabel(faixa, text="", font=(FONTE, 12),
                                             text_color=marca.TEXTO_2,
                                             anchor="w")
-        self.resumo_maquinas.grid(row=1, column=0, sticky="w", padx=30,
-                                  pady=(0, 12))
+        self.resumo_maquinas.grid(row=0, column=1, sticky="w")
+
+        # Cabeçalho das colunas, fora dos cartões: repetir os títulos em
+        # cada cartão custaria quatro linhas de ruído por máquina.
+        titulos = ctk.CTkFrame(quadro, fg_color="transparent")
+        titulos.grid(row=2, column=0, sticky="ew", padx=52, pady=(0, 6))
+        for coluna, (texto, peso) in enumerate([
+            ("ÓRGÃO / MÁQUINA", 0), ("SITUAÇÃO", 1), ("PREPARO", 1),
+            ("DISCO", 1), ("AÇÕES", 0),
+        ]):
+            titulos.grid_columnconfigure(coluna, weight=peso,
+                                         minsize=210 if not coluna else 0)
+            ctk.CTkLabel(titulos, text=texto, font=(FONTE, 10, "bold"),
+                         text_color=marca.TEXTO_3, anchor="w").grid(
+                row=0, column=coluna, sticky="w", padx=(0, 26))
 
         self.painel_saude = ctk.CTkFrame(quadro, fg_color="transparent")
-        self.painel_saude.grid(row=2, column=0, sticky="ew", padx=30,
+        self.painel_saude.grid(row=3, column=0, sticky="ew", padx=30,
                                pady=(0, 24))
         self.painel_saude.grid_columnconfigure(0, weight=1)
         return quadro
@@ -703,10 +746,16 @@ class Aplicativo(ctk.CTk):
         texto = f"{prontas} de {len(estados)} respondendo"
         if mudas:
             texto += f"   ·   {mudas} sem resposta"
-        if travadas := [e for e in estados if e.online and e.pendentes
-                        and not e.robo_ativo]:
+        travadas = [e for e in estados if e.online and e.pendentes
+                    and not e.robo_ativo]
+        if travadas:
             texto += f"   ·   {len(travadas)} com fila parada"
         self.resumo_maquinas.configure(text=texto)
+
+        tudo_certo = not mudas and not travadas
+        self.icone_resumo.configure(image=self._glifo(
+            ICONE_OK if tudo_certo else ICONE_ALERTA,
+            marca.VERDE if tudo_certo else marca.AMBAR, 16))
 
     def _coluna_identidade(self, pai, estado) -> ctk.CTkFrame:
         """Quem é a máquina e como ela está, com duração.
@@ -764,12 +813,12 @@ class Aplicativo(ctk.CTk):
                                                                 sticky="w",
                                                                 pady=(0, 8))
         for linha, (ok, texto) in enumerate(_preparo(estado), start=1):
-            simbolo, cor = (("✓", marca.VERDE) if ok is True else
-                            ("—", marca.TEXTO_3) if ok is None else
-                            ("!", marca.AMBAR))
-            ctk.CTkLabel(caixa, text=simbolo, font=(FONTE, 11, "bold"),
-                         text_color=cor, width=14).grid(row=linha, column=0,
-                                                        sticky="w")
+            codigo, cor = ((ICONE_OK, marca.VERDE) if ok is True else
+                           (ICONE_VAZIO, marca.TEXTO_3) if ok is None else
+                           (ICONE_ALERTA, marca.AMBAR))
+            marca_visual = ctk.CTkLabel(caixa, text="", width=18,
+                                        image=self._glifo(codigo, cor, 14))
+            marca_visual.grid(row=linha, column=0, sticky="w", pady=1)
             ctk.CTkLabel(caixa, text=texto, font=(FONTE, 11),
                          text_color=marca.TEXTO_2 if ok is not None
                          else marca.TEXTO_3, anchor="w").grid(row=linha,
@@ -789,16 +838,18 @@ class Aplicativo(ctk.CTk):
         caixa.grid_columnconfigure(0, weight=1)
         saude = estado.saude
 
-        ctk.CTkLabel(caixa, text="DISCO", font=(FONTE, 10, "bold"),
-                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=0,
-                                                                columnspan=2,
-                                                                sticky="w",
-                                                                pady=(0, 8))
+        titulo = ctk.CTkFrame(caixa, fg_color="transparent")
+        titulo.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        ctk.CTkLabel(titulo, text="", width=18,
+                     image=self._glifo(ICONE_DISCO, marca.TEXTO_3, 14)).grid(
+            row=0, column=0)
+        ctk.CTkLabel(titulo, text="DISCO", font=(FONTE, 10, "bold"),
+                     text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=1,
+                                                                sticky="w")
         if not saude:
-            ctk.CTkLabel(caixa, text="—", font=(FONTE, 12),
-                         text_color=marca.TEXTO_3, anchor="w").grid(row=1,
-                                                                    column=0,
-                                                                    sticky="w")
+            ctk.CTkLabel(caixa, text="último dado desconhecido",
+                         font=(FONTE, 11), text_color=marca.TEXTO_3,
+                         anchor="w").grid(row=1, column=0, sticky="w")
             return caixa
 
         livre, total = saude["disco_livre_gb"], saude["disco_total_gb"]
@@ -822,20 +873,24 @@ class Aplicativo(ctk.CTk):
         return caixa
 
     def _coluna_acoes(self, pai, estado) -> ctk.CTkFrame:
+        """Só o acesso remoto.
+
+        O botão de abrir o painel dela no navegador saiu: mostra a mesma
+        coisa que esta janela já mostra, e ação que duplica outra só divide
+        a atenção. Quando algo precisa de mão humana, o que se quer é entrar
+        na máquina — e é isso que sobrou aqui.
+        """
         caixa = ctk.CTkFrame(pai, fg_color="transparent")
-        if estado.acessavel:
-            ctk.CTkButton(caixa, text="Acessar AnyDesk", height=36, width=150,
-                          corner_radius=8, font=(FONTE, 12, "bold"),
-                          fg_color=marca.BRANCO, hover_color=marca.PAPEL,
-                          text_color=marca.AZUL_VIVO, border_width=1,
-                          border_color=marca.BORDA_FORTE,
-                          command=lambda e=estado: self._acessar(e)).grid(
-                row=0, column=0, pady=(0, 8))
-        if not estado.local:
-            self._botao_secundario(
-                caixa, "Abrir painel",
-                lambda e=estado: webbrowser.open(e.maquina.base),
-                largura=150).grid(row=1, column=0)
+        if not estado.acessavel:
+            return caixa
+        ctk.CTkButton(
+            caixa, text="Acessar AnyDesk", height=36, width=158,
+            corner_radius=8, font=(FONTE, 12, "bold"), fg_color=marca.BRANCO,
+            hover_color=marca.PAPEL, text_color=marca.AZUL_VIVO,
+            border_width=1, border_color=marca.BORDA_FORTE,
+            image=self._glifo(ICONE_ABRIR_FORA, marca.AZUL_VIVO, 13),
+            compound="right", anchor="w",
+            command=lambda e=estado: self._acessar(e)).grid(row=0, column=0)
         return caixa
 
     def _rodape_da_maquina(self, estado) -> str:
@@ -915,17 +970,32 @@ class Aplicativo(ctk.CTk):
 
         topo = ctk.CTkFrame(cartao, fg_color="transparent")
         topo.grid(row=0, column=0, sticky="ew", padx=22, pady=(16, 0))
-        topo.grid_columnconfigure(0, weight=1)
+        topo.grid_columnconfigure(1, weight=1)
         ctk.CTkLabel(topo, text="EMISSÃO DO MÊS", font=(FONTE, 10, "bold"),
                      text_color=marca.TEXTO_3, anchor="w").grid(row=0, column=0,
+                                                                columnspan=2,
                                                                 sticky="w")
         self.rotulo_mes = ctk.CTkLabel(topo, text="", font=(FONTE, 16, "bold"),
                                        text_color=marca.TEXTO, anchor="w")
         self.rotulo_mes.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        # O filtro de órgão comanda a tela inteira: percentual, números e o
+        # pacote. A federal costuma fechar antes das estaduais, e olhar o
+        # total somado esconde exatamente essa diferença.
+        self.filtro_orgao = ctk.CTkOptionMenu(
+            topo, width=190, height=30, corner_radius=8,
+            values=[TODOS_OS_ORGAOS], fg_color=marca.PAPEL,
+            button_color=marca.PAPEL, button_hover_color=marca.PAPEL_2,
+            text_color=marca.TEXTO, dropdown_fg_color=marca.BRANCO,
+            dropdown_text_color=marca.TEXTO, dropdown_hover_color=marca.PAPEL,
+            font=(FONTE, 12), dropdown_font=(FONTE, 12),
+            command=lambda _: self._atualizar_situacao())
+        self.filtro_orgao.grid(row=1, column=1, sticky="e", padx=(12, 12))
+
         self.rotulo_percentual = ctk.CTkLabel(topo, text="",
                                               font=(FONTE, 18, "bold"),
                                               text_color=marca.AZUL_VIVO)
-        self.rotulo_percentual.grid(row=1, column=1, sticky="e")
+        self.rotulo_percentual.grid(row=1, column=2, sticky="e")
 
         self.barra = ctk.CTkProgressBar(cartao, height=6, corner_radius=3,
                                         progress_color=marca.AZUL_VIVO,
@@ -1036,9 +1106,12 @@ class Aplicativo(ctk.CTk):
         for filho in self.painel_maquinas.winfo_children():
             filho.destroy()
 
-        agora = tempo.agora_iso()
+        # Guardado porque o bloco do mês soma daqui, e não do banco local:
+        # no computador que só acompanha, o banco local está vazio.
+        self._maquinas = estados
+        self._atualizar_filtro_de_orgao()
         self.rotulo_sincronia.configure(
-            text=f"Última leitura: {self._hora(agora)}")
+            text=f"Última leitura: {self._hora(tempo.agora_iso())}")
 
         for indice, estado in enumerate(estados):
             cartao = self._cartao(self.painel_maquinas)
@@ -1256,12 +1329,18 @@ class Aplicativo(ctk.CTk):
         self.filtro_situacao = seletor(list(SITUACOES), 168)
         self.filtro_situacao.moldura.grid(row=0, column=2, padx=(0, 8))
 
+        # Sem recorte de mês, a lista mistura agosto com julho e junho — e a
+        # emissão é mensal, então "o que saiu neste mês" é a pergunta que a
+        # tela existe para responder.
+        self.filtro_mes = seletor([TODOS_OS_MESES], 150)
+        self.filtro_mes.moldura.grid(row=0, column=3, padx=(0, 8))
+
         self._botao_secundario(filtros, "Atualizar", self._recarregar_itens,
-                               largura=104).grid(row=0, column=3)
+                               largura=104).grid(row=0, column=4)
 
         self.contador = ctk.CTkLabel(filtros, text="", font=(FONTE, 12),
                                      text_color=marca.TEXTO_3)
-        self.contador.grid(row=0, column=4, padx=(14, 0))
+        self.contador.grid(row=0, column=5, padx=(14, 0))
 
         moldura = self._cartao(quadro)
         moldura.grid(row=2, column=0, sticky="nsew", padx=34, pady=(0, 28))
@@ -1515,9 +1594,15 @@ class Aplicativo(ctk.CTk):
         if not destino:
             return
 
+        # O pacote respeita o filtro da tela: a federal costuma fechar antes
+        # das estaduais, e não faz sentido segurar a entrega dela.
+        escolhido = self.filtro_orgao.get()
+        codigo = next((o["orgao"] for o in self._orgaos_visiveis()), None) \
+            if escolhido != TODOS_OS_ORGAOS else None
+
         def trabalho():
             entrega = remoto.baixar_certidoes(self.cfg, mes, Path(destino),
-                                              somente)
+                                              somente, orgao=codigo)
             self.after(0, lambda: self._avisar_entrega(entrega, destino))
 
         self._em_segundo_plano(trabalho, "montar o pacote de certidões")
@@ -1541,6 +1626,19 @@ class Aplicativo(ctk.CTk):
                 + faltando)
             return
         messagebox.showinfo("Pacote salvo", "\n".join(corpo))
+
+    def _atualizar_filtro_de_mes(self) -> None:
+        """Oferece só os meses que existem no banco desta máquina."""
+        from cnd.desktop.estado import ler_meses_de_itens
+
+        valores = [TODOS_OS_MESES,
+                   *(_mes_por_extenso(m) for m in ler_meses_de_itens(self.cfg))]
+        if valores == self._meses_no_filtro:
+            return
+        self._meses_no_filtro = valores
+        atual = self.filtro_mes.get()
+        self.filtro_mes.configure(values=valores)
+        self.filtro_mes.set(atual if atual in valores else TODOS_OS_MESES)
 
     def _ver_pendencias(self) -> None:
         """Leva à lista já filtrada — a pergunta seguinte é sempre 'quais?'."""
@@ -1773,13 +1871,13 @@ class Aplicativo(ctk.CTk):
                                        if cor_veredito != "cinza"
                                        else marca.TEXTO_2)
 
-        self._atualizar_mes(panorama)
+        falhados = self._atualizar_mes()
 
         # A faixa só existe quando há o que fazer. Cartão marcando "0
         # pendências" ocupa espaço para dizer que não há nada a dizer.
-        if panorama.falhados:
+        if falhados:
             self.rotulo_aviso.configure(
-                text=f"{_numero(panorama.falhados)} itens esgotaram as "
+                text=f"{_numero(falhados)} itens esgotaram as "
                      f"{self._max_tentativas()} tentativas e precisam de "
                      f"conferência manual")
             self.faixa_aviso.grid(row=3, column=0, sticky="ew", padx=30,
@@ -1791,32 +1889,68 @@ class Aplicativo(ctk.CTk):
         ativos = self.cfg.ativos()
         return ativos[0].retry.max_tentativas if ativos else 3
 
-    def _atualizar_mes(self, panorama) -> None:
-        """O bloco do mês: quanto saiu, o que saiu e o que dá para entregar."""
-        mes = relatorio_mes_corrente()
-        self.rotulo_mes.configure(text=_mes_por_extenso(mes).capitalize())
-        self.rotulo_percentual.configure(text=f"{panorama.percentual:.1f}%"
-                                              .replace(".", ","))
-        self.barra.set(panorama.percentual / 100)
+    def _atualizar_mes(self) -> None:
+        """O bloco do mês, somando TODAS as máquinas e respeitando o filtro.
 
-        restam = panorama.total - panorama.concluidos - panorama.falhados
-        partes = [f"{_numero(panorama.concluidos)} de {_numero(panorama.total)}"]
-        if restam > 0:
+        A soma vem dos órgãos que as máquinas informaram, e não do banco
+        desta máquina. No computador que só acompanha, o banco local está
+        vazio — ele mostraria zero enquanto quatro robôs trabalham.
+        """
+        mes = relatorio_mes_corrente()
+        resumos = self._orgaos_visiveis()
+
+        titulo = _mes_por_extenso(mes).capitalize()
+        if (escolhido := self.filtro_orgao.get()) != TODOS_OS_ORGAOS:
+            titulo += f"  ·  {escolhido}"
+        self.rotulo_mes.configure(text=titulo)
+
+        total = sum(o["total"] for o in resumos)
+        concluidos = sum(o["concluidos"] for o in resumos)
+        falhados = sum(o["falhados"] for o in resumos)
+        percentual = (concluidos / total * 100) if total else 0.0
+
+        self.rotulo_percentual.configure(
+            text=f"{percentual:.1f}%".replace(".", ","))
+        self.barra.set(percentual / 100)
+
+        partes = [f"{_numero(concluidos)} de {_numero(total)}"]
+        if (restam := total - concluidos - falhados) > 0:
             partes.append(f"{_numero(restam)} na fila")
         self.rotulo_restante.configure(text="   ·   ".join(partes))
 
-        for chave in self.metricas:
-            self.metricas[chave].configure(
-                text=_numero(panorama.por_desfecho(chave)))
+        def por_desfecho(chave: str) -> int:
+            return sum(o["por_desfecho"].get(chave, 0) for o in resumos)
 
-        com_certidao = (panorama.por_desfecho("NEGATIVA")
-                        + panorama.por_desfecho("CPEN"))
-        sem_certidao = (panorama.por_desfecho("POSITIVA")
-                        + panorama.por_desfecho("PENDENCIA_MANUAL"))
+        for chave in self.metricas:
+            self.metricas[chave].configure(text=_numero(por_desfecho(chave)))
+
+        com_certidao = por_desfecho("NEGATIVA") + por_desfecho("CPEN")
+        sem_certidao = por_desfecho("POSITIVA") + por_desfecho("PENDENCIA_MANUAL")
+        alcance = ("uma pasta por órgão dentro do pacote"
+                   if escolhido == TODOS_OS_ORGAOS else f"só de {escolhido}")
         self.rotulo_entrega.configure(
             text=f"{_numero(com_certidao)} com certidão  ·  "
-                 f"{_numero(sem_certidao)} sem certidão\n"
-                 f"uma pasta por órgão dentro do pacote")
+                 f"{_numero(sem_certidao)} sem certidão\n{alcance}")
+        return falhados
+
+    def _orgaos_visiveis(self) -> list[dict]:
+        """Os órgãos das máquinas, filtrados pelo que está selecionado."""
+        escolhido = self.filtro_orgao.get()
+        return [o for e in self._maquinas for o in e.orgaos
+                if escolhido in (TODOS_OS_ORGAOS,
+                                 o.get("rotulo") or o["orgao"])]
+
+    def _atualizar_filtro_de_orgao(self) -> None:
+        """Mantém a lista do filtro igual ao que as máquinas informam."""
+        vistos = {o.get("rotulo") or o["orgao"]
+                  for e in self._maquinas for o in e.orgaos}
+        valores = [TODOS_OS_ORGAOS, *sorted(vistos)]
+        if valores == self._orgaos_no_filtro:
+            return
+        self._orgaos_no_filtro = valores
+        atual = self.filtro_orgao.get()
+        self.filtro_orgao.configure(values=valores)
+        self.filtro_orgao.set(atual if atual in valores else TODOS_OS_ORGAOS)
 
     def _drenar_registro(self) -> None:
         linhas = self.robo.drenar()
@@ -1831,11 +1965,15 @@ class Aplicativo(ctk.CTk):
         self.caixa_log.configure(state="disabled")
 
     def _recarregar_itens(self) -> None:
+        self._atualizar_filtro_de_mes()
+        escolhido = self.filtro_mes.get()
         itens = listar_itens(
             self.cfg,
             status=SITUACOES.get(self.filtro_situacao.get()),
             desfecho=RESULTADOS.get(self.filtro_resultado.get()),
             busca=self.busca.get().strip() or None,
+            mes=None if escolhido == TODOS_OS_MESES
+            else _mes_do_rotulo(escolhido),
             limite=LIMITE_DE_ITENS,
         )
 

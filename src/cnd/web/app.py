@@ -352,17 +352,22 @@ def baixar_relatorio(lote_id: int):
 
 
 @app.get("/certidoes/{mes}.zip")
-def baixar_pdfs(mes: str, somente_negativas: bool = False):
+def baixar_pdfs(mes: str, somente_negativas: bool = False,
+                orgao: str | None = None):
     """Pacote das certidões emitidas no mês (`2026-08`), por órgão.
 
     `?somente_negativas=1` deixa de fora as CPEN, para quem precisa só das
-    empresas totalmente limpas.
+    empresas totalmente limpas. `?orgao=RFB_PJ` entrega um órgão de cada
+    vez, para quando a federal fecha antes das estaduais.
     """
     with contextlib.closing(ler()) as conn:
         conteudo = relatorio.zipar_pdfs(
             conn, mes, somente_negativas,
-            nomes={codigo: orgao.rotulo for codigo, orgao in cfg.orgaos.items()})
+            nomes={codigo: o.rotulo for codigo, o in cfg.orgaos.items()},
+            orgao=orgao)
     sufixo = "_negativas" if somente_negativas else ""
+    if orgao:
+        sufixo = f"_{orgao.lower()}{sufixo}"
     return Response(
         conteudo, media_type="application/zip",
         headers={"Content-Disposition":
