@@ -396,6 +396,39 @@ def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
     return temporario
 
 
+def baixar_planilha(cfg: Config, mes: str, destino: Path,
+                    orgao: str | None = None) -> Entrega:
+    """A planilha do mês. De uma máquina só, ou desta se não houver rede.
+
+    Diferente das certidões, a planilha não se junta: cada máquina produz
+    um arquivo com abas próprias, e mesclar planilhas do Excel entregaria
+    algo pior que o original. Com várias máquinas, exporta-se a do órgão
+    escolhido — que é justamente para isso que o filtro existe.
+    """
+    entrega = Entrega()
+    consulta = f"?orgao={urllib.parse.quote(orgao)}" if orgao else ""
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    alvo = next((m for m in cfg.rede.maquinas
+                 if not orgao or m.orgao), None) if cfg.rede.maquinas else None
+    nome = alvo.nome if alvo else (cfg.rede.nome or "esta máquina")
+    try:
+        if alvo is None:
+            from cnd.infra.db import conectar_leitura
+            from cnd.web.relatorio import Recorte, gerar_bytes
+
+            with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
+                destino.write_bytes(gerar_bytes(conn, Recorte(mes, orgao)))
+        else:
+            baixar(alvo, f"/relatorio/{mes}.xlsx{consulta}", destino,
+                   cfg.rede.senha)
+        entrega.arquivos = 1
+        entrega.por_maquina[nome] = 1
+    except Exception as erro:
+        entrega.falhas[nome] = f"{type(erro).__name__}: {erro}"
+    return entrega
+
+
 def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "") -> dict:
     """Sobe a planilha para a máquina e devolve o resumo da importação."""
     limite = b"----acta" + str(id(arquivo)).encode()

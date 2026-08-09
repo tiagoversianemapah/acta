@@ -77,7 +77,10 @@ def _relatorio(args) -> int:
     from cnd.web.relatorio import gerar
 
     conn = conectar_leitura()
-    destino = gerar(conn, args.lote, args.saida)
+    from cnd.web.relatorio import Recorte, mes_corrente
+
+    destino = gerar(conn, Recorte(args.mes or mes_corrente(), args.orgao),
+                    args.saida)
     conn.close()
     print(f"Relatório gerado: {destino}")
     return 0
@@ -248,8 +251,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--porta", type=int, default=8000)
     p.set_defaults(func=_painel)
 
-    p = sub.add_parser("relatorio", help="gera o Excel de um lote")
-    p.add_argument("lote", type=int)
+    p = sub.add_parser("relatorio", help="gera o Excel do mês")
+    p.add_argument("--mes", default=None, help="ex.: 2026-08 (padrão: o mês corrente)")
+    p.add_argument("--orgao", default=None, help="ex.: RFB_PJ (padrão: todos)")
     p.add_argument("--saida", type=Path, default=None)
     p.set_defaults(func=_relatorio)
 

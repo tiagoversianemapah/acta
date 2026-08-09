@@ -1775,29 +1775,29 @@ class Aplicativo(ctk.CTk):
         self.after(1200, self.iconify)
 
     def _exportar_planilha(self) -> None:
-        panorama = ler_panorama(self.cfg)
-        if not panorama.lote_id:
-            messagebox.showwarning("Sem lote", "Importe uma planilha primeiro.")
-            return
+        """A planilha do mês, no MESMO recorte que a tela está mostrando.
+
+        Antes ela saía por lote, ignorando os filtros: a pessoa escolhia
+        "Receita Federal", pedia a planilha e recebia tudo — sem nenhum
+        aviso de que veio outra coisa.
+        """
+        mes = _mes_do_rotulo(self.seletor_mes.get())
+        escolhido = self.filtro_orgao.get()
+        codigo = next((o["orgao"] for o in self._orgaos_visiveis()), None) \
+            if escolhido != TODOS_OS_ORGAOS else None
 
         destino = filedialog.asksaveasfilename(
-            title="Salvar planilha do lote", defaultextension=".xlsx",
-            initialfile=f"relatorio_lote_{panorama.lote_id}.xlsx",
+            title="Salvar planilha", defaultextension=".xlsx",
+            initialfile=f"relatorio_{mes}"
+                        f"{'_' + codigo.lower() if codigo else ''}.xlsx",
             filetypes=[("Planilha do Excel", "*.xlsx")])
         if not destino:
             return
 
         def trabalho():
-            from cnd.infra.db import conectar_leitura
-            from cnd.web.relatorio import gerar
-
-            conn = conectar_leitura(self.cfg.banco)
-            try:
-                gerar(conn, panorama.lote_id, Path(destino))
-            finally:
-                conn.close()
-            self.after(0, lambda: messagebox.showinfo(
-                "Planilha salva", f"Arquivo gerado em:\n{destino}"))
+            entrega = remoto.baixar_planilha(self.cfg, mes, Path(destino),
+                                             orgao=codigo)
+            self.after(0, lambda: self._avisar_entrega(entrega, destino))
 
         self._em_segundo_plano(trabalho, "gerar a planilha")
 

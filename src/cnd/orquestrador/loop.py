@@ -381,7 +381,7 @@ class Vigia:
         # A planilha é do lote (o que aquela importação produziu); o pacote
         # de certidões é do mês, que é o corte que o cliente recebe.
         mes = tempo.agora_iso()[:7]
-        return [("Baixar planilha", f"{base}/relatorio/{lote_id}.xlsx"),
+        return [("Baixar planilha", f"{base}/relatorio/{mes}.xlsx"),
                 ("Baixar certidões do mês", f"{base}/certidoes/{mes}.zip"),
                 ("Abrir painel", base)]
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sqlite3
 import zipfile
+from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
@@ -73,9 +74,36 @@ def _linkar_pdfs(planilha, registros: list[sqlite3.Row], coluna: int) -> None:
         celula.font = Font(color="0563C1", underline="single")
 
 
-def _por_desfecho(conn: sqlite3.Connection, lote_id: int, desfecho: Desfecho) -> list[sqlite3.Row]:
+@dataclass(frozen=True)
+class Recorte:
+    """O pedaço do trabalho que vai para a planilha.
+
+    Mês e órgão, não lote — o mesmo corte da tela e do pacote de certidões.
+    Exportar por lote entregava outra coisa que o operador via na frente
+    dele: ele filtra "Receita Federal", pede a planilha, e recebia tudo.
+    """
+
+    mes: str
+    orgao: str | None = None
+
+    @property
+    def onde(self) -> str:
+        clausula = "strftime('%Y-%m', j.atualizado_em) = ?"
+        return clausula + (" AND j.orgao = ?" if self.orgao else "")
+
+    @property
+    def valores(self) -> list:
+        return [self.mes, self.orgao] if self.orgao else [self.mes]
+
+    @property
+    def descricao(self) -> str:
+        return self.mes + (f" · {self.orgao}" if self.orgao else "")
+
+
+def _por_desfecho(conn: sqlite3.Connection, recorte: Recorte,
+                  desfecho: Desfecho) -> list[sqlite3.Row]:
     return conn.execute(
-        """
+        f"""
         SELECT e.nome, e.documento, j.orgao, j.atualizado_em,
                c.emitida_em, c.valida_ate, c.codigo_controle, c.caminho_pdf,
                (SELECT t.mensagem_portal FROM tentativa t
@@ -83,24 +111,22 @@ def _por_desfecho(conn: sqlite3.Connection, lote_id: int, desfecho: Desfecho) ->
           FROM job j
           JOIN empresa e ON e.id = j.empresa_id
           LEFT JOIN certidao c ON c.job_id = j.id
-         WHERE j.lote_id = ? AND j.desfecho = ?
+         WHERE {recorte.onde} AND j.desfecho = ?
          ORDER BY e.nome
         """,
-        (lote_id, str(desfecho)),
+        [*recorte.valores, str(desfecho)],
     ).fetchall()
 
 
-def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -> Path:
-    lote = conn.execute("SELECT * FROM lote WHERE id = ?", (lote_id,)).fetchone()
-    if lote is None:
-        raise ValueError(f"Lote {lote_id} não existe")
+def gerar(conn: sqlite3.Connection, recorte: Recorte,
+          destino: Path | None = None) -> Path:
 
     livro = Workbook()
     livro.remove(livro.active)
 
     # --- abas com PDF ---
     for desfecho, titulo in ((Desfecho.NEGATIVA, "Negativas"), (Desfecho.CPEN, "CPEN")):
-        registros = _por_desfecho(conn, lote_id, desfecho)
+        registros = _por_desfecho(conn, recorte, desfecho)
         linhas = [
             [linha["nome"], formatar(linha["documento"]), linha["orgao"],
              _data_curta(linha["emitida_em"]), _data_curta(linha["valida_ate"]),
@@ -121,7 +147,7 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
         linhas = [
             [linha["nome"], formatar(linha["documento"]), linha["orgao"],
              linha["atualizado_em"], (linha["mensagem"] or "")[:300]]
-            for linha in _por_desfecho(conn, lote_id, desfecho)
+            for linha in _por_desfecho(conn, recorte, desfecho)
         ]
         _escrever(livro.create_sheet(titulo),
                   ["Empresa", "Documento", "Órgão", "Consultado em", "Mensagem do portal"],
@@ -129,15 +155,15 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
 
     # --- erros ---
     erros = conn.execute(
-        """
+        f"""
         SELECT e.nome, e.documento, j.orgao, j.desfecho, j.tentativas, j.atualizado_em,
                (SELECT t.mensagem_portal FROM tentativa t
                  WHERE t.job_id = j.id ORDER BY t.id DESC LIMIT 1) AS mensagem
           FROM job j JOIN empresa e ON e.id = j.empresa_id
-         WHERE j.lote_id = ? AND j.status = ?
+         WHERE {recorte.onde} AND j.status = ?
          ORDER BY e.nome
         """,
-        (lote_id, Status.FAILED),
+        [*recorte.valores, Status.FAILED],
     ).fetchall()
     _escrever(
         livro.create_sheet("Erros"),
@@ -150,7 +176,7 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
 
     # --- auditoria ---
     auditoria = conn.execute(
-        """
+        f"""
         SELECT t.id, t.job_id, t.numero, t.iniciada_em, t.finalizada_em,
                t.desfecho AS desfecho_tentativa, t.mensagem_portal,
                t.evidencia, t.worker,
@@ -158,10 +184,10 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
           FROM tentativa t
           JOIN job j ON j.id = t.job_id
           JOIN empresa e ON e.id = j.empresa_id
-         WHERE j.lote_id = ?
+         WHERE {recorte.onde}
          ORDER BY t.id
         """,
-        (lote_id,),
+        recorte.valores,
     ).fetchall()
     _escrever(
         livro.create_sheet("Auditoria"),
@@ -177,24 +203,25 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
 
     # --- resumo ---
     resumo_linhas: list[list] = [
-        ["Lote", lote_id],
-        ["Descrição", lote["descricao"]],
-        ["Arquivo de origem", lote["arquivo_origem"]],
-        ["Criado em", lote["criado_em"]],
+        ["Recorte", recorte.descricao],
+        ["Mês de referência", recorte.mes],
+        ["Órgão", recorte.orgao or "todos"],
         ["Relatório gerado em", tempo.agora_iso()],
         [],
         ["Órgão", "Total", "Concluídos", "Falhados", "Pendentes", "% concluído"],
     ]
-    for orgao in consultas.orgaos_do_lote(conn, lote_id):
-        r = consultas.resumo(conn, orgao, lote_id)
+    for orgao in ([recorte.orgao] if recorte.orgao
+                  else consultas.orgaos_do_lote(conn, None)):
+        r = consultas.resumo(conn, orgao, None)
         resumo_linhas.append([orgao, r.total, r.concluidos, r.falhados,
                               r.pendentes, f"{r.percentual:.1f}%"])
 
     resumo_linhas.append([])
     resumo_linhas.append(["Desfecho", "Quantidade"])
     for linha in conn.execute(
-        "SELECT desfecho, COUNT(*) AS n FROM job WHERE lote_id = ? AND desfecho IS NOT NULL "
-        "GROUP BY desfecho ORDER BY n DESC", (lote_id,)
+        f"SELECT j.desfecho AS desfecho, COUNT(*) AS n FROM job j "
+        f"WHERE {recorte.onde} AND j.desfecho IS NOT NULL "
+        f"GROUP BY j.desfecho ORDER BY n DESC", recorte.valores
     ):
         resumo_linhas.append([
             consultas.ROTULOS.get(linha["desfecho"], linha["desfecho"]), linha["n"]
@@ -207,18 +234,18 @@ def gerar(conn: sqlite3.Connection, lote_id: int, destino: Path | None = None) -
     planilha.column_dimensions["A"].width = 40
     planilha.column_dimensions["B"].width = 30
 
-    destino = destino or (Path("data") / f"relatorio_lote_{lote_id}.xlsx")
+    destino = destino or (Path("data") / f"relatorio_{recorte.mes}.xlsx")
     destino.parent.mkdir(parents=True, exist_ok=True)
     livro.save(destino)
     return destino
 
 
-def gerar_bytes(conn: sqlite3.Connection, lote_id: int) -> bytes:
+def gerar_bytes(conn: sqlite3.Connection, recorte: Recorte) -> bytes:
     """Mesma planilha, em memória — usado no download do painel."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as pasta:
-        caminho = gerar(conn, lote_id, Path(pasta) / "relatorio.xlsx")
+        caminho = gerar(conn, recorte, Path(pasta) / "relatorio.xlsx")
         return caminho.read_bytes()
 
 

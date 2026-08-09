@@ -343,14 +343,21 @@ def acao_retomar(orgao: str):
 # Downloads
 # ----------------------------------------------------------------------
 
-@app.get("/relatorio/{lote_id}.xlsx")
-def baixar_relatorio(lote_id: int):
+@app.get("/relatorio/{mes}.xlsx")
+def baixar_relatorio(mes: str, orgao: str | None = None):
+    """Planilha do mês, opcionalmente de um órgão só.
+
+    Mesmo recorte do pacote de certidões e da tela: quem filtra "Receita
+    Federal" e pede a planilha espera receber a Receita Federal.
+    """
     with contextlib.closing(ler()) as conn:
-        conteudo = relatorio.gerar_bytes(conn, lote_id)
+        conteudo = relatorio.gerar_bytes(conn, relatorio.Recorte(mes, orgao))
+    sufixo = f"_{orgao.lower()}" if orgao else ""
     return Response(
         conteudo,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="relatorio_lote_{lote_id}.xlsx"'},
+        headers={"Content-Disposition":
+                 f'attachment; filename="relatorio_{mes}{sufixo}.xlsx"'},
     )
 
 
