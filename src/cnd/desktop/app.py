@@ -76,6 +76,8 @@ ICONE_DOCUMENTO = ""
 ICONE_RELOGIO = ""
 ICONE_ENVIAR = ""
 ICONE_AJUDA = ""
+ICONE_MAQUINA = ""
+ICONE_BAIXAR = ""
 TODOS_OS_MESES = "Todos os meses"
 
 # As colunas da tela de M\u00e1quinas, numa defini\u00e7\u00e3o s\u00f3: (t\u00edtulo, peso, largura
@@ -714,9 +716,16 @@ class Aplicativo(ctk.CTk):
         self._montar_entrega(quadro).grid(row=4, column=0, sticky="ew",
                                           padx=30, pady=(0, 16))
 
-        ctk.CTkLabel(quadro, text="Máquinas", font=(FONTE, 14, "bold"),
-                     text_color=marca.AZUL_VIVO, anchor="w").grid(
-            row=5, column=0, sticky="w", padx=30, pady=(0, 8))
+        # Título com um fio azul embaixo, como aba: separa a lista de
+        # máquinas do bloco de entrega sem precisar de mais um cartão.
+        aba = ctk.CTkFrame(quadro, fg_color="transparent")
+        aba.grid(row=5, column=0, sticky="w", padx=30, pady=(4, 10))
+        ctk.CTkLabel(aba, text="Máquinas", font=(FONTE, 14, "bold"),
+                     text_color=marca.AZUL_VIVO).grid(row=0, column=0,
+                                                      pady=(0, 6))
+        ctk.CTkFrame(aba, height=2, corner_radius=1,
+                     fg_color=marca.AZUL_VIVO).grid(row=1, column=0,
+                                                    sticky="ew")
         self.painel_maquinas = ctk.CTkFrame(quadro, fg_color="transparent")
         self.painel_maquinas.grid(row=6, column=0, sticky="ew", padx=30,
                                   pady=(0, 24))
@@ -859,31 +868,44 @@ class Aplicativo(ctk.CTk):
         Não mostrar nada seria pior: a tela vazia parece defeito. Aqui ela
         diz o que falta, e o botão abre o arquivo onde falta preencher.
         """
-        self.resumo_maquinas.configure(text="")
-        self.icone_resumo.configure(image=self._glifo(ICONE_ALERTA,
-                                                      marca.AMBAR, 16))
+        # Serve às duas telas: a de Máquinas tem cabeçalho de colunas para
+        # zerar, a do Início não.
+        if painel is self.painel_saude:
+            self.resumo_maquinas.configure(text="")
+            self.icone_resumo.configure(image=None)
 
         cartao = self._cartao(painel)
         cartao.grid(row=0, column=0, columnspan=len(COLUNAS_DE_MAQUINA),
                     sticky="ew", pady=(4, 0))
         cartao.grid_columnconfigure(0, weight=1)
 
+        # Centralizado, com o ícone num disco claro: estado vazio alinhado à
+        # esquerda parece uma linha de tabela que faltou carregar.
+        disco = ctk.CTkFrame(cartao, fg_color=marca.AZUL_VIVO_FUNDO,
+                             corner_radius=26, width=52, height=52)
+        disco.grid(row=0, column=0, pady=(44, 0))
+        disco.grid_propagate(False)
+        ctk.CTkLabel(disco, text="",
+                     image=self._glifo(ICONE_MAQUINA, marca.AZUL_VIVO,
+                                       22)).place(relx=0.5, rely=0.5,
+                                                  anchor="center")
+
         ctk.CTkLabel(cartao, text="Nenhuma máquina cadastrada",
-                     font=(FONTE, 14, "bold"), text_color=marca.TEXTO,
-                     anchor="w").grid(row=0, column=0, sticky="w", padx=22,
-                                      pady=(20, 6))
+                     font=(FONTE, 15, "bold"),
+                     text_color=marca.TEXTO).grid(row=1, column=0,
+                                                  pady=(18, 6))
         ctk.CTkLabel(
-            cartao, anchor="w", justify="left", font=(FONTE, 12),
-            text_color=marca.TEXTO_2, wraplength=760,
-            text="Este computador é o console: ele acompanha as máquinas que "
-                 "emitem as certidões, e não emite nenhuma.\n\n"
-                 "Liste as máquinas do robô em [rede] maquinas no "
-                 "config.toml — órgão, nome, endereço e número do AnyDesk de "
-                 "cada uma. Elas aparecem aqui assim que responderem."
-        ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
-        self._botao_secundario(cartao, "Abrir o config.toml",
-                               self._abrir_config, largura=176).grid(
-            row=2, column=0, sticky="w", padx=22, pady=(0, 20))
+            cartao, justify="center", font=(FONTE, 12),
+            text_color=marca.TEXTO_3, wraplength=560,
+            text="Este computador acompanha as máquinas que emitem as "
+                 "certidões. Cadastre uma para começar."
+        ).grid(row=2, column=0, pady=(0, 20))
+        ctk.CTkButton(cartao, text="Gerenciar máquinas", height=40, width=182,
+                      corner_radius=8, font=(FONTE, 13, "bold"),
+                      fg_color=marca.AZUL_VIVO, hover_color=marca.AZUL,
+                      text_color=marca.BRANCO,
+                      command=self._abrir_config).grid(row=3, column=0,
+                                                       pady=(0, 46))
 
     def _abrir_config(self) -> None:
         caminho = RAIZ_PROJETO / "config.toml"
@@ -1217,9 +1239,15 @@ class Aplicativo(ctk.CTk):
                               border_color=marca.AZUL_VIVO_BORDA)
         cartao.grid_columnconfigure(1, weight=1)
 
-        ctk.CTkLabel(cartao, text="↓", font=(FONTE, 15, "bold"),
-                     text_color=marca.AZUL_VIVO).grid(row=0, column=0,
-                                                      padx=(18, 12), pady=13)
+        disco = ctk.CTkFrame(cartao, fg_color=marca.BRANCO, corner_radius=20,
+                             width=40, height=40, border_width=1,
+                             border_color=marca.AZUL_VIVO_BORDA)
+        disco.grid(row=0, column=0, padx=(16, 14), pady=14)
+        disco.grid_propagate(False)
+        ctk.CTkLabel(disco, text="",
+                     image=self._glifo(ICONE_BAIXAR, marca.AZUL_VIVO,
+                                       18)).place(relx=0.5, rely=0.5,
+                                                  anchor="center")
         self.rotulo_entrega = ctk.CTkLabel(
             cartao, text="", font=(FONTE, 12), text_color=marca.TEXTO_2,
             anchor="w", justify="left")
@@ -1287,6 +1315,12 @@ class Aplicativo(ctk.CTk):
         # no computador que só acompanha, o banco local está vazio.
         self._maquinas = estados
         self._atualizar_filtro_de_orgao()
+        if not estados:
+            self._sem_maquinas(self.painel_maquinas)
+            self.rotulo_sincronia.configure(
+                text=f"Última leitura: {self._hora(tempo.agora_iso())}"
+                     f"      {_data_curta(tempo.agora_iso())}")
+            return
         agora = tempo.agora_iso()
         self.rotulo_sincronia.configure(
             text=f"Última leitura: {self._hora(agora)}"
