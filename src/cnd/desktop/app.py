@@ -1603,8 +1603,101 @@ class Aplicativo(ctk.CTk):
         self.tabela.configure(yscrollcommand=rolagem.set)
 
         self.tabela.tag_configure("par", background=marca.BRANCO)
-        self.tabela.tag_configure("impar", background=marca.PAPEL)
+        self.tabela.tag_configure("impar", background=marca.ZEBRA)
+        # Clique duplo abre o histórico. Era a lacuna desta tela: ela existe
+        # para responder "o que houve com a empresa X" e parava em "Erro
+        # técnico", sem o motivo que o portal deu — que está gravado.
+        self.tabela.bind("<Double-1>", self._abrir_detalhe_do_item)
+        self.tabela.bind("<Return>", self._abrir_detalhe_do_item)
         return quadro
+
+    def _abrir_detalhe_do_item(self, _evento=None) -> None:
+        """Mostra as tentativas daquele item e o que o portal respondeu."""
+        selecionado = self.tabela.focus()
+        if not selecionado or not selecionado.isdigit():
+            return
+
+        valores = self.tabela.item(selecionado)["values"]
+        titulo = str(valores[0]) if valores else "Item"
+
+        def trabalho():
+            from cnd.infra.db import conectar_leitura
+            from cnd.web.consultas import tentativas_do_job
+
+            conn = conectar_leitura(self.cfg.banco)
+            try:
+                tentativas = [dict(linha) for linha in
+                              tentativas_do_job(conn, int(selecionado))]
+            finally:
+                conn.close()
+            self.after(0, lambda: self._mostrar_detalhe(titulo, valores,
+                                                        tentativas))
+
+        self._em_segundo_plano(trabalho, "abrir o histórico do item")
+
+    def _mostrar_detalhe(self, titulo: str, valores, tentativas: list) -> None:
+        janela = ctk.CTkToplevel(self)
+        janela.title(titulo)
+        janela.geometry("760x520")
+        janela.configure(fg_color=marca.FUNDO)
+        janela.transient(self)
+        with contextlib.suppress(Exception):
+            janela.after(200, janela.grab_set)   # modal, depois de existir
+
+        cabecalho = ctk.CTkFrame(janela, fg_color="transparent")
+        cabecalho.pack(fill="x", padx=24, pady=(22, 12))
+        ctk.CTkLabel(cabecalho, text=titulo, font=(FONTE, 16, "bold"),
+                     text_color=marca.TEXTO, anchor="w").pack(anchor="w")
+        legenda = "   ·   ".join(str(v) for v in list(valores)[1:] if v)
+        ctk.CTkLabel(cabecalho, text=legenda, font=(FONTE, 12),
+                     text_color=marca.TEXTO_3, anchor="w").pack(anchor="w",
+                                                                pady=(4, 0))
+
+        corpo = ctk.CTkScrollableFrame(janela, fg_color=marca.BRANCO,
+                                       corner_radius=12)
+        corpo.pack(fill="both", expand=True, padx=24, pady=(0, 20))
+        corpo.grid_columnconfigure(0, weight=1)
+
+        if not tentativas:
+            ctk.CTkLabel(corpo, text="Nenhuma tentativa registrada ainda.",
+                         font=(FONTE, 12), text_color=marca.TEXTO_3).grid(
+                row=0, column=0, pady=30)
+            return
+
+        for linha, tentativa in enumerate(tentativas):
+            rotulo, cor = ROTULOS_DE_RESULTADO.get(
+                tentativa.get("desfecho"), ("em andamento", marca.AZUL_VIVO))
+            bloco = ctk.CTkFrame(corpo, fg_color="transparent")
+            bloco.grid(row=linha, column=0, sticky="ew", padx=18, pady=(14, 0))
+            bloco.grid_columnconfigure(1, weight=1)
+
+            ctk.CTkLabel(bloco, text=f"{tentativa.get('numero', '?')}ª",
+                         font=(FONTE, 12, "bold"),
+                         text_color=marca.TEXTO_3).grid(row=0, column=0,
+                                                        sticky="w",
+                                                        padx=(0, 12))
+            ctk.CTkLabel(bloco, text=rotulo, font=(FONTE, 12, "bold"),
+                         text_color=cor, anchor="w").grid(row=0, column=1,
+                                                          sticky="w")
+            ctk.CTkLabel(bloco, text=self._hora(tentativa.get("finalizada_em")
+                                                or tentativa.get("iniciada_em")),
+                         font=("Consolas", 11),
+                         text_color=marca.TEXTO_3).grid(row=0, column=2,
+                                                        sticky="e")
+            # A mensagem do portal é o motivo — o que a tela não dizia.
+            if mensagem := tentativa.get("mensagem_portal"):
+                ctk.CTkLabel(bloco, text=mensagem, font=(FONTE, 11),
+                             text_color=marca.TEXTO_2, anchor="w",
+                             justify="left", wraplength=620).grid(
+                    row=1, column=1, columnspan=2, sticky="w", pady=(4, 0))
+            if evidencia := tentativa.get("evidencia"):
+                ctk.CTkLabel(bloco, text=f"evidência: {evidencia}",
+                             font=(FONTE, 10), text_color=marca.TEXTO_3,
+                             anchor="w").grid(row=2, column=1, columnspan=2,
+                                              sticky="w", pady=(3, 0))
+            ctk.CTkFrame(corpo, height=1, corner_radius=0,
+                         fg_color=marca.BORDA).grid(row=linha, column=0,
+                                                    sticky="sew", padx=18)
 
     def _ponto(self, cor: str):
         """Bolinha colorida do resultado, desenhada e guardada em cache.
@@ -2230,8 +2323,10 @@ class Aplicativo(ctk.CTk):
             rotulo, cor = ROTULOS_DE_RESULTADO.get(
                 item["desfecho"], (SITUACAO_SEM_RESULTADO.get(item["status"], "—"),
                                    marca.TEXTO_3))
+            # O id do job vira o iid da linha: é o que permite abrir o
+            # detalhe no clique sem reconsultar a lista inteira.
             self.tabela.insert(
-                "", "end", image=self._ponto(cor),
+                "", "end", iid=str(item["id"]), image=self._ponto(cor),
                 tags=("impar" if indice % 2 else "par",),
                 values=(item["nome"], formatar(item["documento"]),
                         _mes_por_extenso((item["atualizado_em"] or "")[:7]),

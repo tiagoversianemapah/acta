@@ -55,7 +55,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-pytest                         # 184 testes, sem rede e sem portal
+pytest                         # 244 testes, sem rede e sem portal
 ruff check src tests empacotar # sem apontamentos
 python empacotar/construir.py  # gera o ACTA.exe e os atalhos
 ```
@@ -118,8 +118,42 @@ aplicativo no seu computador pergunta a todas por HTTP e junta o quadro — não
 banco central, pasta compartilhada nem servidor a instalar. (SQLite em pasta de
 rede corrompe: o Windows não trava o arquivo de forma confiável.)
 
+### Console e máquina de robô
+
+O mesmo programa roda em dois papéis, definidos por `[rede] papel`:
+
+- **`robo`** — emite certidões. Mostra *Iniciar robô* e *Importar planilha*.
+- **`console`** — só acompanha. Esconde essas ações, porque importar ali
+  colocaria itens num banco onde robô nenhum vai buscá-los. Manda trabalho
+  pela rede: *Enviar planilha* e *Iniciar/Parar* no cartão de cada máquina.
+
+Vazio, ele decide sozinho: quem lista outras máquinas está acompanhando-as.
+
+### Entrega por mês, não por lote
+
+O corte é o **mês de emissão** — a mesma régua que o robô usa para decidir
+se reemite, e a que o cliente recebe. Um filtro de órgão comanda a tela
+inteira: percentual, números, o pacote ZIP e a planilha. A federal costuma
+fechar antes das estaduais, e entregar só ela é o caso normal.
+
+O pacote vem de **todas as máquinas de uma vez**, com uma pasta por órgão.
+Máquina fora do ar não cancela a entrega, mas o aviso passa a ser "pacote
+incompleto" com a lista do que ficou de fora.
+
+### Comandar as máquinas pela rede
+
+`POST /api/planilha`, `/api/robo/iniciar` e `/api/robo/parar` têm duas
+travas que as rotas de leitura não têm:
+
+1. **Senha obrigatória.** Sem `[rede] senha` elas recusam tudo — a
+   capacidade perigosa nasce desligada.
+2. **Área de trabalho destravada.** O robô cego move o mouse de verdade;
+   com a estação bloqueada ele gastaria consultas gravando erro. Iniciar
+   recusa com o motivo; parar continua valendo, que é quando se quer parar.
+
 A tela **Máquinas** mostra um cartão por computador, com o órgão em destaque,
-progresso, e botões de baixar planilha e baixar certidões.
+situação com duração, checklist de preparo (calibragem, AnyDesk, painel,
+órgão), disco com a projeção do próximo lote, e o acesso remoto.
 
 **O nome da máquina é um link**: em azul, e clicar nele abre o AnyDesk já
 apontado para ela — não é preciso decorar nove dígitos nem procurar numa lista.
@@ -148,7 +182,7 @@ cnd importar "CND_MIA_0726.xlsx" --abas RFB   # cria o lote
 cnd calibrar                                  # ensina onde ficam os campos
 cnd rodar                                     # o robô
 cnd painel --host 0.0.0.0                     # publica na rede
-cnd relatorio 1                               # Excel do lote 1
+cnd relatorio --mes 2026-08 --orgao RFB_PJ    # Excel do mês, por órgão
 cnd testar-alerta                             # confere o Teams
 cnd simular 150                               # lote falso, sem tocar em portal
 cnd app                                       # o aplicativo de mesa

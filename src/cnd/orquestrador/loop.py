@@ -498,6 +498,44 @@ def _ja_existe_outro(conn, forcar: bool) -> bool:
     return True
 
 
+# Margem sobre o tamanho estimado do lote. Certidão que sai do portal e não
+# encontra espaço é consulta gasta e documento perdido — vale pedir o dobro.
+FOLGA_DE_DISCO = 2.0
+
+
+def _conferir_espaco(conn, cfg: Config) -> str:
+    """Recusa começar quando o lote não cabe no disco.
+
+    Verificação de PRÉ-VOO, e não alarme depois do fato: disco cheio no meio
+    do lote faz o robô emitir a certidão no portal e não conseguir salvar o
+    PDF. A consulta foi gasta, o portal já contou aquela emissão, e o
+    arquivo não existe. Avisar nesse ponto seria relatar um prejuízo.
+
+    O tamanho médio vem dos PDFs que o próprio robô já baixou; sem nenhum
+    ainda, não há como estimar e ele começa — errar para o lado de deixar
+    trabalhar é melhor que travar por uma conta que não dá para fazer.
+    """
+    from cnd.infra import maquina
+    from cnd.web import consultas
+
+    pendentes = consultas.pendentes(conn)
+    if not pendentes:
+        return ""
+
+    certidoes = maquina.certidoes(cfg.pasta_certidoes)
+    media_kb = certidoes.get("media_kb") or 0
+    if not media_kb:
+        return ""
+
+    livre_mb = maquina.ler(cfg.pasta_certidoes).disco_livre_gb * 1024
+    precisa_mb = pendentes * media_kb / 1024
+    if livre_mb >= precisa_mb * FOLGA_DE_DISCO:
+        return ""
+    return (f"{pendentes} itens na fila precisam de ~{precisa_mb:.0f} MB e o "
+            f"disco tem {livre_mb:.0f} MB livres. Libere espaco antes de "
+            f"comecar: certidao emitida sem onde salvar e consulta perdida.")
+
+
 def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
              limite: int | None = None, forcar: bool = False) -> None:
     """Sobe o orquestrador. Bloqueia até Ctrl+C.
@@ -511,6 +549,12 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
 
     conn = conectar(cfg.banco)
     if _ja_existe_outro(conn, forcar):
+        conn.close()
+        return
+
+    if problema := _conferir_espaco(conn, cfg):
+        log.error("disco_insuficiente", extra={"detalhe": problema})
+        print(f"\n  NAO INICIADO: {problema}\n")
         conn.close()
         return
 

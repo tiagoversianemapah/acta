@@ -171,8 +171,12 @@ sem utilidade. O pacote fica em 50 MB.
    próprio AnyDesk);
 2. edite o `config.toml` dela:
    - `[rede] nome` — como ela aparece no aplicativo, ex. `"PC-CND-01"`
+   - `[rede] papel = "robo"` — mostra *Iniciar robô* e *Importar planilha*
+   - `[rede] senha` — **obrigatória** para ela aceitar planilha e comando
+     pela rede; sem isso essas rotas recusam tudo. A mesma em todas.
+   - `[rede] anydesk` — ou cadastre pela tela, em Ajustes
    - `maquinas = []` — máquina de robô não consulta ninguém
-   - o órgão que ela atende, em `[orgaos.*]`
+   - o órgão que ela atende, em `[orgaos.*]`, com `nome` de exibição
 3. calibre o robô cego naquela tela:
    `cnd.exe calibrar` — a calibragem é guardada em proporções da janela,
    mas a posição dos campos ainda depende do zoom e da resolução dela;
@@ -220,6 +224,7 @@ Mesma pasta, mas o `config.toml` lista as outras:
 ```toml
 [rede]
 nome  = "Tiago"
+papel = "console"      # não emite: acompanha e manda trabalho
 senha = "..."          # a mesma em todas; prefira CND_REDE_SENHA
 maquinas = [
   { orgao = "ACTA CND FEDERAL",    nome = "PC-CND-01", url = "http://192.168.0.21:8000", anydesk = "123 456 789" },
