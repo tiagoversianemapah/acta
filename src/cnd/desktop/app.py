@@ -1122,19 +1122,6 @@ class Aplicativo(ctk.CTk):
                                        text_color=marca.TEXTO, anchor="w")
         self.rotulo_mes.grid(row=1, column=0, sticky="w", pady=(2, 0))
 
-        # O filtro de órgão comanda a tela inteira: percentual, números e o
-        # pacote. A federal costuma fechar antes das estaduais, e olhar o
-        # total somado esconde exatamente essa diferença.
-        self.filtro_orgao = ctk.CTkOptionMenu(
-            topo, width=190, height=30, corner_radius=8,
-            values=[TODOS_OS_ORGAOS], fg_color=marca.PAPEL,
-            button_color=marca.PAPEL, button_hover_color=marca.PAPEL_2,
-            text_color=marca.TEXTO, dropdown_fg_color=marca.BRANCO,
-            dropdown_text_color=marca.TEXTO, dropdown_hover_color=marca.PAPEL,
-            font=(FONTE, 12), dropdown_font=(FONTE, 12),
-            command=lambda _: self._atualizar_situacao())
-        self.filtro_orgao.grid(row=1, column=1, sticky="e", padx=(12, 12))
-
         self.rotulo_percentual = ctk.CTkLabel(topo, text="",
                                               font=(FONTE, 18, "bold"),
                                               text_color=marca.AZUL_VIVO)
@@ -1205,25 +1192,36 @@ class Aplicativo(ctk.CTk):
         acoes = ctk.CTkFrame(cartao, fg_color="transparent")
         acoes.grid(row=0, column=2, sticky="e", padx=(12, 14), pady=10)
 
-        self.seletor_mes = ctk.CTkOptionMenu(
-            acoes, width=124, height=40, corner_radius=8,
-            values=[_mes_por_extenso(relatorio_mes_corrente())],
-            fg_color=marca.BRANCO, button_color=marca.BRANCO,
-            button_hover_color=marca.PAPEL, text_color=marca.TEXTO,
-            dropdown_fg_color=marca.BRANCO, dropdown_text_color=marca.TEXTO,
-            dropdown_hover_color=marca.PAPEL, font=(FONTE, 12),
-            dropdown_font=(FONTE, 12))
+        def escolha(valores: list[str], largura: int, ao_mudar=None):
+            return ctk.CTkOptionMenu(
+                acoes, width=largura, height=40, corner_radius=8,
+                values=valores, fg_color=marca.BRANCO,
+                button_color=marca.BRANCO, button_hover_color=marca.PAPEL,
+                text_color=marca.TEXTO, dropdown_fg_color=marca.BRANCO,
+                dropdown_text_color=marca.TEXTO,
+                dropdown_hover_color=marca.PAPEL, font=(FONTE, 12),
+                dropdown_font=(FONTE, 12), command=ao_mudar)
+
+        # Mês e órgão ficam AQUI, colados nos botões: é onde se procura o
+        # filtro na hora de baixar. Continuam comandando a tela inteira —
+        # o título do bloco acima mostra o recorte escolhido.
+        self.seletor_mes = escolha(
+            [_mes_por_extenso(relatorio_mes_corrente())], 124)
         self.seletor_mes.grid(row=0, column=0, padx=(0, 8))
+
+        self.filtro_orgao = escolha([TODOS_OS_ORGAOS], 180,
+                                    lambda _: self._atualizar_situacao())
+        self.filtro_orgao.grid(row=0, column=1, padx=(0, 8))
 
         ctk.CTkButton(
             acoes, text="Baixar certidões (ZIP)", height=40, width=178,
             corner_radius=8, font=(FONTE, 13, "bold"), fg_color=marca.AZUL_VIVO,
             hover_color=marca.AZUL, text_color=marca.BRANCO,
-            command=self._baixar_certidoes_do_mes).grid(row=0, column=1,
+            command=self._baixar_certidoes_do_mes).grid(row=0, column=2,
                                                         padx=(0, 8))
         self._botao_secundario(acoes, "Exportar planilha",
                                self._exportar_planilha, largura=150).grid(
-            row=0, column=2)
+            row=0, column=3)
         return cartao
 
     # ---------------- Máquinas (dentro do Início) ----------------
