@@ -280,7 +280,10 @@ def consultar_todas(cfg: Config) -> list[EstadoRemoto]:
     do ar travariam a tela por meio minuto.
     """
     if not cfg.rede.maquinas:
-        return [consultar_local(cfg)]
+        # Console sem máquinas cadastradas não se mostra como se fosse uma:
+        # ele não emite certidão nenhuma, e listá-lo faria parecer que há um
+        # robô onde não há. Volta lista vazia, e a tela explica o que falta.
+        return [] if not cfg.rede.roda_robo else [consultar_local(cfg)]
 
     with ThreadPoolExecutor(max_workers=len(cfg.rede.maquinas)) as pool:
         return list(pool.map(lambda m: consultar(m, cfg.rede.senha),

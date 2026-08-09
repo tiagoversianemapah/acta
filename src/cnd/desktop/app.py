@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import ctypes
 import os
+import os.path
 import subprocess
 import sys
 import tempfile
@@ -118,7 +119,10 @@ SITUACOES = {
 ROTULOS_DE_RESULTADO = {
     "NEGATIVA": ("Negativa", "#1B7F4E"),
     "CPEN": ("Com efeito de negativa", "#2B2A6B"),
-    "POSITIVA": ("Positiva", "#8A5D00"),
+    # Vermelho, e não âmbar: positiva é o resultado que IMPEDE a entrega —
+    # a empresa tem pendência real e o documento não vai no pacote. Âmbar
+    # sugeria "atenção", quando o certo é "esta não sai".
+    "POSITIVA": ("Positiva", "#B3261E"),
     "PENDENCIA_MANUAL": ("Exige atendimento", "#8A5D00"),
     "APROVEITADA": ("Já emitida no mês", "#8A94A2"),
     "BLOQUEIO_TEMPORARIO": ("Portal recusou", "#B02A1C"),
@@ -751,6 +755,10 @@ class Aplicativo(ctk.CTk):
         self._resumir_maquinas(estados)
 
         painel = self.painel_saude
+        if not estados:
+            self._sem_maquinas(painel)
+            return
+
         for coluna, (texto, _, _) in enumerate(COLUNAS_DE_MAQUINA):
             ctk.CTkLabel(painel, text=texto, font=(FONTE, 10, "bold"),
                          text_color=marca.TEXTO_3, anchor="w").grid(
@@ -808,6 +816,47 @@ class Aplicativo(ctk.CTk):
                                  text_color=marca.TEXTO_3).grid(row=0, column=1,
                                                                 padx=(6, 0))
             linha += 2
+
+    def _sem_maquinas(self, painel) -> None:
+        """Este computador acompanha, mas ainda não sabe a quem.
+
+        Não mostrar nada seria pior: a tela vazia parece defeito. Aqui ela
+        diz o que falta, e o botão abre o arquivo onde falta preencher.
+        """
+        self.resumo_maquinas.configure(text="")
+        self.icone_resumo.configure(image=self._glifo(ICONE_ALERTA,
+                                                      marca.AMBAR, 16))
+
+        cartao = self._cartao(painel)
+        cartao.grid(row=0, column=0, columnspan=len(COLUNAS_DE_MAQUINA),
+                    sticky="ew", pady=(4, 0))
+        cartao.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(cartao, text="Nenhuma máquina cadastrada",
+                     font=(FONTE, 14, "bold"), text_color=marca.TEXTO,
+                     anchor="w").grid(row=0, column=0, sticky="w", padx=22,
+                                      pady=(20, 6))
+        ctk.CTkLabel(
+            cartao, anchor="w", justify="left", font=(FONTE, 12),
+            text_color=marca.TEXTO_2, wraplength=760,
+            text="Este computador é o console: ele acompanha as máquinas que "
+                 "emitem as certidões, e não emite nenhuma.\n\n"
+                 "Liste as máquinas do robô em [rede] maquinas no "
+                 "config.toml — órgão, nome, endereço e número do AnyDesk de "
+                 "cada uma. Elas aparecem aqui assim que responderem."
+        ).grid(row=1, column=0, sticky="w", padx=22, pady=(0, 16))
+        self._botao_secundario(cartao, "Abrir o config.toml",
+                               self._abrir_config, largura=176).grid(
+            row=2, column=0, sticky="w", padx=22, pady=(0, 20))
+
+    def _abrir_config(self) -> None:
+        caminho = RAIZ_PROJETO / "config.toml"
+        if not caminho.exists():
+            messagebox.showwarning("Configuração não encontrada",
+                                   f"Não achei o arquivo em:\n{caminho}")
+            return
+        with contextlib.suppress(OSError):
+            os.startfile(caminho)
 
     def _resumir_maquinas(self, estados: list) -> None:
         prontas = sum(1 for e in estados if e.online)
@@ -1531,13 +1580,17 @@ class Aplicativo(ctk.CTk):
         )
         self.tabela.column("#0", width=34, minwidth=34, stretch=False)
         self.tabela.heading("#0", text="")
+        # As larguras mínimas cabem o conteúdo mais longo de cada coluna:
+        # CNPJ com máscara tem 18 caracteres, "Com efeito de negativa" tem
+        # 22. Apertadas, o Tk corta o texto sem avisar — e resultado
+        # cortado numa tela de conferência é pior que coluna larga.
         for chave, titulo, largura, minimo in (
-            ("empresa", "EMPRESA", 400, 220),
-            ("documento", "DOCUMENTO", 180, 160),
+            ("empresa", "EMPRESA", 380, 240),
+            ("documento", "DOCUMENTO", 200, 190),
             # A mesma empresa reaparece a cada mês com resultado próprio;
             # sem esta coluna, as repetições parecem duplicidade.
-            ("mes", "MÊS", 120, 100),
-            ("resultado", "RESULTADO", 200, 150),
+            ("mes", "MÊS", 140, 130),
+            ("resultado", "RESULTADO", 240, 230),
         ):
             self.tabela.heading(chave, text=titulo, anchor="w")
             self.tabela.column(chave, width=largura, minwidth=minimo,
