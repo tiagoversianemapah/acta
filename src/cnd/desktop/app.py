@@ -30,7 +30,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from cnd.core import tempo
 from cnd.core.documentos import formatar
-from cnd.desktop import acesso, marca, remoto
+from cnd.desktop import acesso, instancia, marca, remoto
 from cnd.desktop.estado import Robo, ler_panorama, listar_itens
 from cnd.infra.config import carregar, nome_do_orgao
 from cnd.infra.db import RAIZ_PROJETO
@@ -2438,6 +2438,15 @@ class Aplicativo(ctk.CTk):
 
 def main() -> int:
     _registrar_no_windows()
+
+    # Clicar duas vezes no atalho é comum, e a segunda cópia leria o mesmo
+    # banco e poderia mandar a mesma máquina trabalhar. Em vez de reclamar,
+    # ela levanta a janela que já estava aberta e sai calada.
+    if not instancia.tomar_posse():
+        instancia.trazer_para_frente(
+            f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
+        return 0
+
     garantir_banco()        # primeira abertura numa máquina nova
     Aplicativo().mainloop()
     return 0
