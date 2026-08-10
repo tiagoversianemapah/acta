@@ -87,15 +87,58 @@ def area_de_trabalho_disponivel() -> bool:
     gravando erro atrás de erro.
 
     `OpenInputDesktop` é a checagem clássica: ela falha justamente quando a
-    estação está bloqueada ou a sessão não é interativa.
+    estação está bloqueada ou a sessão não é interativa. Mas ela também
+    falha quando QUEM PERGUNTA é um serviço — a sessão 0 não tem área de
+    trabalho nenhuma. Com o painel subindo no boot, essa resposta sozinha
+    diria "trancada" para sempre, e o console recusaria todo "iniciar robô"
+    com a máquina destravada na frente de quem pediu.
+
+    Por isso, do lado de fora, perguntamos à sessão do console: existe
+    alguém logado nela e a tela está destravada? Na dúvida respondemos NÃO
+    — recusar uma emissão que daria certo custa um clique; começar uma que
+    não vai funcionar gasta consultas e grava erro atrás de erro.
     """
     try:
         user32 = ctypes.windll.user32
         desktop = user32.OpenInputDesktop(0, False, 0x0001)  # READOBJECTS
-        if not desktop:
+        if desktop:
+            user32.CloseDesktop(desktop)
+            return True
+    except Exception:
+        return False
+    return _sessao_do_console_destravada()
+
+
+# WTSQuerySessionInformationW, WTSSessionInfoEx (25). O SessionFlags vem em
+# offset fixo dentro do WTSINFOEX: 0 = trancada, 1 = destravada.
+_INFO_ESTENDIDA = 25
+_DESLOCAMENTO_DAS_FLAGS = 16
+_SESSAO_DESTRAVADA = 1
+_SEM_SESSAO = 0xFFFFFFFF
+
+
+def _sessao_do_console_destravada() -> bool:
+    """Vista de fora (de um serviço): tem alguém logado e destravado?"""
+    try:
+        wtsapi = ctypes.windll.wtsapi32
+        sessao = ctypes.windll.kernel32.WTSGetActiveConsoleSessionId()
+        if sessao == _SEM_SESSAO:
+            return False  # ninguém logado: máquina na tela de senha
+
+        buffer_ = ctypes.c_void_p()
+        tamanho = ctypes.c_ulong(0)
+        ok = wtsapi.WTSQuerySessionInformationW(
+            None, sessao, _INFO_ESTENDIDA,
+            ctypes.byref(buffer_), ctypes.byref(tamanho))
+        if not ok or tamanho.value < _DESLOCAMENTO_DAS_FLAGS + 4:
             return False
-        user32.CloseDesktop(desktop)
-        return True
+        try:
+            flags = ctypes.cast(
+                buffer_.value + _DESLOCAMENTO_DAS_FLAGS,
+                ctypes.POINTER(ctypes.c_int32)).contents.value
+        finally:
+            wtsapi.WTSFreeMemory(buffer_)
+        return flags == _SESSAO_DESTRAVADA
     except Exception:
         return False
 
