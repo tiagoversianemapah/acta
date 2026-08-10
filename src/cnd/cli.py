@@ -17,6 +17,21 @@ def _importar(args) -> int:
     from cnd.infra.db import conectar, criar_schema
     from cnd.ingestao.planilha import importar
 
+    # Arquivo no lugar errado é o erro mais comum aqui, e é previsível.
+    # Sem esta checagem, o openpyxl estoura com um traceback de Python na
+    # cara de quem só queria importar uma planilha — e o rastro nem sequer
+    # diz qual caminho ele procurou.
+    if not args.planilha.exists():
+        print(f"\n  NAO ENCONTREI A PLANILHA:\n    {args.planilha.resolve()}\n")
+        print("  Copie o arquivo para a pasta do ACTA, ou passe o caminho")
+        print("  completo entre aspas. Exemplo:\n")
+        print('    cnd importar "C:\\Users\\...\\Downloads\\planilha.xlsx"'
+              " --abas RFB\n")
+        return 1
+    if args.planilha.suffix.lower() not in (".xlsx", ".xlsm"):
+        print(f"\n  {args.planilha.name} nao e uma planilha do Excel.\n")
+        return 1
+
     conn = conectar()
     criar_schema(conn)
     descricao = args.descricao or f"Importação de {args.planilha.name}"
