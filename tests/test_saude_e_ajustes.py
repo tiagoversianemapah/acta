@@ -6,7 +6,20 @@ from dataclasses import replace
 import pytest
 
 from cnd.infra import ajustes, maquina
-from cnd.infra.config import ConfigRede
+from cnd.infra.config import ConfigAlertas, ConfigRede
+
+
+class TestConfigAlertas:
+    def test_smtp_sem_senha_nao_fica_habilitado(self):
+        cfg = ConfigAlertas(
+            metodo="smtp",
+            smtp_host="smtp.example.com",
+            smtp_usuario="robo@example.com",
+            destinatarios=("ops@example.com",),
+        )
+
+        assert not cfg.habilitado
+        assert any("smtp_senha" in campo for campo in cfg.o_que_falta())
 
 
 class TestSaudeDaMaquina:

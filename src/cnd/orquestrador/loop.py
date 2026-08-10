@@ -27,7 +27,7 @@ from cnd.core.modelos import (
 from cnd.infra import alertas, heartbeat
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.config import carregar as carregar_config
-from cnd.infra.db import conectar
+from cnd.infra.db import caminho_pedido_parada, conectar
 from cnd.infra.log import configurar as configurar_log
 from cnd.infra.log import obter
 from cnd.orquestrador import vigilancia
@@ -82,6 +82,13 @@ class Contexto:
                 return False
             self._feitos += 1
             return True
+
+    def cancelar_reserva(self) -> None:
+        """Desfaz a reserva quando nenhum job chegou a ser processado."""
+        if self.limite is None:
+            return
+        with self._trava:
+            self._feitos = max(0, self._feitos - 1)
 
 
 class Worker(threading.Thread):
@@ -159,8 +166,13 @@ class Worker(threading.Thread):
             self.ctx.parar.set()
             return
 
-        job = fila.reivindicar(self.conn, self.orgao.codigo)
+        try:
+            job = fila.reivindicar(self.conn, self.orgao.codigo)
+        except Exception:
+            self.ctx.cancelar_reserva()
+            raise
         if job is None:
+            self.ctx.cancelar_reserva()
             self.ctx.parar.wait(PAUSA_SEM_TRABALHO_S)
             return
 
@@ -192,7 +204,8 @@ class Worker(threading.Thread):
         self.portao.aguardar(espera, self.ctx.parar)
         if self.ctx.parar.is_set():
             # Devolve o job para a fila em vez de deixá-lo preso em RUNNING.
-            fila.reagendar(self.conn, job, Desfecho.ERRO_TECNICO, 0)
+            self.ctx.cancelar_reserva()
+            fila.devolver(self.conn, job)
             return
 
         tentativa_id = fila.abrir_tentativa(self.conn, job, self.numero)
@@ -536,6 +549,18 @@ def _conferir_espaco(conn, cfg: Config) -> str:
             f"comecar: certidao emitida sem onde salvar e consulta perdida.")
 
 
+def _consumir_pedido_de_parada(cfg: Config) -> bool:
+    """True quando o painel remoto pediu para encerrar o robô."""
+    pedido = caminho_pedido_parada(cfg.banco)
+    if not pedido.exists():
+        return False
+    try:
+        pedido.unlink()
+    except OSError:
+        log.warning("pedido_de_parada_nao_removido", extra={"arquivo": str(pedido)})
+    return True
+
+
 def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
              limite: int | None = None, forcar: bool = False) -> None:
     """Sobe o orquestrador. Bloqueia até Ctrl+C.
@@ -552,6 +577,9 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
         conn.close()
         return
 
+    if _consumir_pedido_de_parada(cfg):
+        log.info("pedido_de_parada_antigo_descartado")
+
     if problema := _conferir_espaco(conn, cfg):
         log.error("disco_insuficiente", extra={"detalhe": problema})
         print(f"\n  NAO INICIADO: {problema}\n")
@@ -566,6 +594,7 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
     ativos = cfg.ativos()
     if not ativos:
         log.error("nenhum_orgao_ativo")
+        conn.close()
         return
 
     parar = threading.Event()
@@ -598,6 +627,10 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
     try:
         while not parar.is_set():
             parar.wait(2.0)
+            if _consumir_pedido_de_parada(cfg):
+                log.info("parada_pedida_pelo_painel")
+                parar.set()
+                continue
             vigia.rodada(conn)
             if ate_esvaziar and not any(
                 fila.ha_trabalho(conn, o.codigo) for o in ativos

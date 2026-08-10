@@ -126,3 +126,12 @@ class TestComandosPelaRede:
 
         assert resposta.status_code == 200
         assert resposta.json()["ok"] is True
+        assert (tmp_path / "parar.txt").exists()
+
+    def test_detecta_robo_rodando_no_banco_configurado(self, conn):
+        from cnd.infra import heartbeat
+
+        heartbeat.bater(conn, "orquestrador")
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+
+        assert comandos._robo_rodando(banco)

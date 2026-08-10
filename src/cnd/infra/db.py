@@ -46,6 +46,11 @@ def conectar_leitura(caminho: Path | None = None) -> sqlite3.Connection:
     return conn
 
 
+def caminho_pedido_parada(caminho_banco: Path | None = None) -> Path:
+    """Arquivo-sinal usado pelo painel remoto para pedir parada do robô."""
+    return Path(caminho_banco or CAMINHO_BANCO_PADRAO).parent / "parar.txt"
+
+
 def garantir(caminho: Path | None = None) -> None:
     """Cria o banco vazio se ainda não houver nenhum.
 

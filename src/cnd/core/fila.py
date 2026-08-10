@@ -24,9 +24,10 @@ from cnd.core.modelos import (
 # --------------------------------------------------------------------------
 
 def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
-    """Pega o próximo job pendente do órgão e marca como RUNNING.
+    """Pega o próximo job disponível do órgão e marca como RUNNING.
 
-    Devolve None se não houver nada disponível agora.
+    Vale para item novo (`PENDING`) e retry cuja espera já venceu
+    (`RETRY_WAIT`). Devolve None se não houver nada disponível agora.
 
     O BEGIN IMMEDIATE trava a escrita já na abertura da transação: é isso
     que impede dois workers de selecionarem a mesma linha antes de qualquer
@@ -42,12 +43,12 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
               FROM job j
               JOIN empresa e ON e.id = j.empresa_id
              WHERE j.orgao = ?
-               AND j.status = ?
+               AND j.status IN (?, ?)
                AND j.proxima_execucao_em <= ?
              ORDER BY j.proxima_execucao_em, j.id
              LIMIT 1
             """,
-            (orgao, Status.PENDING, agora),
+            (orgao, Status.PENDING, Status.RETRY_WAIT, agora),
         ).fetchone()
 
         if linha is None:
@@ -171,7 +172,25 @@ def reagendar(conn: sqlite3.Connection, job: JobReivindicado,
                proxima_execucao_em = ?, atualizado_em = ?
          WHERE id = ?
         """,
-        (Status.PENDING, tempo.daqui_a(espera_s), tempo.agora_iso(), job.job_id),
+        (Status.RETRY_WAIT, tempo.daqui_a(espera_s), tempo.agora_iso(), job.job_id),
+    )
+
+
+def devolver(conn: sqlite3.Connection, job: JobReivindicado) -> None:
+    """Devolve um job reivindicado sem contar tentativa.
+
+    Usado quando o worker para antes de abrir a tentativa de verdade. Parada
+    limpa não pode aparecer como erro técnico nem consumir uma das três chances
+    do item.
+    """
+    agora = tempo.agora_iso()
+    conn.execute(
+        """
+        UPDATE job
+           SET status = ?, desfecho = NULL, proxima_execucao_em = ?, atualizado_em = ?
+         WHERE id = ?
+        """,
+        (Status.PENDING, agora, agora, job.job_id),
     )
 
 

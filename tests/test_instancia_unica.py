@@ -17,24 +17,37 @@ windows = pytest.mark.skipif(sys.platform != "win32",
                              reason="o cadeado é uma API do Windows")
 
 
-@windows
-def test_a_primeira_copia_toma_posse():
-    assert instancia.tomar_posse() is True
+@pytest.fixture
+def cadeado():
+    """Um nome só deste teste.
+
+    Usar o cadeado real faria o teste depender de não haver ACTA aberto no
+    computador — e teste que falha por causa do estado da máquina não diz
+    nada sobre o código.
+    """
+    import uuid
+
+    return f"Local\\Acta.Teste.{uuid.uuid4().hex}"
 
 
 @windows
-def test_a_segunda_copia_nao_toma():
+def test_a_primeira_copia_toma_posse(cadeado):
+    assert instancia.tomar_posse(cadeado) is True
+
+
+@windows
+def test_a_segunda_copia_nao_toma(cadeado):
     """Segunda chamada no mesmo processo é o mesmo caso de dois processos:
     o Windows responde ERROR_ALREADY_EXISTS para o nome já reservado."""
-    instancia.tomar_posse()
-    assert instancia.tomar_posse() is False
+    instancia.tomar_posse(cadeado)
+    assert instancia.tomar_posse(cadeado) is False
 
 
 @windows
-def test_o_cadeado_fica_guardado():
+def test_o_cadeado_fica_guardado(cadeado):
     """Sem alguém guardando o handle, o Windows libera o nome e a cópia
     seguinte se acha sozinha."""
-    instancia.tomar_posse()
+    instancia.tomar_posse(cadeado)
     assert instancia._cadeado
 
 

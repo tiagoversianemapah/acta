@@ -26,12 +26,17 @@ _SW_RESTORE = 9
 _cadeado = None
 
 
-def tomar_posse() -> bool:
-    """Reserva a vaga desta máquina. Falso se já havia outra cópia."""
+def tomar_posse(nome: str = NOME_DO_CADEADO) -> bool:
+    """Reserva a vaga desta máquina. Falso se já havia outra cópia.
+
+    O nome é parâmetro para o teste poder usar um próprio: verificar o
+    cadeado real dependeria de não haver ACTA aberto no computador, e teste
+    que olha o estado do sistema falha por motivo que não é o dele.
+    """
     global _cadeado
     try:
         kernel32 = ctypes.windll.kernel32
-        _cadeado = kernel32.CreateMutexW(None, False, NOME_DO_CADEADO)
+        _cadeado = kernel32.CreateMutexW(None, False, nome)
         return kernel32.GetLastError() != _JA_EXISTE
     except Exception:
         # Sem o mutex não dá para saber; deixar abrir é melhor que impedir

@@ -114,7 +114,7 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         exigir_senha_configurada(cfg)
         exigir_area_de_trabalho()
 
-        if _robo_rodando(raiz):
+        if _robo_rodando(cfg.banco):
             return {"ok": True, "situacao": "já estava rodando"}
 
         subprocess.Popen(
@@ -128,7 +128,9 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         cfg = obter_config()
         exigir_senha_configurada(cfg)
 
-        pedido = raiz / "data" / "parar.txt"
+        from cnd.infra.db import caminho_pedido_parada
+
+        pedido = caminho_pedido_parada(cfg.banco)
         pedido.parent.mkdir(parents=True, exist_ok=True)
         pedido.write_text("parar", encoding="utf-8")
         return {"ok": True, "situacao": "parada pedida"}
@@ -144,7 +146,7 @@ def _comando(raiz: Path) -> list[str]:
     return [sys.executable, "-m", "cnd.cli"]
 
 
-def _robo_rodando(raiz: Path) -> bool:
+def _robo_rodando(banco: Path) -> bool:
     """Se já há orquestrador vivo, pelo sinal de vida no banco."""
     import contextlib
 
@@ -152,7 +154,7 @@ def _robo_rodando(raiz: Path) -> bool:
     from cnd.infra.db import conectar_leitura
 
     with contextlib.suppress(Exception), \
-            contextlib.closing(conectar_leitura()) as conn:
+            contextlib.closing(conectar_leitura(banco)) as conn:
         idade = heartbeat.segundos_desde(conn, "orquestrador")
         return idade is not None and idade < 120
     return False

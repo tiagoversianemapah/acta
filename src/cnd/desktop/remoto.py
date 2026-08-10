@@ -10,7 +10,9 @@ Uma máquina fora do ar não derruba a tela — ela aparece como offline, que
 from __future__ import annotations
 
 import contextlib
+import csv
 import json
+import os
 import tempfile
 import urllib.error
 import urllib.parse
@@ -18,6 +20,7 @@ import urllib.request
 import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from io import StringIO
 from pathlib import Path
 
 from cnd.infra.config import Config, Maquina, nome_do_orgao
@@ -340,9 +343,12 @@ def baixar_certidoes(cfg: Config, mes: str, destino: Path,
         consulta += f"&orgao={urllib.parse.quote(orgao)}"
     destino.parent.mkdir(parents=True, exist_ok=True)
 
-    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
-        indice: list[str] = []
+    indice_csv = StringIO()
+    indice = csv.writer(indice_csv, delimiter=";", lineterminator="\n")
+    indice.writerow(["orgao", "tipo", "empresa", "documento", "emitida_em",
+                     "valida_ate", "arquivo"])
 
+    with zipfile.ZipFile(destino, "w", zipfile.ZIP_DEFLATED) as pacote:
         for maquina in (cfg.rede.maquinas or (None,)):
             nome = maquina.nome if maquina else (cfg.rede.nome or "esta máquina")
             try:
@@ -355,8 +361,12 @@ def baixar_certidoes(cfg: Config, mes: str, destino: Path,
                 with zipfile.ZipFile(origem) as vindo:
                     for item in vindo.infolist():
                         if item.filename == "indice.csv":
-                            linhas = vindo.read(item).decode("utf-8").splitlines()
-                            indice.extend(linhas[1:])   # o cabeçalho é um só
+                            linhas = csv.reader(
+                                StringIO(vindo.read(item).decode("utf-8")),
+                                delimiter=";",
+                            )
+                            next(linhas, None)   # o cabeçalho é um só
+                            indice.writerows(linhas)
                             continue
                         if item.filename in pacote.namelist():
                             continue        # mesmo órgão em duas máquinas
@@ -367,17 +377,16 @@ def baixar_certidoes(cfg: Config, mes: str, destino: Path,
                 if isinstance(origem, Path):
                     origem.unlink(missing_ok=True)
 
-        pacote.writestr(
-            "indice.csv",
-            "\n".join(["orgao;tipo;empresa;documento;emitida_em;valida_ate;arquivo",
-                       *indice]))
+        pacote.writestr("indice.csv", indice_csv.getvalue())
     return entrega
 
 
 def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
                        consulta: str) -> Path:
     """Traz (ou monta) o pacote de uma máquina, num arquivo temporário."""
-    temporario = Path(tempfile.mkstemp(suffix=".zip", prefix="acta_")[1])
+    descritor, nome_temporario = tempfile.mkstemp(suffix=".zip", prefix="acta_")
+    os.close(descritor)
+    temporario = Path(nome_temporario)
 
     if maquina is None:
         from cnd.infra.db import conectar_leitura

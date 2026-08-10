@@ -5,10 +5,11 @@ resumo e erros. É o produto que sai do sistema para a operação.
 """
 from __future__ import annotations
 
+import csv
 import sqlite3
 import zipfile
 from dataclasses import dataclass
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 
 from openpyxl import Workbook
@@ -301,9 +302,12 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
         parametros.append(orgao)
 
     buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as pacote:
-        indice = ["orgao;tipo;empresa;documento;emitida_em;valida_ate;arquivo"]
+    indice_csv = StringIO()
+    indice = csv.writer(indice_csv, delimiter=";", lineterminator="\n")
+    indice.writerow(["orgao", "tipo", "empresa", "documento", "emitida_em",
+                     "valida_ate", "arquivo"])
 
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as pacote:
         for linha in conn.execute(
             f"""
             SELECT c.caminho_pdf, c.tipo, c.emitida_em, c.valida_ate,
@@ -319,18 +323,18 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
             origem = Path(linha["caminho_pdf"])
             if not origem.exists():
                 continue
-            orgao = nomes.get(linha["orgao"], config.nome_do_orgao(linha["orgao"]))
+            rotulo_orgao = nomes.get(linha["orgao"], config.nome_do_orgao(linha["orgao"]))
             pasta = PASTAS_DO_ZIP.get(linha["tipo"], linha["tipo"])
-            pacote.write(origem, arcname=f"{orgao}/{pasta}/{origem.name}")
-            indice.append(";".join([
-                orgao, linha["tipo"], linha["nome"], formatar(linha["documento"]),
+            pacote.write(origem, arcname=f"{rotulo_orgao}/{pasta}/{origem.name}")
+            indice.writerow([
+                rotulo_orgao, linha["tipo"], linha["nome"], formatar(linha["documento"]),
                 _data_curta(linha["emitida_em"]), _data_curta(linha["valida_ate"]),
                 origem.name,
-            ]))
+            ])
 
         # Índice dentro do próprio pacote: quem recebe só o zip consegue
         # conferir o conteúdo sem abrir arquivo por arquivo.
-        pacote.writestr("indice.csv", "\n".join(indice))
+        pacote.writestr("indice.csv", indice_csv.getvalue())
 
     return buffer.getvalue()
 

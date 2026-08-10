@@ -118,7 +118,7 @@ class ConfigAlertas:
                         and (self.remetente or self.smtp_usuario))
         if self.metodo == "relay":
             return bool(self.smtp_host and self.remetente)
-        return bool(self.smtp_host and self.smtp_usuario)
+        return bool(self.smtp_host and self.smtp_usuario and self.smtp_senha)
 
     def o_que_falta(self) -> list[str]:
         """Campos vazios, para o comando de teste dizer o que preencher."""

@@ -67,7 +67,7 @@ def test_concluir_grava_desfecho(conn, lote):
     assert linha["tentativas"] == 1
 
 
-def test_reagendar_devolve_para_a_fila(conn, lote):
+def test_reagendar_deixa_aguardando_retry(conn, lote):
     criar_job(conn, lote)
     job = fila.reivindicar(conn, "FAKE")
 
@@ -76,8 +76,32 @@ def test_reagendar_devolve_para_a_fila(conn, lote):
     linha = conn.execute(
         "SELECT status, tentativas FROM job WHERE id = ?", (job.job_id,)
     ).fetchone()
-    assert linha["status"] == Status.PENDING
+    assert linha["status"] == Status.RETRY_WAIT
     assert linha["tentativas"] == 1
+    assert fila.reivindicar(conn, "FAKE") is not None
+
+
+def test_retry_futuro_nao_sai_antes_da_hora(conn, lote):
+    criar_job(conn, lote)
+    job = fila.reivindicar(conn, "FAKE")
+
+    fila.reagendar(conn, job, Desfecho.CAPTCHA, espera_s=3600)
+
+    assert fila.reivindicar(conn, "FAKE") is None
+
+
+def test_devolver_nao_conta_tentativa(conn, lote):
+    criar_job(conn, lote)
+    job = fila.reivindicar(conn, "FAKE")
+
+    fila.devolver(conn, job)
+
+    linha = conn.execute(
+        "SELECT status, tentativas, desfecho FROM job WHERE id = ?", (job.job_id,)
+    ).fetchone()
+    assert linha["status"] == Status.PENDING
+    assert linha["tentativas"] == 0
+    assert linha["desfecho"] is None
     assert fila.reivindicar(conn, "FAKE") is not None
 
 

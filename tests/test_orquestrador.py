@@ -6,6 +6,8 @@ adapter pelo da Receita.
 """
 from __future__ import annotations
 
+import threading
+
 from tests.conftest import criar_job
 
 from cnd.core import breaker, ritmo
@@ -13,7 +15,8 @@ from cnd.core.breaker import ParametrosBreaker
 from cnd.core.modelos import CONCLUSIVOS, Status
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
-from cnd.orquestrador.loop import executar
+from cnd.infra.db import caminho_pedido_parada
+from cnd.orquestrador.loop import Contexto, _consumir_pedido_de_parada, executar
 
 
 def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
@@ -41,6 +44,26 @@ def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
         alertas=ConfigAlertas(),          # SMTP vazio => alertas desligados
         orgaos={"FAKE": orgao},
     )
+
+
+def test_reserva_do_limite_pode_ser_cancelada(tmp_path):
+    ctx = Contexto(cfg=montar_config(tmp_path, tmp_path / "cnd.db", {}),
+                   parar=threading.Event(), limite=1)
+
+    assert ctx.reservar_vaga() is True
+    ctx.cancelar_reserva()
+    assert ctx.reservar_vaga() is True
+
+
+def test_consumir_pedido_de_parada_remove_o_sinal(tmp_path):
+    cfg = montar_config(tmp_path, tmp_path / "cnd.db", {})
+    pedido = caminho_pedido_parada(cfg.banco)
+    pedido.parent.mkdir(parents=True, exist_ok=True)
+    pedido.write_text("parar", encoding="utf-8")
+
+    assert _consumir_pedido_de_parada(cfg) is True
+    assert not pedido.exists()
+    assert _consumir_pedido_de_parada(cfg) is False
 
 
 def test_lote_inteiro_e_processado(conn, lote, tmp_path):

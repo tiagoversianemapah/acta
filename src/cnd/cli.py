@@ -65,6 +65,10 @@ def _rodar(args) -> int:
 def _painel(args) -> int:
     import uvicorn
 
+    from cnd.infra.config import carregar
+    from cnd.infra.db import garantir
+
+    garantir(carregar().banco)
     if args.host != "127.0.0.1":
         print(f"  Painel acessível pela rede em http://{args.host}:{args.porta}")
         print("  Outras máquinas e o aplicativo vão consultar este endereço.")

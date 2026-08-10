@@ -9,8 +9,9 @@ entregar uma certidão positiva a um cliente como se estivesse limpa.
 """
 from __future__ import annotations
 
+import csv
 import zipfile
-from io import BytesIO
+from io import BytesIO, StringIO
 
 from cnd.adapters.rfb_pj import (
     TITULO_CPEN,
@@ -19,6 +20,7 @@ from cnd.adapters.rfb_pj import (
     _normalizar,
 )
 from cnd.core.modelos import COM_PDF, Desfecho
+from cnd.infra.config import Config, ConfigAlertas
 from cnd.web.relatorio import zipar_pdfs
 
 CABECALHO = """MINISTÉRIO DA FAZENDA
@@ -177,6 +179,42 @@ class TestPacoteZip:
         assert "RECEITA FEDERAL" in indice, "o órgão também vai no índice"
         assert "00.000.000/0000-01" in indice, "documento com máscara no índice"
         assert "07/08/2026" in indice, "datas em formato brasileiro"
+
+    def test_indice_escapa_campos_com_ponto_e_virgula(self, conn, tmp_path):
+        self._preparar(conn, tmp_path, ["NEGATIVA"])
+        conn.execute("UPDATE empresa SET nome = ? WHERE id = 1",
+                     ("EMPRESA; COM QUEBRA\nDE LINHA",))
+
+        with zipfile.ZipFile(BytesIO(zipar_pdfs(conn, MES))) as pacote:
+            indice = pacote.read("indice.csv").decode()
+
+        linhas = list(csv.reader(StringIO(indice), delimiter=";"))
+        assert linhas[1][2] == "EMPRESA; COM QUEBRA\nDE LINHA"
+        assert len(linhas[1]) == len(linhas[0])
+
+    def test_agregador_preserva_indice_csv_escapado(self, conn, tmp_path):
+        from cnd.desktop.remoto import baixar_certidoes
+
+        self._preparar(conn, tmp_path, ["NEGATIVA"])
+        conn.execute("UPDATE empresa SET nome = ? WHERE id = 1",
+                     ("EMPRESA; COM QUEBRA\nDE LINHA",))
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+        cfg = Config(
+            banco=banco,
+            pasta_certidoes=tmp_path,
+            pasta_evidencias=tmp_path,
+            pasta_logs=tmp_path,
+            alertas=ConfigAlertas(),
+        )
+        destino = tmp_path / "entrega.zip"
+
+        baixar_certidoes(cfg, MES, destino)
+
+        with zipfile.ZipFile(destino) as pacote:
+            indice = pacote.read("indice.csv").decode()
+        linhas = list(csv.reader(StringIO(indice), delimiter=";"))
+        assert linhas[1][2] == "EMPRESA; COM QUEBRA\nDE LINHA"
+        assert len(linhas[1]) == len(linhas[0])
 
     def test_somente_negativas_deixa_cpen_de_fora(self, conn, tmp_path):
         self._preparar(conn, tmp_path, ["NEGATIVA", "CPEN"])
