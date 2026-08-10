@@ -231,9 +231,29 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     planilha = livro.create_sheet("Resumo", 0)
     for linha in resumo_linhas:
         planilha.append(linha)
-    planilha["A1"].font = Font(bold=True, size=13)
-    planilha.column_dimensions["A"].width = 40
-    planilha.column_dimensions["B"].width = 30
+
+    # As outras abas passam por _escrever, que formata. O Resumo era
+    # montado a mão e saía torto: cabeçalhos sem destaque, colunas
+    # estreitas cortando "% concluído" e números encostados no texto.
+    planilha["A1"].font = Font(bold=True, size=14)
+    for celula in planilha["A"]:
+        if celula.value and not isinstance(celula.value, (int, float)):
+            celula.font = Font(bold=True)
+    # As duas linhas de cabeçalho de tabela ganham fundo e texto claro.
+    for numero_da_linha in (7, len(resumo_linhas) - 1):
+        for celula in planilha[numero_da_linha]:
+            if celula.value:
+                celula.font = CABECALHO
+                celula.fill = FUNDO
+                celula.alignment = Alignment(horizontal="center")
+
+    for coluna, largura in zip("ABCDEF", (34, 30, 14, 14, 14, 14),
+                               strict=False):
+        planilha.column_dimensions[coluna].width = largura
+    for linha_de_dados in planilha.iter_rows(min_row=8, min_col=3):
+        for celula in linha_de_dados:
+            celula.alignment = Alignment(horizontal="center")
+    planilha.freeze_panes = "A2"
 
     destino = destino or (Path("data") / f"relatorio_{recorte.mes}.xlsx")
     destino.parent.mkdir(parents=True, exist_ok=True)
