@@ -293,15 +293,22 @@ def consultar_todas(cfg: Config) -> list[EstadoRemoto]:
                              cfg.rede.maquinas))
 
 
-def listar_itens(maquina: Maquina, senha: str = "", **filtros) -> list[dict]:
+def listar_itens(maquina: Maquina, senha: str = "",
+                 **filtros) -> list[dict] | None:
+    """Itens daquela máquina, ou None se ela não respondeu.
+
+    None e lista vazia são coisas diferentes: devolver `[]` para máquina
+    fora do ar faria a tela dizer "nenhum item" quando a verdade é "não
+    sei" — e a pessoa concluiria que a planilha não entrou.
+    """
     partes = [f"{chave}={urllib.parse.quote(str(valor))}"
               for chave, valor in filtros.items() if valor not in (None, "")]
     consulta = ("?" + "&".join(partes)) if partes else ""
     try:
         resultado = _pedir(maquina, "/api/itens", senha, consulta)
-        return resultado if isinstance(resultado, list) else []
+        return resultado if isinstance(resultado, list) else None
     except Exception:
-        return []
+        return None
 
 
 @dataclass

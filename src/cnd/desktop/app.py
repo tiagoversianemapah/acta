@@ -79,6 +79,8 @@ ICONE_AJUDA = ""
 ICONE_MAQUINA = ""
 ICONE_BAIXAR = ""
 TODOS_OS_MESES = "Todos os meses"
+ESTA_MAQUINA = "Esta máquina"
+TODAS_AS_PLANILHAS = "Todas as planilhas"
 
 # As colunas da tela de M\u00e1quinas, numa defini\u00e7\u00e3o s\u00f3: (t\u00edtulo, peso, largura
 # m\u00ednima). O cabe\u00e7alho e cada cart\u00e3o aplicam ESTA tupla. Com dois conjuntos
@@ -376,7 +378,8 @@ class Aplicativo(ctk.CTk):
         # banco local está vazio e mostraria zero com quatro robôs rodando.
         self._maquinas: list = []
         self._orgaos_no_filtro: list[str] = []
-        self._meses_no_filtro: list[str] = []
+        self._maquinas_no_filtro: list[str] = []
+        self._lotes_da_maquina: dict[str, int] = {}
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1360x820")
@@ -1606,7 +1609,8 @@ class Aplicativo(ctk.CTk):
         self.busca.grid(row=0, column=0, padx=(0, 8))
         self.busca.bind("<Return>", lambda _: self._recarregar_itens())
 
-        def seletor(valores: list[str], largura: int) -> ctk.CTkOptionMenu:
+        def seletor(valores: list[str], largura: int,
+                    ao_mudar=None) -> ctk.CTkOptionMenu:
             # A seta na mesma cor do campo: com cor própria, o CustomTkinter
             # a desenha como uma pastilha colada ao lado, e o filtro parece
             # dois controles em vez de um.
@@ -1619,7 +1623,7 @@ class Aplicativo(ctk.CTk):
                 text_color=marca.TEXTO_2, dropdown_fg_color=marca.BRANCO,
                 dropdown_text_color=marca.TEXTO, dropdown_hover_color=marca.PAPEL,
                 font=(FONTE, 12), dropdown_font=(FONTE, 12),
-                command=lambda _: self._recarregar_itens())
+                command=ao_mudar or (lambda _: self._recarregar_itens()))
             menu.grid(row=0, column=0, padx=1, pady=1)
             menu.moldura = moldura      # quem posiciona é a moldura
             return menu
@@ -1633,21 +1637,26 @@ class Aplicativo(ctk.CTk):
         self.filtro_situacao = seletor(list(SITUACOES), 168)
         self.filtro_situacao.moldura.grid(row=0, column=2, padx=(0, 8))
 
-        # Sem recorte de mês, a lista mistura agosto com julho e junho — e a
-        # emissão é mensal, então "o que saiu neste mês" é a pergunta que a
-        # tela existe para responder.
-        # Nasce no mês corrente: a emissão é mensal, e "todos" mostra a
-        # mesma empresa repetida uma vez por mês.
-        self.filtro_mes = seletor(
-            [_mes_por_extenso(relatorio_mes_corrente()), TODOS_OS_MESES], 150)
-        self.filtro_mes.moldura.grid(row=0, column=3, padx=(0, 8))
+        # A máquina manda em tudo o mais: sem escolher de quem é a lista,
+        # não há o que listar. Antes esta tela lia o banco DESTE
+        # computador — que no console está vazio, e você nunca veria nada.
+        self.filtro_maquina = seletor([ESTA_MAQUINA], 190,
+                                      ao_mudar=self._trocar_de_maquina)
+        self.filtro_maquina.moldura.grid(row=0, column=3, padx=(0, 8))
+
+        # Planilha e não mês: no uso real você manda planilhas, não meses —
+        # e sabe qual mandou. "agosto/2026" obrigaria a traduzir. O mês
+        # continua valendo na entrega, que é o recorte do cliente.
+        self.filtro_planilha = seletor([TODAS_AS_PLANILHAS], 230)
+        self.filtro_planilha.moldura.grid(row=0, column=4, padx=(0, 8))
 
         self._botao_secundario(filtros, "Atualizar", self._recarregar_itens,
-                               largura=104).grid(row=0, column=4)
+                               largura=104).grid(row=0, column=5)
 
         self.contador = ctk.CTkLabel(filtros, text="", font=(FONTE, 12),
                                      text_color=marca.TEXTO_3)
-        self.contador.grid(row=0, column=5, padx=(14, 0))
+        self.contador.grid(row=0, column=6, padx=(14, 0))
+        self._lotes_da_maquina: dict[str, int] = {}
 
         moldura = self._cartao(quadro)
         moldura.grid(row=2, column=0, sticky="nsew", padx=34, pady=(0, 28))
@@ -2053,28 +2062,55 @@ class Aplicativo(ctk.CTk):
             return
         messagebox.showinfo("Pacote salvo", "\n".join(corpo))
 
-    def _atualizar_filtro_de_mes(self) -> None:
-        """Oferece os meses que existem, começando pelo corrente.
+    def _atualizar_filtros_de_itens(self) -> None:
+        """Mantém as listas de máquina e de planilha em dia."""
+        maquinas = [ESTA_MAQUINA] if self.cfg.rede.roda_robo else []
+        maquinas += [m.orgao or m.nome for m in self.cfg.rede.maquinas]
+        if maquinas and maquinas != self._maquinas_no_filtro:
+            self._maquinas_no_filtro = maquinas
+            atual = self.filtro_maquina.get()
+            self.filtro_maquina.configure(values=maquinas)
+            if atual not in maquinas:
+                self.filtro_maquina.set(maquinas[0])
 
-        A emissão se repete todo mês, então a MESMA empresa aparece uma vez
-        por mês, com resultado que pode mudar. Sem escolher o mês, a lista
-        mostra a mesma razão social várias vezes e nada explica por quê —
-        por isso o padrão é o mês corrente, e a coluna Mês fica sempre à
-        vista para quando alguém abrir "Todos".
-        """
-        from cnd.desktop.estado import ler_meses_de_itens
-
-        meses = ler_meses_de_itens(self.cfg)
-        valores = [*(_mes_por_extenso(m) for m in meses), TODOS_OS_MESES]
-        if valores == self._meses_no_filtro:
+        if self._lotes_da_maquina:
             return
-        self._meses_no_filtro = valores
-        atual = self.filtro_mes.get()
-        self.filtro_mes.configure(values=valores)
-        if atual not in valores:
-            corrente = _mes_por_extenso(relatorio_mes_corrente())
-            self.filtro_mes.set(corrente if corrente in valores
-                                else valores[0])
+        self._lotes_da_maquina = self._planilhas_da_maquina()
+        valores = [*self._lotes_da_maquina, TODAS_AS_PLANILHAS]
+        self.filtro_planilha.configure(values=valores)
+        # Nasce na mais recente: é quase sempre a que se acabou de mandar.
+        self.filtro_planilha.set(valores[0])
+
+    def _planilhas_da_maquina(self) -> dict[str, int]:
+        """As planilhas enviadas àquela máquina, da mais nova para a antiga.
+
+        O rótulo traz nome, data e tamanho porque é assim que você lembra
+        do envio — "CND_MIA_0726.xlsx, 10/08, 2.829 itens" diz mais do que
+        um número de lote, que não significa nada fora da máquina.
+        """
+        maquina = self._maquina_escolhida()
+        if maquina is None:
+            from cnd.infra.db import conectar_leitura
+            from cnd.web.consultas import lotes as ler_lotes
+
+            try:
+                with contextlib.closing(
+                        conectar_leitura(self.cfg.banco)) as conn:
+                    cruas = [dict(linha) for linha in ler_lotes(conn)]
+            except Exception:
+                return {}
+        else:
+            estado = remoto.consultar(maquina, self.cfg.rede.senha)
+            cruas = estado.dados.get("lotes", [])
+
+        planilhas = {}
+        for lote in cruas:
+            nome = lote.get("arquivo") or lote.get("descricao") or "?"
+            quando = _data_curta(lote.get("criado_em") or "")
+            itens = lote.get("itens") or lote.get("jobs") or 0
+            planilhas[f"{nome}  ·  {quando}  ·  {_numero(itens)} itens"] = \
+                lote["id"]
+        return planilhas
 
     def _ver_pendencias(self) -> None:
         """Leva à lista já filtrada — a pergunta seguinte é sempre 'quais?'."""
@@ -2405,18 +2441,44 @@ class Aplicativo(ctk.CTk):
         self.caixa_log.see("end")
         self.caixa_log.configure(state="disabled")
 
+    def _trocar_de_maquina(self, _escolha=None) -> None:
+        """Troca a máquina: as planilhas dela são outras."""
+        self._lotes_da_maquina = {}
+        self._recarregar_itens()
+
+    def _maquina_escolhida(self):
+        """A máquina selecionada, ou None se for esta."""
+        escolhido = self.filtro_maquina.get()
+        return next((m for m in self.cfg.rede.maquinas
+                     if (m.orgao or m.nome) == escolhido), None)
+
     def _recarregar_itens(self) -> None:
-        self._atualizar_filtro_de_mes()
-        escolhido = self.filtro_mes.get()
-        itens = listar_itens(
-            self.cfg,
-            status=SITUACOES.get(self.filtro_situacao.get()),
-            desfecho=RESULTADOS.get(self.filtro_resultado.get()),
-            busca=self.busca.get().strip() or None,
-            mes=None if escolhido == TODOS_OS_MESES
-            else _mes_do_rotulo(escolhido),
-            limite=LIMITE_DE_ITENS,
-        )
+        self._atualizar_filtros_de_itens()
+        maquina = self._maquina_escolhida()
+        rotulo = self.filtro_planilha.get()
+        filtros = {
+            "status": SITUACOES.get(self.filtro_situacao.get()),
+            "desfecho": RESULTADOS.get(self.filtro_resultado.get()),
+            "busca": self.busca.get().strip() or None,
+            "lote": self._lotes_da_maquina.get(rotulo),
+            "limite": LIMITE_DE_ITENS,
+        }
+
+        if maquina is None:
+            itens = listar_itens(self.cfg, **filtros)
+        else:
+            itens = remoto.listar_itens(maquina, self.cfg.rede.senha, **filtros)
+            if itens is None:
+                # Lista vazia e "não respondeu" são coisas diferentes:
+                # confundi-las faz a tela mentir justamente quando a máquina
+                # caiu.
+                self.tabela.delete(*self.tabela.get_children())
+                self.contador.configure(text="")
+                self.tabela.insert(
+                    "", "end", tags=("par",),
+                    values=(f"{self.filtro_maquina.get()} não respondeu",
+                            "", "", ""))
+                return
 
         self.tabela.delete(*self.tabela.get_children())
         self.contador.configure(
