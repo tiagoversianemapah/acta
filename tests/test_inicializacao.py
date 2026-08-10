@@ -57,6 +57,35 @@ def test_o_atalho_abre_o_painel_pela_rede():
     assert "7" in lido, "janela minimizada: janela preta aberta convida a fechar"
 
 
+def test_tarefa_de_boot_sobe_como_sistema_e_pela_rede(monkeypatch):
+    """Sem ONSTART/SYSTEM ela volta a depender de logon; sem 0.0.0.0 o
+    painel sobe e nenhuma outra máquina o alcança."""
+    vistos = {}
+
+    def fingir(argv, **_k):
+        vistos["argv"] = argv
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(inicializacao.subprocess, "run", fingir)
+    inicializacao.instalar_no_boot()
+
+    argv = vistos["argv"]
+    assert argv[argv.index("/SC") + 1] == "ONSTART"
+    assert argv[argv.index("/RU") + 1] == "SYSTEM"
+    assert "--host 0.0.0.0" in argv[argv.index("/TR") + 1]
+
+
+def test_acesso_negado_explica_o_que_fazer(monkeypatch):
+    """O texto cru do schtasks não diz a quem o lê o que ele deve fazer."""
+    monkeypatch.setattr(
+        inicializacao.subprocess, "run",
+        lambda *a, **k: type("R", (), {
+            "returncode": 1, "stdout": "", "stderr": "ERRO: Acesso negado."})())
+
+    with pytest.raises(PermissionError, match="administrador"):
+        inicializacao.instalar_no_boot()
+
+
 def test_remover_desfaz():
     inicializacao.instalar()
 

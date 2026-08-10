@@ -102,10 +102,24 @@ def _inicio_automatico(args) -> int:
     from cnd.infra import inicializacao
 
     if args.remover:
-        if inicializacao.remover():
-            print("O painel não sobe mais sozinho.")
-        else:
-            print("Não estava instalado — nada a fazer.")
+        tirou = inicializacao.remover() | inicializacao.remover_do_boot()
+        print("O painel não sobe mais sozinho." if tirou
+              else "Não estava instalado — nada a fazer.")
+        return 0
+
+    if args.no_boot:
+        try:
+            inicializacao.instalar_no_boot()
+        except (PermissionError, RuntimeError) as erro:
+            print(f"Não deu para instalar: {erro}")
+            return 1
+        # A da Inicialização sobraria tentando subir um segundo painel na
+        # mesma porta, e morrendo com "endereço já em uso" a cada logon.
+        inicializacao.remover()
+        print("Pronto. O painel sobe no boot, sem depender de logon.")
+        print("A máquina fica visível no ACTA 24 horas.")
+        print("\nVale a partir do próximo boot. Para valer agora:")
+        print("  schtasks /Run /TN \"ACTA Painel\"")
         return 0
 
     atalho = inicializacao.instalar()
@@ -296,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("inicio-automatico",
                        help="faz o painel subir sozinho junto com o Windows")
+    p.add_argument("--no-boot", action="store_true",
+                   help="sobe no boot, sem esperar logon (pede administrador)")
     p.add_argument("--remover", action="store_true",
                    help="desfaz: o painel volta a depender de subida à mão")
     p.set_defaults(func=_inicio_automatico)
