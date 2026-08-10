@@ -32,6 +32,7 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cnd.adapters.rfb_pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real, tela
 from cnd.infra.arquivos import caminho_certidao
@@ -70,6 +71,15 @@ PONTOS_VEU_MODAL = (
     (0.50, 0.82),
 )
 MINIMO_PONTOS_VEU_MODAL = 2
+
+PONTOS_FAIXA_ALERTA = (
+    (0.25, 0.20),
+    (0.50, 0.20),
+    (0.25, 0.23),
+    (0.50, 0.23),
+    (0.25, 0.26),
+    (0.50, 0.26),
+)
 
 
 class CalibragemAusente(RuntimeError):
@@ -216,11 +226,36 @@ class AdapterRFBCego:
         cliques calibrados caírem no lugar errado.
         """
         self.encerrar()
-        subprocess.Popen([_achar_edge(), "--start-maximized", URL_FORMULARIO])
+        subprocess.Popen([_achar_edge(), "--new-window", "--start-maximized",
+                          URL_FORMULARIO])
         time.sleep(TEMPO_CARREGAR_S + 3)
+        self._posicionar_janela_calibrada()
         entrada_real.maximizar(TITULO_JANELA, EXECUTAVEL_NAVEGADOR)
         log.info("navegador_aberto_sem_automacao",
                  extra={"orgao": self.orgao, "janela": self._janela()})
+
+    def _posicionar_janela_calibrada(self) -> None:
+        """Leva o Edge para o monitor/tamanho usados na calibragem."""
+        if self._calibragem is None:
+            return
+        if not entrada_real.posicionar_janela(
+                TITULO_JANELA, EXECUTAVEL_NAVEGADOR, self._calibragem.janela):
+            log.warning("janela_do_edge_nao_posicionada",
+                        extra={"calibrada": self._calibragem.janela})
+
+    @staticmethod
+    def _janela_desalinhada(atual: tuple[int, int, int, int],
+                            esperada: tuple[int, int, int, int]) -> bool:
+        ax, ay, aw, ah = atual
+        ex, ey, ew, eh = esperada
+        centro_atual = (ax + aw / 2, ay + ah / 2)
+        centro_esperado = (ex + ew / 2, ey + eh / 2)
+        return (
+            abs(aw - ew) > 40
+            or abs(ah - eh) > 80
+            or abs(centro_atual[0] - centro_esperado[0]) > 120
+            or abs(centro_atual[1] - centro_esperado[1]) > 120
+        )
 
     def _exigir_foco(self) -> None:
         """Confere o foco imediatamente antes de digitar ou clicar.
@@ -342,9 +377,10 @@ class AdapterRFBCego:
 
         atual = entrada_real.retangulo_janela(TITULO_JANELA, EXECUTAVEL_NAVEGADOR)
         esperada = self._calibragem.janela
-        if atual and abs(atual[2] - esperada[2]) > 40:
+        if atual and self._janela_desalinhada(atual, esperada):
             log.warning("janela_fora_do_tamanho_remaximizando",
                         extra={"agora": atual, "calibrada": esperada})
+            self._posicionar_janela_calibrada()
             entrada_real.maximizar(TITULO_JANELA, EXECUTAVEL_NAVEGADOR)
             time.sleep(1.0)
             entrada_real.garantir_em_primeiro_plano(TITULO_JANELA,
@@ -426,8 +462,13 @@ class AdapterRFBCego:
                     return "modal", None
 
             # 3. Faixa de aviso no topo: o portal nos barrou.
-            cor_faixa = tela.cor_media(imagem, *self._ponto("faixa_alerta"), raio=10)
-            if tela.parece_alerta(cor_faixa):
+            for cor_faixa in (
+                tela.cor_media(imagem, x, y, raio=10)
+                for x, y in self._pontos_da_faixa_alerta()
+            ):
+                tipo = tela.parece_alerta(cor_faixa)
+                if not tipo:
+                    continue
                 log.warning("faixa_de_alerta_detectada",
                             extra={"orgao": self.orgao, "cor": cor_faixa,
                                    "em_s": round(agora - inicio, 1)})
@@ -464,6 +505,14 @@ class AdapterRFBCego:
         )
         return pontos
 
+    def _pontos_da_faixa_alerta(self) -> list[tuple[int, int]]:
+        janela = self._janela()
+        pontos = [self._ponto("faixa_alerta")]
+        pontos.extend(
+            _ponto_fracionario(janela, fx, fy) for fx, fy in PONTOS_FAIXA_ALERTA
+        )
+        return pontos
+
     def _limpar_downloads_antigos(self, documento: str) -> None:
         """Um PDF da tentativa anterior faria o robô achar que deu certo."""
         for antigo in self.pasta_downloads.glob(f"Certidao-{documento}*.pdf"):
@@ -482,8 +531,16 @@ class AdapterRFBCego:
             )
 
         imagem = tela.capturar()
-        cor = tela.cor_media(imagem, *self._ponto("faixa_alerta"), raio=10)
-        tipo = tela.parece_alerta(cor)
+        cor = None
+        tipo = None
+        for cor_lida in (
+            tela.cor_media(imagem, x, y, raio=10)
+            for x, y in self._pontos_da_faixa_alerta()
+        ):
+            tipo = tela.parece_alerta(cor_lida)
+            if tipo:
+                cor = cor_lida
+                break
         evidencia = self._print(doc, "sem-pdf", imagem)
 
         if tipo:
@@ -508,12 +565,10 @@ class AdapterRFBCego:
 
         Reaproveita a leitura já validada contra um PDF real da Receita.
         """
-        from cnd.adapters.rfb_pj import _ler_pdf
-
         destino = caminho_certidao(self.cfg.pasta_certidoes, doc.lote_id,
                                    self.orgao, doc.documento, nome=doc.nome)
         shutil.move(str(baixado), str(destino))
-        return _ler_pdf(destino, "PDF baixado (adapter cego)")
+        return ler_pdf(destino, "PDF baixado (adapter cego)")
 
     def _print(self, doc: Documento, motivo: str, imagem=None) -> Path | None:
         try:

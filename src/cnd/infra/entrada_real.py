@@ -50,6 +50,9 @@ VK_CONTROL, VK_DELETE, VK_A = 0x11, 0x2E, 0x41
 VK_RETURN, VK_TAB, VK_ESCAPE, VK_L, VK_F5 = 0x0D, 0x09, 0x1B, 0x4C, 0x74
 VK_HOME, VK_END, VK_SHIFT = 0x24, 0x23, 0x10
 
+SW_MAXIMIZE = 3
+SW_RESTORE = 9
+
 
 class MOUSEINPUT(ctypes.Structure):
     _fields_ = [("dx", wintypes.LONG), ("dy", wintypes.LONG),
@@ -79,6 +82,17 @@ class POINT(ctypes.Structure):
 class RECT(ctypes.Structure):
     _fields_ = [("left", wintypes.LONG), ("top", wintypes.LONG),
                 ("right", wintypes.LONG), ("bottom", wintypes.LONG)]
+
+
+user32.MoveWindow.argtypes = [
+    wintypes.HWND,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.BOOL,
+]
+user32.MoveWindow.restype = wintypes.BOOL
 
 
 def _enviar(*entradas: INPUT) -> None:
@@ -366,9 +380,35 @@ def trazer_para_frente(titulo_parcial: str | None = None,
     # ele faz o oposto do nome: devolve ao tamanho pequeno anterior — e aí
     # todas as coordenadas calibradas passam a cair no lugar errado.
     if user32.IsIconic(hwnd):
-        user32.ShowWindow(hwnd, 9)      # SW_RESTORE
+        user32.ShowWindow(hwnd, SW_RESTORE)
         time.sleep(0.3)
 
+    return _forcar_foreground(hwnd)
+
+
+def posicionar_janela(titulo_parcial: str | None = None,
+                      executavel: str | None = None,
+                      retangulo: tuple[int, int, int, int] | None = None) -> bool:
+    """Move a janela para a area calibrada, antes de maximizar.
+
+    O Edge costuma reabrir no ultimo monitor usado. Para o robo cego isso
+    importa: a calibragem pertence a um monitor/proporcao especificos.
+    """
+    hwnd = achar_janela(titulo_parcial, executavel)
+    if hwnd is None or retangulo is None:
+        return False
+
+    x, y, largura, altura = retangulo
+    if largura <= 0 or altura <= 0:
+        return False
+
+    if user32.IsIconic(hwnd) or user32.IsZoomed(hwnd):
+        user32.ShowWindow(hwnd, SW_RESTORE)
+        time.sleep(0.3)
+
+    if not user32.MoveWindow(hwnd, int(x), int(y), int(largura), int(altura), True):
+        return False
+    time.sleep(0.3)
     return _forcar_foreground(hwnd)
 
 
@@ -378,7 +418,7 @@ def maximizar(titulo_parcial: str | None = None,
     hwnd = achar_janela(titulo_parcial, executavel)
     if hwnd is None:
         return False
-    user32.ShowWindow(hwnd, 3)          # SW_MAXIMIZE
+    user32.ShowWindow(hwnd, SW_MAXIMIZE)
     time.sleep(0.6)
     return _forcar_foreground(hwnd)
 

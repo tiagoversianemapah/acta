@@ -7,15 +7,19 @@ verificados aqui — dependem de tela, janela e de ninguém encostar no mouse.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from cnd.adapters import rfb_cego
 from cnd.adapters.rfb_cego import (
+    AdapterRFBCego,
     Calibragem,
     CalibragemAusente,
     _ponto_fracionario,
     _tem_veu_modal,
 )
+from cnd.core.modelos import Desfecho, ResultadoTentativa
 from cnd.infra import tela
 
 BRANCO = (255, 255, 255)
@@ -169,3 +173,121 @@ class TestValidacaoDaCalibragem:
         dados = json.loads(caminho.read_text(encoding="utf-8"))
         assert dados["pontos"]["campo_cnpj"] == [0.25, 0.5]
         assert dados["janela"] == list(JANELA)
+
+
+class TestJanelaDoEdge:
+    def test_abertura_reposiciona_no_retangulo_calibrado(self, monkeypatch, tmp_path):
+        cal = _calibragem()
+        adapter = AdapterRFBCego("RFB_PJ", object(), tmp_path,
+                                 tmp_path / "rfb_cego.json", cal)
+        chamadas = []
+        popen_args = []
+
+        monkeypatch.setattr(adapter, "encerrar",
+                            lambda: chamadas.append("encerrar"))
+        monkeypatch.setattr(rfb_cego, "_achar_edge", lambda: "msedge.exe")
+        monkeypatch.setattr(rfb_cego.subprocess, "Popen",
+                            lambda args: popen_args.append(args))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "posicionar_janela",
+            lambda _titulo, _exe, retangulo: chamadas.append(
+                ("posicionar", retangulo)) or True,
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "maximizar",
+            lambda _titulo, _exe: chamadas.append("maximizar") or True,
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "retangulo_janela",
+            lambda _titulo, _exe: cal.janela,
+        )
+
+        adapter._abrir_navegador()
+
+        assert "--new-window" in popen_args[0]
+        assert ("posicionar", cal.janela) in chamadas
+        assert chamadas.index(("posicionar", cal.janela)) < chamadas.index("maximizar")
+
+    def test_focar_reposiciona_janela_desalinhada(self, monkeypatch, tmp_path):
+        cal = _calibragem()
+        adapter = AdapterRFBCego("RFB_PJ", object(), tmp_path,
+                                 tmp_path / "rfb_cego.json", cal)
+        chamadas = []
+        janela_errada = (-1374, 515, 1382, 736)
+
+        monkeypatch.setattr(
+            rfb_cego.entrada_real, "achar_janela", lambda _titulo, _exe: 1)
+        monkeypatch.setattr(
+            rfb_cego.entrada_real, "garantir_em_primeiro_plano",
+            lambda _titulo, _exe: True,
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real, "retangulo_janela",
+            lambda _titulo, _exe: janela_errada,
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "posicionar_janela",
+            lambda _titulo, _exe, retangulo: chamadas.append(
+                ("posicionar", retangulo)) or True,
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "maximizar",
+            lambda _titulo, _exe: chamadas.append("maximizar") or True,
+        )
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        adapter._focar()
+
+        assert chamadas == [("posicionar", cal.janela), "maximizar"]
+
+    def test_pdf_do_cego_usa_leitor_sem_playwright(self, monkeypatch, tmp_path):
+        baixado = tmp_path / "baixado.pdf"
+        baixado.write_bytes(b"%PDF")
+        cfg = SimpleNamespace(pasta_certidoes=tmp_path / "certidoes")
+        doc = SimpleNamespace(lote_id=1, documento="12345678000199", nome="EMPRESA")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        chamadas = []
+
+        def leitor(caminho, texto):
+            chamadas.append((caminho, texto))
+            return ResultadoTentativa(Desfecho.NEGATIVA, caminho_pdf=caminho)
+
+        monkeypatch.setattr(rfb_cego, "ler_pdf", leitor)
+
+        resultado = adapter._ler_pdf(baixado, doc)
+
+        assert resultado.desfecho == Desfecho.NEGATIVA
+        assert chamadas[0][1] == "PDF baixado (adapter cego)"
+        assert chamadas[0][0].exists()
+        assert not baixado.exists()
+
+
+class TestFaixaDeAlertaDoPortal:
+    def test_diagnostico_varre_faixa_vermelha_mesmo_fora_do_ponto_calibrado(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        ponto_vermelho = adapter._pontos_da_faixa_alerta()[2]
+
+        def cor_media(_imagem, x, y, raio=10):
+            return VERMELHO_ERRO if (x, y) == ponto_vermelho else BRANCO
+
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", cor_media)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO

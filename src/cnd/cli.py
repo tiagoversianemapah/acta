@@ -72,7 +72,13 @@ def _painel(args) -> int:
     if args.host != "127.0.0.1":
         print(f"  Painel acessível pela rede em http://{args.host}:{args.porta}")
         print("  Outras máquinas e o aplicativo vão consultar este endereço.")
-    uvicorn.run("cnd.web.app:app", host=args.host, port=args.porta, log_level="warning")
+    # O app vai como OBJETO, não como "cnd.web.app:app". Com o nome em
+    # texto, o empacotador não enxerga a dependência e deixa o módulo de
+    # fora — o executável sobe e morre em "Could not import module".
+    from cnd.web.app import app as aplicacao
+
+    uvicorn.run(aplicacao, host=args.host, port=args.porta,
+                log_level="warning")
     return 0
 
 

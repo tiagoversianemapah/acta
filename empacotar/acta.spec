@@ -38,6 +38,9 @@ ocultos = ctk_ocultos + [
     # tem como enxergar isso lendo o código.
     "cnd.adapters.rfb_cego",
     "cnd.adapters.fake",
+    # Cinto e suspensório: o painel também é alcançado por nome em alguns
+    # caminhos, e sem ele o executável sobe e morre ao abrir o servidor.
+    "cnd.web.app",
     # O uvicorn monta o servidor por nome de módulo, pelo mesmo motivo.
     "uvicorn.logging",
     "uvicorn.loops.auto",

@@ -1,6 +1,8 @@
 """Acesso remoto e identificação das máquinas."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from cnd.desktop import acesso
@@ -12,6 +14,7 @@ def test_normaliza_o_numero_como_o_anydesk_mostra():
     # O AnyDesk exibe "123 456 789" e é assim que a pessoa copia.
     assert acesso.normalizar("123 456 789") == "123456789"
     assert acesso.normalizar("  123456789 ") == "123456789"
+    assert acesso.normalizar("1681470186") == "1681470186"
 
 
 def test_apelido_passa_inteiro():
@@ -22,6 +25,36 @@ def test_apelido_passa_inteiro():
 def test_sem_numero_a_mensagem_explica_o_que_fazer():
     with pytest.raises(RuntimeError, match="não tem o número do AnyDesk"):
         acesso.abrir("   ")
+
+
+def test_abrir_chama_o_executavel_quando_ele_existe(monkeypatch):
+    chamadas = []
+    caminho = Path(r"C:\Program Files\AnyDesk\AnyDesk.exe")
+    monkeypatch.setattr(acesso, "encontrar_anydesk", lambda: caminho)
+    monkeypatch.setattr(acesso.subprocess, "Popen", chamadas.append)
+
+    acesso.abrir("1 681 470 186")
+
+    assert chamadas == [[str(caminho), "1681470186"]]
+
+
+def test_sem_executavel_e_sem_protocolo_mostra_mensagem_clara(monkeypatch):
+    monkeypatch.setattr(acesso, "encontrar_anydesk", lambda: None)
+    monkeypatch.setattr(acesso, "_protocolo_anydesk_registrado", lambda: False)
+
+    with pytest.raises(RuntimeError, match="AnyDesk não foi encontrado"):
+        acesso.abrir("1681470186")
+
+
+def test_fallback_usa_protocolo_quando_ele_existe(monkeypatch):
+    chamadas = []
+    monkeypatch.setattr(acesso, "encontrar_anydesk", lambda: None)
+    monkeypatch.setattr(acesso, "_protocolo_anydesk_registrado", lambda: True)
+    monkeypatch.setattr(acesso.os, "startfile", chamadas.append)
+
+    acesso.abrir("1681470186")
+
+    assert chamadas == ["anydesk:1681470186"]
 
 
 def test_cartao_mostra_o_orgao_e_o_computador():
