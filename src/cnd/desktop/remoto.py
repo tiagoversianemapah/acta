@@ -23,6 +23,7 @@ from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
 
+from cnd.core import tempo
 from cnd.infra.config import Config, Maquina, nome_do_orgao
 
 TEMPO_LIMITE_S = 6
@@ -94,6 +95,16 @@ class EstadoRemoto:
     def atividade(self) -> list[dict]:
         """As últimas consultas daquela máquina, da mais recente para trás."""
         return self.dados.get("atividade", [])
+
+    @property
+    def lido_em(self) -> str:
+        """Quando esta leitura chegou — só interessa se a máquina caiu."""
+        return self.dados.get("lido_em", "")
+
+    @property
+    def tem_memoria(self) -> bool:
+        """Se há dado antigo para mostrar de uma máquina que não responde."""
+        return not self.online and bool(self.dados)
 
     @property
     def meses(self) -> list[str]:
@@ -211,18 +222,49 @@ def _pedir(maquina: Maquina, rota: str, senha: str, parametros: str = "") -> obj
 
 
 def consultar(maquina: Maquina, senha: str = "") -> EstadoRemoto:
-    """Pergunta o panorama a uma máquina. Nunca levanta exceção."""
+    """Pergunta o panorama a uma máquina. Nunca levanta exceção.
+
+    Máquina muda devolve o ÚLTIMO ESTADO CONHECIDO, marcado como antigo. A
+    versão anterior devolvia um cartão vazio — justo quando se mais quer
+    saber dela. Saber que às 17h22 ela estava em 1.204 de 2.849 orienta
+    quem vai decidir se espera ou vai lá; nada nenhum não orienta.
+    """
     try:
-        return EstadoRemoto(maquina, online=True,
-                            dados=_pedir(maquina, "/api/estado", senha))
+        dados = _pedir(maquina, "/api/estado", senha)
+        _guardar(maquina, dados)
+        return EstadoRemoto(maquina, online=True, dados=dados)
     except urllib.error.HTTPError as erro:
         motivo = ("senha da rede recusada" if erro.code == 401
                   else f"a máquina respondeu {erro.code}")
-        return EstadoRemoto(maquina, erro=motivo)
     except urllib.error.URLError as erro:
-        return EstadoRemoto(maquina, erro=f"não respondeu ({erro.reason})")
+        motivo = f"não respondeu ({erro.reason})"
     except Exception as erro:
-        return EstadoRemoto(maquina, erro=f"{type(erro).__name__}: {erro}")
+        motivo = f"{type(erro).__name__}: {erro}"
+    return EstadoRemoto(maquina, erro=motivo, dados=_lembrar(maquina))
+
+
+def _arquivo_de_memoria(maquina: Maquina) -> Path:
+    from cnd.infra.db import RAIZ_PROJETO
+
+    seguro = "".join(c if c.isalnum() else "_" for c in maquina.base)
+    return RAIZ_PROJETO / "data" / "ultimo_estado" / f"{seguro}.json"
+
+
+def _guardar(maquina: Maquina, dados: dict) -> None:
+    """Anota a resposta boa, com a hora em que chegou."""
+    with contextlib.suppress(Exception):
+        arquivo = _arquivo_de_memoria(maquina)
+        arquivo.parent.mkdir(parents=True, exist_ok=True)
+        arquivo.write_text(json.dumps({**dados, "lido_em": tempo.agora_iso()}),
+                           encoding="utf-8")
+
+
+def _lembrar(maquina: Maquina) -> dict:
+    """O que ela disse por último, ou vazio se nunca respondeu."""
+    with contextlib.suppress(Exception):
+        return json.loads(_arquivo_de_memoria(maquina).read_text(
+            encoding="utf-8"))
+    return {}
 
 
 def consultar_local(cfg: Config) -> EstadoRemoto:
@@ -309,6 +351,16 @@ def listar_itens(maquina: Maquina, senha: str = "",
         return resultado if isinstance(resultado, list) else None
     except Exception:
         return None
+
+
+def tentativas_do_job(maquina: Maquina, senha: str,
+                      job_id: int) -> list[dict]:
+    """O histórico daquele item, buscado na máquina que o processou."""
+    try:
+        resultado = _pedir(maquina, f"/api/tentativas/{job_id}", senha)
+        return resultado if isinstance(resultado, list) else []
+    except Exception:
+        return []
 
 
 @dataclass

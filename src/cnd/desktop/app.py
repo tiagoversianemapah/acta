@@ -21,6 +21,7 @@ import tempfile
 import threading
 import time
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from tkinter import TclError, filedialog, messagebox, simpledialog, ttk
 from typing import ClassVar
@@ -80,6 +81,9 @@ ICONE_MAQUINA = ""
 ICONE_BAIXAR = ""
 TODOS_OS_MESES = "Todos os meses"
 ESTA_MAQUINA = "Esta máquina"
+# Nasce aqui: quem procura uma empresa raramente sabe em qual máquina ela
+# está. Escolher a máquina é refinamento, não pré-requisito da busca.
+TODAS_AS_MAQUINAS = "Todas as máquinas"
 TODAS_AS_PLANILHAS = "Todas as planilhas"
 
 # As colunas da tela de M\u00e1quinas, numa defini\u00e7\u00e3o s\u00f3: (t\u00edtulo, peso, largura
@@ -239,7 +243,14 @@ def _detalhe_da_situacao(estado) -> str:
     dois lotes ou um incidente de quatro horas que ninguém viu.
     """
     if not estado.online:
-        return f"{estado.erro or 'sem resposta'} · último dado desconhecido"
+        if estado.tem_memoria:
+            # O que se sabia antes de ela emudecer orienta a decisão de
+            # esperar ou ir até lá; cartão vazio não orienta nada.
+            return (f"{estado.erro or 'sem resposta'}\n"
+                    f"último dado às {Aplicativo._hora(estado.lido_em)[:5]}: "
+                    f"{_numero(estado.concluidos)} de "
+                    f"{_numero(estado.total)}")
+        return f"{estado.erro or 'sem resposta'} · sem dado anterior"
 
     if estado.suspensa:
         return "o portal recusou várias consultas · retoma sozinho"
@@ -1640,7 +1651,7 @@ class Aplicativo(ctk.CTk):
         # A máquina manda em tudo o mais: sem escolher de quem é a lista,
         # não há o que listar. Antes esta tela lia o banco DESTE
         # computador — que no console está vazio, e você nunca veria nada.
-        self.filtro_maquina = seletor([ESTA_MAQUINA], 190,
+        self.filtro_maquina = seletor([TODAS_AS_MAQUINAS], 190,
                                       ao_mudar=self._trocar_de_maquina)
         self.filtro_maquina.moldura.grid(row=0, column=3, padx=(0, 8))
 
@@ -1676,7 +1687,7 @@ class Aplicativo(ctk.CTk):
         self.tabela = ttk.Treeview(
             moldura, style="Acta.Treeview", show="tree headings",
             selectmode="browse",
-            columns=("empresa", "documento", "mes", "resultado"),
+            columns=("empresa", "documento", "maquina", "mes", "resultado"),
         )
         self.tabela.column("#0", width=34, minwidth=34, stretch=False)
         self.tabela.heading("#0", text="")
@@ -1687,6 +1698,9 @@ class Aplicativo(ctk.CTk):
         for chave, titulo, largura, minimo in (
             ("empresa", "EMPRESA", 380, 240),
             ("documento", "DOCUMENTO", 200, 190),
+            # Buscando em todas as máquinas, saber DE ONDE veio a linha é
+            # metade da resposta: é a máquina em que se vai mexer.
+            ("maquina", "MÁQUINA", 180, 150),
             # A mesma empresa reaparece a cada mês com resultado próprio;
             # sem esta coluna, as repetições parecem duplicidade.
             ("mes", "MÊS", 140, 130),
@@ -1716,22 +1730,31 @@ class Aplicativo(ctk.CTk):
     def _abrir_detalhe_do_item(self, _evento=None) -> None:
         """Mostra as tentativas daquele item e o que o portal respondeu."""
         selecionado = self.tabela.focus()
-        if not selecionado or not selecionado.isdigit():
-            return
+        origem, _, job = selecionado.partition("#")
+        if not job.isdigit():
+            return  # linha de recado ("nada encontrado"), não é item
 
         valores = self.tabela.item(selecionado)["values"]
         titulo = str(valores[0]) if valores else "Item"
+        # O histórico está gravado na máquina que fez a tentativa; buscá-lo
+        # aqui devolveria o job errado ou nenhum.
+        dona = next((m for m in self.cfg.rede.maquinas
+                     if (m.orgao or m.nome) == origem), None)
 
         def trabalho():
-            from cnd.infra.db import conectar_leitura
-            from cnd.web.consultas import tentativas_do_job
+            if dona is not None:
+                tentativas = remoto.tentativas_do_job(
+                    dona, self.cfg.rede.senha, int(job))
+            else:
+                from cnd.infra.db import conectar_leitura
+                from cnd.web.consultas import tentativas_do_job
 
-            conn = conectar_leitura(self.cfg.banco)
-            try:
-                tentativas = [dict(linha) for linha in
-                              tentativas_do_job(conn, int(selecionado))]
-            finally:
-                conn.close()
+                conn = conectar_leitura(self.cfg.banco)
+                try:
+                    tentativas = [dict(linha) for linha in
+                                  tentativas_do_job(conn, int(job))]
+                finally:
+                    conn.close()
             self.after(0, lambda: self._mostrar_detalhe(titulo, valores,
                                                         tentativas))
 
@@ -2064,14 +2087,25 @@ class Aplicativo(ctk.CTk):
 
     def _atualizar_filtros_de_itens(self) -> None:
         """Mantém as listas de máquina e de planilha em dia."""
-        maquinas = [ESTA_MAQUINA] if self.cfg.rede.roda_robo else []
+        maquinas = [TODAS_AS_MAQUINAS]
+        if self.cfg.rede.roda_robo:
+            maquinas.append(ESTA_MAQUINA)
         maquinas += [m.orgao or m.nome for m in self.cfg.rede.maquinas]
-        if maquinas and maquinas != self._maquinas_no_filtro:
+        if maquinas != self._maquinas_no_filtro:
             self._maquinas_no_filtro = maquinas
             atual = self.filtro_maquina.get()
             self.filtro_maquina.configure(values=maquinas)
             if atual not in maquinas:
                 self.filtro_maquina.set(maquinas[0])
+
+        if self.filtro_maquina.get() == TODAS_AS_MAQUINAS:
+            # Lote é numeração interna de cada máquina: o lote 3 de uma não
+            # é o da outra. Filtrar por ele com todas juntas misturaria
+            # planilhas sem relação nenhuma.
+            self._lotes_da_maquina = {}
+            self.filtro_planilha.configure(values=[TODAS_AS_PLANILHAS])
+            self.filtro_planilha.set(TODAS_AS_PLANILHAS)
+            return
 
         if self._lotes_da_maquina:
             return
@@ -2454,7 +2488,6 @@ class Aplicativo(ctk.CTk):
 
     def _recarregar_itens(self) -> None:
         self._atualizar_filtros_de_itens()
-        maquina = self._maquina_escolhida()
         rotulo = self.filtro_planilha.get()
         filtros = {
             "status": SITUACOES.get(self.filtro_situacao.get()),
@@ -2463,48 +2496,90 @@ class Aplicativo(ctk.CTk):
             "lote": self._lotes_da_maquina.get(rotulo),
             "limite": LIMITE_DE_ITENS,
         }
-
-        if maquina is None:
-            itens = listar_itens(self.cfg, **filtros)
-        else:
-            itens = remoto.listar_itens(maquina, self.cfg.rede.senha, **filtros)
-            if itens is None:
-                # Lista vazia e "não respondeu" são coisas diferentes:
-                # confundi-las faz a tela mentir justamente quando a máquina
-                # caiu.
-                self.tabela.delete(*self.tabela.get_children())
-                self.contador.configure(text="")
-                self.tabela.insert(
-                    "", "end", tags=("par",),
-                    values=(f"{self.filtro_maquina.get()} não respondeu",
-                            "", "", ""))
-                return
+        itens, mudas = self._buscar_itens(filtros)
 
         self.tabela.delete(*self.tabela.get_children())
-        self.contador.configure(
-            text=f"{len(itens)} item(ns)"
-                 + (" (máximo)" if len(itens) >= LIMITE_DE_ITENS else ""))
+        if itens is None:
+            self.contador.configure(text="")
+            self.tabela.insert(
+                "", "end", tags=("par",),
+                values=(f"{self.filtro_maquina.get()} não respondeu",
+                        "", "", "", ""))
+            return
+
+        recado = f"{len(itens)} item(ns)"
+        if len(itens) >= LIMITE_DE_ITENS:
+            recado += " (máximo)"
+        if mudas:
+            # Silenciar isto faria a tela dizer "nada encontrado" quando na
+            # verdade metade das máquinas nem foi perguntada.
+            recado += f" · sem resposta de {', '.join(mudas)}"
+        self.contador.configure(text=recado)
 
         if not itens:
             # Tabela vazia sem explicação parece tela quebrada.
             self.tabela.insert("", "end", tags=("par",),
                                values=("Nenhum item com esses filtros",
-                                       "", "", ""))
+                                       "", "", "", ""))
             return
 
         for indice, item in enumerate(itens):
             rotulo, cor = ROTULOS_DE_RESULTADO.get(
                 item["desfecho"], (SITUACAO_SEM_RESULTADO.get(item["status"], "—"),
                                    marca.TEXTO_3))
-            # O id do job vira o iid da linha: é o que permite abrir o
-            # detalhe no clique sem reconsultar a lista inteira.
+            # O iid junta origem e id do job: dois jobs de máquinas
+            # diferentes podem ter o mesmo id, e o Tk recusa iid repetido.
             self.tabela.insert(
-                "", "end", iid=str(item["id"]), image=self._ponto(cor),
+                "", "end", iid=f"{item.get('origem', '')}#{item['id']}",
+                image=self._ponto(cor),
                 tags=("impar" if indice % 2 else "par",),
                 values=(item["nome"], formatar(item["documento"]),
+                        item.get("origem", ""),
                         _mes_por_extenso((item["atualizado_em"] or "")[:7]),
                         rotulo),
             )
+
+    def _buscar_itens(self, filtros: dict):
+        """Os itens pedidos e os nomes das máquinas que não responderam.
+
+        Devolve (None, []) quando a única máquina perguntada emudeceu —
+        lista vazia e "não respondeu" são coisas diferentes, e confundi-las
+        faz a tela mentir justamente quando a máquina caiu.
+        """
+        escolha = self.filtro_maquina.get()
+        if escolha != TODAS_AS_MAQUINAS:
+            maquina = self._maquina_escolhida()
+            if maquina is None:
+                return [dict(i, origem=ESTA_MAQUINA)
+                        for i in listar_itens(self.cfg, **filtros)], []
+            itens = remoto.listar_itens(maquina, self.cfg.rede.senha, **filtros)
+            if itens is None:
+                return None, []
+            return [dict(i, origem=escolha) for i in itens], []
+
+        # Todas de uma vez: quem procura "a Fulana Ltda" não sabe de
+        # antemão em qual máquina ela está — obrigar a adivinhar antes de
+        # buscar é pedir a resposta como pergunta.
+        itens: list[dict] = []
+        mudas: list[str] = []
+        if self.cfg.rede.roda_robo:
+            itens += [dict(i, origem=ESTA_MAQUINA)
+                      for i in listar_itens(self.cfg, **filtros)]
+        with ThreadPoolExecutor(max_workers=8) as piscina:
+            respostas = piscina.map(
+                lambda m: (m, remoto.listar_itens(
+                    m, self.cfg.rede.senha, **filtros)),
+                self.cfg.rede.maquinas)
+            for maquina, resposta in respostas:
+                nome = maquina.orgao or maquina.nome
+                if resposta is None:
+                    mudas.append(nome)
+                    continue
+                itens += [dict(i, origem=nome) for i in resposta]
+
+        # Mais recente primeiro, como em cada máquina isolada.
+        itens.sort(key=lambda i: i["atualizado_em"] or "", reverse=True)
+        return itens[:LIMITE_DE_ITENS], mudas
 
     # ------------------------------------------------------------------
     def _ao_fechar(self) -> None:
