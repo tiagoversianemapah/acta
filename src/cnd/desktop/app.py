@@ -391,6 +391,7 @@ class Aplicativo(ctk.CTk):
         self._orgaos_no_filtro: list[str] = []
         self._maquinas_no_filtro: list[str] = []
         self._lotes_da_maquina: dict[str, int] = {}
+        self._busca_em_curso = None
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self.geometry("1360x820")
@@ -1060,7 +1061,7 @@ class Aplicativo(ctk.CTk):
         saude = estado.saude
 
         if not saude:
-            ctk.CTkLabel(caixa, text="último dado desconhecido",
+            ctk.CTkLabel(caixa, text="sem dado anterior",
                          font=(FONTE, 11), text_color=marca.TEXTO_3,
                          anchor="w").grid(row=0, column=0, sticky="w")
             return caixa
@@ -2086,7 +2087,11 @@ class Aplicativo(ctk.CTk):
         messagebox.showinfo("Pacote salvo", "\n".join(corpo))
 
     def _atualizar_filtros_de_itens(self) -> None:
-        """Mantém as listas de máquina e de planilha em dia."""
+        """Mantém as listas de máquina e de planilha em dia.
+
+        Só mexe no que já se sabe sem perguntar a ninguém: rodar na thread
+        da janela é o que permite que ela continue respondendo.
+        """
         maquinas = [TODAS_AS_MAQUINAS]
         if self.cfg.rede.roda_robo:
             maquinas.append(ESTA_MAQUINA)
@@ -2105,24 +2110,22 @@ class Aplicativo(ctk.CTk):
             self._lotes_da_maquina = {}
             self.filtro_planilha.configure(values=[TODAS_AS_PLANILHAS])
             self.filtro_planilha.set(TODAS_AS_PLANILHAS)
-            return
 
-        if self._lotes_da_maquina:
-            return
-        self._lotes_da_maquina = self._planilhas_da_maquina()
-        valores = [*self._lotes_da_maquina, TODAS_AS_PLANILHAS]
+    def _mostrar_planilhas(self, planilhas: dict[str, int]) -> None:
+        """Preenche o filtro de planilha com o que o trabalho de fundo achou."""
+        self._lotes_da_maquina = planilhas
+        valores = [*planilhas, TODAS_AS_PLANILHAS]
         self.filtro_planilha.configure(values=valores)
         # Nasce na mais recente: é quase sempre a que se acabou de mandar.
         self.filtro_planilha.set(valores[0])
 
-    def _planilhas_da_maquina(self) -> dict[str, int]:
+    def _planilhas_da_maquina(self, maquina=None) -> dict[str, int]:
         """As planilhas enviadas àquela máquina, da mais nova para a antiga.
 
         O rótulo traz nome, data e tamanho porque é assim que você lembra
         do envio — "CND_MIA_0726.xlsx, 10/08, 2.829 itens" diz mais do que
         um número de lote, que não significa nada fora da máquina.
         """
-        maquina = self._maquina_escolhida()
         if maquina is None:
             from cnd.infra.db import conectar_leitura
             from cnd.web.consultas import lotes as ler_lotes
@@ -2487,7 +2490,15 @@ class Aplicativo(ctk.CTk):
                      if (m.orgao or m.nome) == escolhido), None)
 
     def _recarregar_itens(self) -> None:
+        """Dispara a busca; a janela continua respondendo enquanto ela corre.
+
+        Toda a rede acontece fora da thread da janela. Feito aqui dentro,
+        uma máquina desligada segurava a interface pelos seis segundos do
+        tempo limite — e o Windows a marcava como "não está respondendo".
+        """
         self._atualizar_filtros_de_itens()
+        escolha = self.filtro_maquina.get()
+        maquina = self._maquina_escolhida()
         rotulo = self.filtro_planilha.get()
         filtros = {
             "status": SITUACOES.get(self.filtro_situacao.get()),
@@ -2496,7 +2507,30 @@ class Aplicativo(ctk.CTk):
             "lote": self._lotes_da_maquina.get(rotulo),
             "limite": LIMITE_DE_ITENS,
         }
-        itens, mudas = self._buscar_itens(filtros)
+        # Cada busca leva uma senha. Se você digitar de novo antes de a
+        # anterior voltar, a resposta velha chega e é descartada — senão
+        # ela sobrescreveria a nova, mostrando o resultado de outra busca.
+        self._busca_em_curso = senha = object()
+        faltam_planilhas = (escolha != TODAS_AS_MAQUINAS
+                            and not self._lotes_da_maquina)
+        self.contador.configure(text="procurando…")
+
+        def trabalho():
+            achados = self._buscar_itens(filtros, escolha, maquina)
+            planilhas = (self._planilhas_da_maquina(maquina)
+                         if faltam_planilhas else None)
+            self.after(0, lambda: self._mostrar_itens(senha, achados,
+                                                      planilhas))
+
+        self._em_segundo_plano(trabalho, "consultar os itens")
+
+    def _mostrar_itens(self, senha, achados, planilhas) -> None:
+        """Pinta na tela o que a busca trouxe — já de volta na thread dela."""
+        if senha is not self._busca_em_curso:
+            return  # resposta de uma busca que você já abandonou
+        if planilhas is not None:
+            self._mostrar_planilhas(planilhas)
+        itens, mudas = achados
 
         self.tabela.delete(*self.tabela.get_children())
         if itens is None:
@@ -2539,16 +2573,17 @@ class Aplicativo(ctk.CTk):
                         rotulo),
             )
 
-    def _buscar_itens(self, filtros: dict):
+    def _buscar_itens(self, filtros: dict, escolha: str, maquina=None):
         """Os itens pedidos e os nomes das máquinas que não responderam.
+
+        Roda fora da thread da janela: recebe a escolha já lida em vez de
+        consultar os widgets, que não podem ser tocados de outra thread.
 
         Devolve (None, []) quando a única máquina perguntada emudeceu —
         lista vazia e "não respondeu" são coisas diferentes, e confundi-las
         faz a tela mentir justamente quando a máquina caiu.
         """
-        escolha = self.filtro_maquina.get()
         if escolha != TODAS_AS_MAQUINAS:
-            maquina = self._maquina_escolhida()
             if maquina is None:
                 return [dict(i, origem=ESTA_MAQUINA)
                         for i in listar_itens(self.cfg, **filtros)], []

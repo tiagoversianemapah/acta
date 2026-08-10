@@ -1,4 +1,4 @@
-"""Consultar itens busca em todas as máquinas por padrão.
+﻿"""Consultar itens busca em todas as máquinas por padrão.
 
 Quem liga perguntando "o que houve com a Fulana Ltda" não sabe em qual
 máquina ela está — obrigar a escolher a máquina antes de procurar é pedir
@@ -6,6 +6,8 @@ a resposta como pergunta.
 """
 from __future__ import annotations
 
+import threading
+import time
 from dataclasses import replace
 
 import pytest
@@ -63,7 +65,7 @@ def test_busca_junta_as_duas_e_diz_de_onde_veio(duas_maquinas, monkeypatch):
 
     monkeypatch.setattr(tela.remoto, "listar_itens", responder)
 
-    itens, mudas = duas_maquinas._buscar_itens({})
+    itens, mudas = duas_maquinas._buscar_itens({}, TODAS_AS_MAQUINAS)
 
     assert mudas == []
     assert {(i["nome"], i["origem"]) for i in itens} == {
@@ -79,7 +81,7 @@ def test_maquina_muda_nao_apaga_o_resultado_das_outras(duas_maquinas,
         tela.remoto, "listar_itens",
         lambda m, _s, **_f: [_item(1, "Fulana Ltda")] if m is FEDERAL else None)
 
-    itens, mudas = duas_maquinas._buscar_itens({})
+    itens, mudas = duas_maquinas._buscar_itens({}, TODAS_AS_MAQUINAS)
 
     assert [i["nome"] for i in itens] == ["Fulana Ltda"]
     assert mudas == ["SEFAZ GOIÁS"], "a máquina calada tem de ser nomeada"
@@ -92,7 +94,7 @@ def test_maquina_unica_muda_devolve_none_e_nao_lista_vazia(duas_maquinas,
     duas_maquinas.filtro_maquina.set("RECEITA FEDERAL")
     monkeypatch.setattr(tela.remoto, "listar_itens", lambda *a, **k: None)
 
-    itens, _ = duas_maquinas._buscar_itens({})
+    itens, _ = duas_maquinas._buscar_itens({}, "RECEITA FEDERAL", FEDERAL)
 
     assert itens is None
 
@@ -104,7 +106,7 @@ def test_o_banco_local_entra_quando_esta_maquina_roda_robo(janela, monkeypatch):
     monkeypatch.setattr(tela, "listar_itens",
                         lambda _cfg, **_f: [_item(7, "Daqui SA")])
 
-    itens, mudas = janela._buscar_itens({})
+    itens, mudas = janela._buscar_itens({}, TODAS_AS_MAQUINAS)
 
     assert [(i["nome"], i["origem"]) for i in itens] == [("Daqui SA",
                                                           ESTA_MAQUINA)]
@@ -117,9 +119,41 @@ def test_mais_recente_primeiro(duas_maquinas, monkeypatch):
         lambda m, _s, **_f: [_item(1, "Velha", "2026-01-02T09:00:00")]
         if m is FEDERAL else [_item(2, "Nova", "2026-08-09T09:00:00")])
 
-    itens, _ = duas_maquinas._buscar_itens({})
+    itens, _ = duas_maquinas._buscar_itens({}, TODAS_AS_MAQUINAS)
 
     assert [i["nome"] for i in itens] == ["Nova", "Velha"]
+
+
+def test_a_janela_nao_espera_a_rede(duas_maquinas, monkeypatch):
+    """Máquina desligada segurava a interface pelos 6s do tempo limite, e o
+    Windows a marcava como "não está respondendo". A busca tem de sair da
+    thread da janela e voltar por ela."""
+    demorou = threading.Event()
+
+    def lenta(*_a, **_k):
+        demorou.wait(2)
+        return []
+
+    monkeypatch.setattr(tela.remoto, "listar_itens", lenta)
+
+    comeco = time.monotonic()
+    duas_maquinas._recarregar_itens()
+    gasto = time.monotonic() - comeco
+
+    demorou.set()
+    assert gasto < 0.5, f"a chamada segurou a janela por {gasto:.1f}s"
+    assert duas_maquinas.contador.cget("text") == "procurando…"
+
+
+def test_resposta_atrasada_nao_sobrescreve_a_busca_nova(duas_maquinas):
+    """Digitando rápido, a resposta da busca velha chega depois da nova —
+    e não pode substituir na tela o resultado que você está lendo."""
+    velha = object()
+    duas_maquinas._busca_em_curso = object()      # já veio outra depois
+
+    duas_maquinas._mostrar_itens(velha, ([_item(1, "Fantasma")], []), None)
+
+    assert not duas_maquinas.tabela.get_children()
 
 
 def test_filtro_de_planilha_desliga_com_todas_as_maquinas(duas_maquinas):
