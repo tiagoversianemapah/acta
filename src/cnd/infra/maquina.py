@@ -238,7 +238,12 @@ def ler(caminho_dos_dados: Path | None = None) -> Saude:
         pass
 
     with contextlib.suppress(Exception):
-        ligada = ctypes.windll.kernel32.GetTickCount64() / 3_600_000
+        # O restype tem de ser declarado: sem isso o ctypes lê o retorno
+        # como int de 32 bits com sinal, e depois de 24,8 dias ligada a
+        # conta vira negativa — "ligada há -568 horas".
+        relogio = ctypes.windll.kernel32.GetTickCount64
+        relogio.restype = ctypes.c_ulonglong
+        ligada = relogio() / 3_600_000
 
     return Saude(nome=nome, ram_total_gb=ram_total, ram_usada_gb=ram_usada,
                  disco_total_gb=disco_total, disco_livre_gb=disco_livre,
