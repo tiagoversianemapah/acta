@@ -54,6 +54,14 @@ PONTOS_NECESSARIOS = ("campo_cnpj", "botao_emitir", "botao_emitir_nova",
                       "fundo_pagina", "faixa_alerta")
 
 TEMPO_CARREGAR_S = 6.0
+# Espera máxima pelo formulário. Era 4x o tempo de carregar (24s) e cada
+# item pagava os 24 inteiros, porque a detecção falhava sempre e o fluxo
+# seguia assim mesmo — 19 das 35 horas do lote eram esta espera. Não
+# adianta esperar mais por um critério que nunca passa: se ele falhar, o
+# passo seguinte confirma na prática, tentando digitar.
+TEMPO_FORMULARIO_S = 8.0
+# Brilho mínimo do campo de CNPJ para chamá-lo de "campo branco".
+BRILHO_DO_CAMPO = 200
 # O portal leva cerca de 12s para responder ao clique em emitir. Esperar
 # menos que isso fazia o robô desistir antes de a janelinha aparecer.
 TEMPO_REACAO_S = 45.0
@@ -386,7 +394,7 @@ class AdapterRFBCego:
             entrada_real.garantir_em_primeiro_plano(TITULO_JANELA,
                                                     EXECUTAVEL_NAVEGADOR)
 
-    def _esperar_formulario(self, segundos: float = TEMPO_CARREGAR_S * 4) -> bool:
+    def _esperar_formulario(self, segundos: float = TEMPO_FORMULARIO_S) -> bool:
         """Espera o formulário aparecer, em vez de dormir um tempo fixo.
 
         Antes havia uma espera cega de ~7 segundos depois de digitar a URL.
@@ -399,11 +407,12 @@ class AdapterRFBCego:
         """
         inicio = time.monotonic()
         limite = inicio + segundos
+        campo = botao = None
         while time.monotonic() < limite:
             imagem = tela.capturar()
             campo = tela.cor_media(imagem, *self._ponto("campo_cnpj"), raio=5)
             botao = tela.cor_media(imagem, *self._ponto("botao_emitir"), raio=5)
-            if tela.brilho(campo) > 200 and _parece_botao(botao):
+            if tela.brilho(campo) > BRILHO_DO_CAMPO and _parece_botao(botao):
                 log.info("formulario_pronto",
                          extra={"orgao": self.orgao,
                                 "em_s": round(time.monotonic() - inicio, 2)})
@@ -411,8 +420,18 @@ class AdapterRFBCego:
                 return True
             time.sleep(0.1)
 
+        # As cores medidas vão no log de propósito. Quando isto dispara em
+        # TODOS os itens e a emissão funciona logo depois, o formulário
+        # estava lá e quem errou foi o critério — sem os números medidos,
+        # não há como saber QUAL dos dois critérios falhou nem por quanto.
         log.warning("formulario_nao_apareceu",
-                    extra={"orgao": self.orgao, "esperou_s": segundos})
+                    extra={"orgao": self.orgao, "esperou_s": segundos,
+                           "campo": campo, "brilho_do_campo": (
+                               round(tela.brilho(campo), 1) if campo else None),
+                           "minimo_esperado": BRILHO_DO_CAMPO,
+                           "botao": botao,
+                           "botao_passou": _parece_botao(botao) if botao
+                           else None})
         return False
 
     def _aguardar_reacao(self, documento: str, aceitar_modal: bool = True,
