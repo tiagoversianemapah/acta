@@ -97,6 +97,24 @@ def _painel(args) -> int:
     return 0
 
 
+def _inicio_automatico(args) -> int:
+    """Liga ou desliga a subida do painel junto com o Windows."""
+    from cnd.infra import inicializacao
+
+    if args.remover:
+        if inicializacao.remover():
+            print("O painel não sobe mais sozinho.")
+        else:
+            print("Não estava instalado — nada a fazer.")
+        return 0
+
+    atalho = inicializacao.instalar()
+    print(f"Pronto. O painel vai subir sozinho a cada logon:\n  {atalho}")
+    print("\nVale a partir do próximo logon. Para valer agora, suba o painel")
+    print("uma vez à mão:  cnd painel --host 0.0.0.0")
+    return 0
+
+
 def _relatorio(args) -> int:
     from cnd.infra.db import conectar_leitura
     from cnd.web.relatorio import gerar
@@ -275,6 +293,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--porta", type=int, default=8000)
     p.set_defaults(func=_painel)
+
+    p = sub.add_parser("inicio-automatico",
+                       help="faz o painel subir sozinho junto com o Windows")
+    p.add_argument("--remover", action="store_true",
+                   help="desfaz: o painel volta a depender de subida à mão")
+    p.set_defaults(func=_inicio_automatico)
 
     p = sub.add_parser("relatorio", help="gera o Excel do mês")
     p.add_argument("--mes", default=None, help="ex.: 2026-08 (padrão: o mês corrente)")
