@@ -23,18 +23,32 @@ Fase 1: Receita Federal, pessoa jurídica — ~2.850 CNPJs por rodada.
 | Relatório Excel e pacote ZIP das certidões | ✅ |
 | Avisos no Microsoft Teams | ✅ em produção |
 | Adapter da Receita Federal — leitura do PDF | ✅ validada contra certidão real |
-| **Adapter da Receita Federal — emissão de ponta a ponta** | ⚠️ **nunca completou uma emissão real** |
+| **Adapter da Receita Federal — emissão de ponta a ponta** | ✅ **em produção desde 10/08/2026** |
 | Adapters CRF, RFB-PF e estaduais | ⬜ fases 2 a 4 |
 
-**O que falta para produção é uma coisa só:** rodar o adapter cego até o fim numa
-emissão de verdade. Todas as tentativas anteriores morreram em defeitos nossos,
-já corrigidos — nenhuma chegou a falhar por causa do portal.
+Em produção na máquina `PC Receita Federal 01`: 2.829 CNPJs importados,
+emissões saindo com zero falhas, PDFs conferidos contra certidão real.
+
+**Dois ajustes pendentes antes de soltar a fila inteira:**
+
+1. **A espera do formulário.** O aviso `formulario_nao_apareceu` dispara em
+   todos os itens e a emissão funciona logo depois — o formulário estava
+   lá e quem erra é o critério de detecção. A espera já caiu de 24s para
+   8s; o aviso agora registra as cores medidas, e uma rodada curta fecha o
+   critério de vez.
+2. **A tela "informações insuficientes"** (ex.: CNPJ 15.388.203/0001-74)
+   cai em `ERRO_TECNICO` e é retentada 3 vezes. É resposta definitiva do
+   portal, não falha: deve virar `PENDENCIA_MANUAL` na primeira vez.
+
+Para rodar um lote de teste, na máquina:
 
 ```powershell
-cnd rodar --limite 3 --forcar --reiniciar-ritmo
+cnd rodar --limite 5
 ```
 
-Precisa de alguém na frente da máquina: o robô assume o mouse e o teclado.
+A máquina precisa estar logada e destravada: o robô assume o mouse e o
+teclado de verdade. Não precisa de ninguém na frente dela — mas ninguém
+pode usá-la enquanto roda.
 
 ## Instalação
 
