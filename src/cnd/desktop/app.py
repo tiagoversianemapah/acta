@@ -80,6 +80,13 @@ ICONE_AJUDA = ""
 ICONE_MAQUINA = ""
 ICONE_BAIXAR = ""
 TODOS_OS_MESES = "Todos os meses"
+# Limites da janela. O máximo existe porque texto em linha muito larga
+# cansa de ler; o mínimo é onde as colunas ainda cabem sem cortar.
+MINIMO_L, MINIMO_A = 1100, 660
+MAXIMO_L, MAXIMO_A = 1600, 1000
+# Ícone, recuos e os dois botões da faixa de aviso: o que sobra é do texto.
+LARGURA_FORA_DO_AVISO = 330
+
 ESTA_MAQUINA = "Esta máquina"
 # Nasce aqui: quem procura uma empresa raramente sabe em qual máquina ela
 # está. Escolher a máquina é refinamento, não pré-requisito da busca.
@@ -394,8 +401,7 @@ class Aplicativo(ctk.CTk):
         self._busca_em_curso = None
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
-        self.geometry("1360x820")
-        self.minsize(1100, 660)
+        self._dimensionar_pela_tela()
         self._por_icone()
 
         self.grid_columnconfigure(1, weight=1)
@@ -723,6 +729,12 @@ class Aplicativo(ctk.CTk):
                                          anchor="w", justify="left",
                                          wraplength=620)
         self.rotulo_aviso.grid(row=0, column=1, sticky="w")
+        # A quebra do texto acompanha a largura: fixa em 620px, ela sobrava
+        # em monitor grande e cortava palavra em janela estreita.
+        self.faixa_aviso.bind(
+            "<Configure>",
+            lambda e: self.rotulo_aviso.configure(
+                wraplength=max(320, e.width - LARGURA_FORA_DO_AVISO)))
         acoes_aviso = ctk.CTkFrame(self.faixa_aviso, fg_color="transparent")
         acoes_aviso.grid(row=0, column=2, sticky="e", padx=(12, 14), pady=10)
         self._botao_secundario(acoes_aviso, "Ver os itens",
@@ -1494,6 +1506,35 @@ class Aplicativo(ctk.CTk):
                          text_color=cor, anchor="e").grid(row=indice, column=2,
                                                           sticky="e", padx=(12, 14))
         return painel
+
+    def _dimensionar_pela_tela(self) -> None:
+        """Abre proporcional ao monitor, centralizada, e nunca maior que ele.
+
+        O tamanho era fixo em 1360x820. Num monitor grande a janela nascia
+        pequena no canto; num notebook de 1366x768 ela nascia MAIOR que a
+        área útil, com a barra de baixo escondendo os botões — e o mínimo
+        de 1100x660 impedia a pessoa de encolher para caber.
+
+        Guarda-se uma largura máxima porque texto em linha larga demais
+        cansa de ler: passar de ~1600px não melhora nada, só afasta as
+        colunas uma da outra.
+        """
+        tela_l = self.winfo_screenwidth()
+        tela_a = self.winfo_screenheight()
+        # Desconta a barra de tarefas: sem isso a janela nasce com a base
+        # escondida atrás dela, justamente onde ficam os botões de ação.
+        util_a = int(tela_a * 0.92)
+
+        largura = max(MINIMO_L, min(int(tela_l * 0.80), MAXIMO_L))
+        altura = max(MINIMO_A, min(int(util_a * 0.92), MAXIMO_A))
+        # Em tela pequena o mínimo cede: melhor uma janela apertada que
+        # uma que não cabe e não deixa encolher.
+        largura, altura = min(largura, tela_l), min(altura, util_a)
+        self.minsize(min(MINIMO_L, largura), min(MINIMO_A, altura))
+
+        x = max(0, (tela_l - largura) // 2)
+        y = max(0, (util_a - altura) // 2)
+        self.geometry(f"{largura}x{altura}+{x}+{y}")
 
     @staticmethod
     def _hora(momento: str | None) -> str:
