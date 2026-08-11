@@ -2482,10 +2482,24 @@ class Aplicativo(ctk.CTk):
         # comanda o outro — e a pessoa baixa achando que levou tudo.
         alvo = ("todos os órgãos, um em cada pasta"
                 if escolhido == TODOS_OS_ORGAOS else f"só de {escolhido}")
+        # Quantas ainda não têm resposta. Sem isto, dá para exportar com a
+        # fila pela metade e entregar ao cliente um pacote incompleto sem
+        # perceber — o erro mais caro que esta tela permite cometer.
+        faltando = sum(o.get("pendentes", 0) for o in resumos)
+        if faltando:
+            situacao = (f"AINDA EMITINDO — faltam {_numero(faltando)}. "
+                        f"O pacote sai incompleto.")
+            cor = marca.AMBAR
+        else:
+            situacao = "Emissão concluída — o pacote está completo."
+            cor = marca.VERDE
+
         self.rotulo_entrega.configure(
             text=f"Vai baixar: certidões de {_mes_por_extenso(mes)}, {alvo}\n"
                  f"{_numero(com_certidao)} com certidão  ·  "
-                 f"{_numero(sem_certidao)} sem certidão")
+                 f"{_numero(sem_certidao)} sem certidão\n{situacao}")
+        self.rotulo_entrega.configure(text_color=cor if faltando
+                                      else marca.TEXTO_2)
         return falhados
 
     def _orgaos_visiveis(self) -> list[dict]:
