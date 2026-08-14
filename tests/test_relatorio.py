@@ -1,9 +1,9 @@
 from openpyxl import load_workbook
-from tests.conftest import criar_job
 
 from cnd.core import tempo
 from cnd.core.modelos import Desfecho, Status
 from cnd.web.relatorio import Recorte, gerar, mes_corrente
+from tests.conftest import criar_job
 
 
 def test_relatorio_tem_aba_de_auditoria(conn, lote, tmp_path):
@@ -69,6 +69,32 @@ def test_recorte_por_orgao_deixa_os_outros_de_fora(conn, lote, tmp_path):
                                                        values_only=True)]
     assert "EMPRESA FEDERAL" in nomes
     assert "EMPRESA ESTADUAL" not in nomes
+
+
+def test_arquivo_pdf_nao_vira_link_quebrado(conn, lote, tmp_path):
+    job = criar_job(conn, lote, documento="11222333000181",
+                    orgao="RFB_PJ", nome="EMPRESA COM PDF")
+    pdf = tmp_path / "certidao.pdf"
+    pdf.write_bytes(b"%PDF")
+    conn.execute(
+        "UPDATE job SET status = ?, desfecho = ? WHERE id = ?",
+        (Status.DONE, Desfecho.NEGATIVA, job),
+    )
+    conn.execute(
+        """
+        INSERT INTO certidao
+            (job_id, tipo, emitida_em, valida_ate, codigo_controle,
+             caminho_pdf, sha256)
+        VALUES (?, ?, ?, '2027-02-03', 'ABC123', ?, 'x')
+        """,
+        (job, Desfecho.NEGATIVA, tempo.agora_iso(), str(pdf)),
+    )
+
+    caminho = gerar(conn, Recorte(mes_corrente()), tmp_path / "pdf.xlsx")
+
+    negativas = load_workbook(caminho)["Negativas"]
+    assert negativas["G2"].value == "certidao.pdf"
+    assert negativas["G2"].hyperlink is None
 
 
 def test_sem_orgao_traz_todos(conn, lote, tmp_path):

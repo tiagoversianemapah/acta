@@ -7,13 +7,13 @@ com alarme falso deixa de ser lido, levando junto o aviso que importava.
 from __future__ import annotations
 
 import pytest
-from tests.conftest import criar_job
 
 from cnd.core import fila
 from cnd.core.modelos import Desfecho, ResultadoTentativa, Status
 from cnd.desktop.remoto import EstadoRemoto
 from cnd.infra.config import Maquina
 from cnd.web import consultas
+from tests.conftest import criar_job
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
@@ -92,9 +92,11 @@ class TestPing:
         assert resposta.json()["robo"] == "parado"
         assert "1 itens na fila" in resposta.json()["motivo"]
 
-    def test_fila_com_trabalho_e_robo_vivo_sao_200(self, painel):
+    def test_fila_com_trabalho_e_robo_vivo_sao_200(self, painel, monkeypatch):
         from cnd.infra import heartbeat
+        from cnd.web import api
 
+        monkeypatch.setattr(api.maquina, "processo_robo_rodando", lambda: None)
         cliente, conn = painel
         _encher_a_fila(conn)
         heartbeat.bater(conn, "orquestrador")
@@ -108,6 +110,58 @@ class TestPing:
         cliente, conn = painel
         _encher_a_fila(conn)
         assert cliente.get("/ping").json()["itens_na_fila"] == 1
+
+
+class TestRetomadaAutomatica:
+    def test_religa_robo_mudo_com_fila(self, monkeypatch, tmp_path):
+        from dataclasses import replace
+
+        from cnd.infra.config import ConfigRede, carregar
+        from cnd.web import app as modulo
+
+        chamadas = []
+        cfg = replace(
+            carregar(),
+            banco=tmp_path / "cnd.db",
+            rede=ConfigRede(nome="teste", papel="robo"),
+        )
+        monkeypatch.setattr(modulo, "cfg", cfg)
+        monkeypatch.setattr(modulo.time, "monotonic", lambda: 1000.0)
+        monkeypatch.setattr(
+            modulo, "_ultima_retomada_automatica",
+            -modulo.INTERVALO_RETOMADA_AUTOMATICA_S,
+        )
+        monkeypatch.setattr(
+            modulo.comandos,
+            "iniciar_robo_da_maquina",
+            lambda cfg, raiz, automatico: chamadas.append((cfg, raiz, automatico))
+            or (True, "iniciado"),
+        )
+
+        assert modulo._tentar_retomada_automatica(idade=600, na_fila=3)
+        assert chamadas and chamadas[0][2] is True
+
+    def test_console_nao_religa_robo_remoto(self, monkeypatch, tmp_path):
+        from dataclasses import replace
+
+        from cnd.infra.config import ConfigRede, carregar
+        from cnd.web import app as modulo
+
+        cfg = replace(
+            carregar(),
+            banco=tmp_path / "cnd.db",
+            rede=ConfigRede(nome="teste", papel="console"),
+        )
+        monkeypatch.setattr(modulo, "cfg", cfg)
+        monkeypatch.setattr(
+            modulo.comandos,
+            "iniciar_robo_da_maquina",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                AssertionError("console nao inicia robo local")
+            ),
+        )
+
+        assert not modulo._tentar_retomada_automatica(idade=600, na_fila=3)
 
 
 def _maquina(pendentes: int = 0, ativo: bool = False,
@@ -136,10 +190,14 @@ class TestSituacaoNaTela:
         assert _maquina(pendentes=5, ativo=True).situacao == ("Trabalhando",
                                                               "verde")
 
-    def test_suspensa_vem_antes_de_qualquer_coisa(self):
-        """O disjuntor aberto explica tudo o mais que se veja no cartão."""
+    def test_suspensa_com_robo_vivo_e_pausa_automatica(self):
+        """Com worker vivo, disjuntor aberto é pausa automática real."""
         estado = _maquina(pendentes=5, ativo=True, disjuntor="ABERTO")
         assert estado.situacao == ("Suspensa", "ambar")
+
+    def test_parada_com_fila_vem_antes_de_suspensa(self):
+        estado = _maquina(pendentes=5, ativo=False, disjuntor="ABERTO")
+        assert estado.situacao == ("Parada com fila", "vermelho")
 
     def test_sem_resposta_e_cinza(self):
         assert _maquina(online=False).situacao == ("Sem resposta", "cinza")

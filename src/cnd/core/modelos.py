@@ -35,6 +35,7 @@ class Desfecho(StrEnum):
     # --- falhas (geram retry) ---
     CAPTCHA = "CAPTCHA"                      # heurística antirrobô acionou
     BLOQUEIO_TEMPORARIO = "BLOQUEIO_TEMPORARIO"  # portal pediu para tentar depois
+    RESULTADO_PENDENTE = "RESULTADO_PENDENTE"    # portal pediu para consultar depois
     ERRO_TECNICO = "ERRO_TECNICO"            # timeout, seletor sumiu, 5xx, exceção
 
 
@@ -49,6 +50,7 @@ CONCLUSIVOS = frozenset({
 RETENTAVEIS = frozenset({
     Desfecho.CAPTCHA,
     Desfecho.BLOQUEIO_TEMPORARIO,
+    Desfecho.RESULTADO_PENDENTE,
     Desfecho.ERRO_TECNICO,
 })
 

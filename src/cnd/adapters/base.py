@@ -36,8 +36,12 @@ class AdapterOrgao(Protocol):
         """
 
     def reiniciar_sessao(self) -> None:
-        """Descarta a sessão e começa uma nova. Chamado depois de captcha,
-        para a próxima tentativa não herdar a sessão marcada."""
+        """Descarta a sessão e começa uma nova.
+
+        Chamado depois de falha retentável (captcha, bloqueio temporário ou
+        erro técnico), para a próxima tentativa não herdar uma aba marcada,
+        travada ou fora do fluxo esperado.
+        """
 
     def encerrar(self) -> None:
         """Fecha tudo. Chamado no desligamento."""

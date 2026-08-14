@@ -51,6 +51,11 @@ def caminho_pedido_parada(caminho_banco: Path | None = None) -> Path:
     return Path(caminho_banco or CAMINHO_BANCO_PADRAO).parent / "parar.txt"
 
 
+def caminho_parada_manual(caminho_banco: Path | None = None) -> Path:
+    """Arquivo-sinal que impede retomada automatica apos parada manual."""
+    return Path(caminho_banco or CAMINHO_BANCO_PADRAO).parent / "parada-manual.txt"
+
+
 def garantir(caminho: Path | None = None) -> None:
     """Cria o banco vazio se ainda não houver nenhum.
 

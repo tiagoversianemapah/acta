@@ -2,6 +2,7 @@ import pytest
 
 from cnd.core.documentos import (
     DocumentoInvalido,
+    cnpj_da_matriz,
     formatar,
     validar_cnpj,
     validar_cpf,
@@ -38,6 +39,12 @@ class TestCNPJ:
         with pytest.raises(DocumentoInvalido):
             validar_cnpj(None)
 
+    def test_cnpj_da_matriz_mantem_matriz(self):
+        assert cnpj_da_matriz("00.082.253/0001-51") == "00082253000151"
+
+    def test_cnpj_da_matriz_converte_filial(self):
+        assert cnpj_da_matriz("00.082.253/0002-32") == "00082253000151"
+
 
 class TestCPF:
     def test_valido_com_mascara(self):
@@ -57,4 +64,5 @@ class TestCPF:
 
 def test_formatar():
     assert formatar("11222333000181") == "11.222.333/0001-81"
+    assert formatar("12ABC34501DE35") == "12.ABC.345/01DE-35"
     assert formatar("52998224725") == "529.982.247-25"

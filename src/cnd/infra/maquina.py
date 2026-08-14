@@ -15,6 +15,7 @@ import contextlib
 import ctypes
 import platform
 import shutil
+import subprocess
 from ctypes import wintypes
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,15 +99,54 @@ def area_de_trabalho_disponivel() -> bool:
     — recusar uma emissão que daria certo custa um clique; começar uma que
     não vai funcionar gasta consultas e grava erro atrás de erro.
     """
+    if processo_tem_area_de_trabalho():
+        return True
+    return _sessao_do_console_destravada()
+
+
+def processo_tem_area_de_trabalho() -> bool:
+    """Se ESTE processo consegue falar com uma desktop interativa."""
     try:
         user32 = ctypes.windll.user32
         desktop = user32.OpenInputDesktop(0, False, 0x0001)  # READOBJECTS
-        if desktop:
-            user32.CloseDesktop(desktop)
-            return True
+        if not desktop:
+            return False
+        user32.CloseDesktop(desktop)
+        return True
     except Exception:
         return False
-    return _sessao_do_console_destravada()
+
+
+def processo_robo_rodando() -> bool | None:
+    """Detecta o processo visual do robo no Windows.
+
+    None significa "nao consegui confirmar". Nesse caso quem chamou deve
+    manter a regra antiga por heartbeat, em vez de marcar parado por chute.
+    """
+    if platform.system().lower() != "windows":
+        return None
+
+    script = r"""
+Get-CimInstance Win32_Process |
+  Where-Object {
+    $_.CommandLine -and
+    $_.CommandLine -match '\brodar\b' -and
+    ($_.Name -ieq 'cnd.exe' -or $_.CommandLine -match 'cnd\.cli')
+  } |
+  Select-Object -First 1 |
+  ForEach-Object { '1' }
+"""
+    try:
+        fim = subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=8,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception:
+        return None
+    if fim.returncode != 0:
+        return None
+    return fim.stdout.strip() == "1"
 
 
 # WTSQuerySessionInformationW, WTSSessionInfoEx (25). O SessionFlags vem em

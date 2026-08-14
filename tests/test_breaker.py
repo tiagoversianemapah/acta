@@ -7,11 +7,12 @@ própria depois do cooldown.
 from __future__ import annotations
 
 import itertools
-
-from tests.conftest import criar_job
+from datetime import timedelta
 
 from cnd.core import breaker, tempo
 from cnd.core.modelos import Desfecho
+from cnd.web import consultas
+from tests.conftest import criar_job
 
 P = breaker.ParametrosBreaker(
     captchas_para_abrir=3,
@@ -102,6 +103,17 @@ def test_cooldown_dobra_a_cada_reabertura(conn):
     assert segundo.aberto_ate > primeiro.aberto_ate
 
 
+def test_cooldown_atual_expoe_a_faixa_da_pausa(conn):
+    primeiro = breaker.abrir(conn, "FAKE", "teste", P)
+    breaker.fechar(conn, "FAKE")
+    segundo = breaker.abrir(conn, "FAKE", "teste", P)
+
+    assert breaker.cooldown_atual_s(primeiro, P) == 60
+    assert breaker.cooldown_atual_s(segundo, P) == 120
+    assert consultas.rotulo_duracao(1800) == "30 min"
+    assert consultas.rotulo_duracao(3600) == "1 h"
+
+
 def test_cooldown_respeita_o_teto(conn):
     for _ in range(8):
         estado = breaker.abrir(conn, "FAKE", "teste", P)
@@ -109,6 +121,58 @@ def test_cooldown_respeita_o_teto(conn):
 
     espera_s = (tempo.de_iso(estado.aberto_ate) - tempo.agora()).total_seconds()
     assert espera_s <= P.cooldown_maximo_s + 1
+
+
+def test_cooldown_do_sistema_corta_config_antigo_de_quatro_horas(conn):
+    parametros = breaker.ParametrosBreaker(
+        cooldown_inicial_s=1800,
+        cooldown_maximo_s=14400,
+    )
+    for _ in range(8):
+        estado = breaker.abrir(conn, "FAKE", "teste", parametros)
+        breaker.fechar(conn, "FAKE")
+
+    espera_s = (tempo.de_iso(estado.aberto_ate) - tempo.agora()).total_seconds()
+    assert espera_s <= 9001
+    assert breaker.cooldown_atual_s(estado, parametros) == 9000
+
+
+def test_cooldown_do_sistema_libera_pausa_antiga_ja_gravada(conn):
+    breaker.abrir(conn, "FAKE", "teste", P)
+    conn.execute(
+        """
+        UPDATE breaker
+           SET aberto_ate = ?, atualizado_em = ?
+         WHERE orgao = 'FAKE'
+        """,
+        (
+            tempo.daqui_a(3600),
+            tempo.para_iso(
+                tempo.agora()
+                - timedelta(seconds=breaker.COOLDOWN_MAXIMO_DO_SISTEMA_S + 1)
+            ),
+        ),
+    )
+
+    assert breaker.pode_despachar(conn, "FAKE") is True
+    assert breaker.consultar(conn, "FAKE").estado == breaker.MEIO_ABERTO
+
+
+def test_consultar_mostra_pausa_antiga_no_teto_do_sistema(conn):
+    breaker.abrir(conn, "FAKE", "teste", P)
+    conn.execute(
+        """
+        UPDATE breaker
+           SET aberto_ate = ?, atualizado_em = ?
+         WHERE orgao = 'FAKE'
+        """,
+        (tempo.daqui_a(14400), tempo.agora_iso()),
+    )
+
+    estado = breaker.consultar(conn, "FAKE")
+    espera_s = (tempo.de_iso(estado.aberto_ate) - tempo.agora()).total_seconds()
+
+    assert espera_s <= breaker.COOLDOWN_MAXIMO_DO_SISTEMA_S + 1
 
 
 def test_erro_tecnico_pode_ter_cooldown_curto(conn):

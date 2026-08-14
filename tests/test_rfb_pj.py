@@ -8,22 +8,36 @@ do resultado.
 from __future__ import annotations
 
 from datetime import date
+from types import SimpleNamespace
 
 from cnd.adapters.rfb_pj import (
     FRASE_BLOQUEIO,
     FRASE_INSUFICIENTE,
     FRASE_PROCESSANDO,
+    FRASE_RETORNE_RESULTADO,
     FRASE_SUCESSO,
+    FRASES_BLOQUEIO,
     TITULO_CPEN,
     TITULO_NEGATIVA,
+    AdapterRFBPJ,
     _extrair_codigo,
     _extrair_validade,
     _normalizar,
+    _tem_bloqueio,
 )
+from cnd.core.modelos import Desfecho
+
+RESULTADO_001 = """O servico de emissao de certidao esta temporariamente
+indisponivel. Tente novamente em alguns minutos. 001 - 13/08/2026 22:23:04"""
 
 # --- textos reais do portal -------------------------------------------------
 
 TELA_PROCESSANDO = "Estamos analisando seu pedido de emissão de certidão. Aguarde."
+
+TELA_RETORNE_RESULTADO = (
+    "Estamos analisando seu pedido de emissão de certidão. "
+    "Retorne em alguns minutos para o resultado."
+)
 
 TELA_SUCESSO = """A certidão foi emitida com sucesso para o CNPJ 12.188.874/0001-01.
 
@@ -41,6 +55,9 @@ Internet."""
 ALERTA_BLOQUEIO = """Não foi possível concluir a ação para o contribuinte
 informado. Por favor, tente novamente dentro de alguns minutos. 023 -
 07/08/2026 10:49:50"""
+
+RESULTADO_033 = """Não foi possível emitir a certidão. Tente novamente em
+alguns minutos. 033 - 13/08/2026 15:20:10"""
 
 PDF_NEGATIVA = """MINISTÉRIO DA FAZENDA
 Secretaria da Receita Federal do Brasil
@@ -104,13 +121,58 @@ class TestReconhecimentoDeTela:
         assert FRASE_SUCESSO not in normalizado
         assert FRASE_INSUFICIENTE not in normalizado
 
+    def test_resultado_pendente_nao_e_bloqueio(self):
+        normalizado = _normalizar(TELA_RETORNE_RESULTADO)
+
+        assert FRASE_RETORNE_RESULTADO in normalizado
+        assert not _tem_bloqueio(normalizado)
+        assert FRASE_INSUFICIENTE not in normalizado
+
+    def test_resultado_pendente_vira_resultado_pendente(self, monkeypatch, tmp_path):
+        adapter = AdapterRFBPJ("RFB_PJ", SimpleNamespace(), tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        monkeypatch.setattr(
+            adapter,
+            "_evidencia",
+            lambda *_args: tmp_path / "resultado-pendente.png",
+        )
+
+        resultado = adapter._classificar(None, doc, TELA_RETORNE_RESULTADO)
+
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
+        assert "Retorne em alguns minutos" in resultado.mensagem_portal
+
+    def test_servico_indisponivel_vira_resultado_pendente(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = AdapterRFBPJ("RFB_PJ", SimpleNamespace(), tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        monkeypatch.setattr(
+            adapter,
+            "_evidencia",
+            lambda *_args: tmp_path / "resultado-pendente.png",
+        )
+
+        resultado = adapter._classificar(None, doc, RESULTADO_001)
+
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
+        assert "001" in resultado.mensagem_portal
+
     def test_bloqueio_temporario(self):
         """O portal pedindo para voltar depois não é erro nosso nem resposta
         sobre a empresa: é ele nos barrando. Confundir com erro técnico faria
         o robô insistir no ritmo errado."""
         normalizado = _normalizar(ALERTA_BLOQUEIO)
         assert FRASE_BLOQUEIO in normalizado
+        assert _tem_bloqueio(normalizado)
         assert FRASE_SUCESSO not in normalizado
+        assert FRASE_INSUFICIENTE not in normalizado
+
+    def test_resultado_033_e_bloqueio_temporario(self):
+        normalizado = _normalizar(RESULTADO_033)
+
+        assert _tem_bloqueio(normalizado)
+        assert FRASES_BLOQUEIO[1] in normalizado
         assert FRASE_INSUFICIENTE not in normalizado
 
 

@@ -36,10 +36,10 @@ Write-Host "4/5  Trocando os arquivos em $Pasta ..."
 Copy-Item "$tmp\*" $Pasta -Recurse -Force
 
 Write-Host "5/5  Subindo o painel de novo ..."
-try {
-    schtasks /Run /TN "ACTA Painel" | Out-Null
+schtasks /Run /TN "ACTA Painel" | Out-Null
+if ($LASTEXITCODE -eq 0) {
     Write-Host "     pelo agendador (sobe sozinho no boot)"
-} catch {
+} else {
     Start-Process -FilePath (Join-Path $Pasta "cnd.exe") `
         -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
     Write-Host "     em janela minimizada (sem tarefa de boot registrada)"

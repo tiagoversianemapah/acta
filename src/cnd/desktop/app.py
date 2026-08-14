@@ -82,7 +82,7 @@ ICONE_BAIXAR = ""
 TODOS_OS_MESES = "Todos os meses"
 # Limites da janela. O máximo existe porque texto em linha muito larga
 # cansa de ler; o mínimo é onde as colunas ainda cabem sem cortar.
-MINIMO_L, MINIMO_A = 1100, 660
+MINIMO_L, MINIMO_A = 780, 560
 MAXIMO_L, MAXIMO_A = 1600, 1000
 # Ícone, recuos e os dois botões da faixa de aviso: o que sobra é do texto.
 LARGURA_FORA_DO_AVISO = 330
@@ -116,9 +116,10 @@ RESULTADOS = {
     "Negativa": "NEGATIVA",
     "Com efeito de negativa": "CPEN",
     "Positiva": "POSITIVA",
-    "Exige atendimento": "PENDENCIA_MANUAL",
+    "Informações insuficientes": "PENDENCIA_MANUAL",
     "Já emitida no mês": "APROVEITADA",
     "Portal recusou": "BLOQUEIO_TEMPORARIO",
+    "Resultado pendente": "RESULTADO_PENDENTE",
     "Exigiu captcha": "CAPTCHA",
     "Erro técnico": "ERRO_TECNICO",
 }
@@ -141,9 +142,10 @@ ROTULOS_DE_RESULTADO = {
     # a empresa tem pendência real e o documento não vai no pacote. Âmbar
     # sugeria "atenção", quando o certo é "esta não sai".
     "POSITIVA": ("Positiva", "#B3261E"),
-    "PENDENCIA_MANUAL": ("Exige atendimento", "#8A5D00"),
+    "PENDENCIA_MANUAL": ("Informações insuficientes", "#8A5D00"),
     "APROVEITADA": ("Já emitida no mês", "#8A94A2"),
     "BLOQUEIO_TEMPORARIO": ("Portal recusou", "#B02A1C"),
+    "RESULTADO_PENDENTE": ("Resultado pendente", "#8A5D00"),
     "CAPTCHA": ("Exigiu captcha", "#B02A1C"),
     "ERRO_TECNICO": ("Erro técnico", "#B02A1C"),
 }
@@ -229,6 +231,20 @@ def _resumo_da_maquina(estado) -> str:
     return "   ·   ".join(partes)
 
 
+def _resumo_compacto_da_maquina(estado) -> str:
+    partes = [f"{_numero(estado.concluidos)} de {_numero(estado.total)}"]
+    por_hora = sum(o.get("por_hora") or 0 for o in estado.orgaos)
+    if por_hora:
+        partes.append(f"{_numero(round(por_hora))}/h")
+    horas = [o["eta_horas"] for o in estado.orgaos if o.get("eta_horas")]
+    if horas:
+        partes.append(f"faltam {_duracao(max(horas))}")
+    partes.append(f"{_numero(estado.por_desfecho('NEGATIVA'))} negativas")
+    if estado.falhados:
+        partes.append(f"{_numero(estado.falhados)} falhas")
+    return "   ·   ".join(partes)
+
+
 def _configurar_colunas_de_maquina(quadro) -> None:
     """Larguras das colunas da tela de Máquinas.
 
@@ -259,10 +275,15 @@ def _detalhe_da_situacao(estado) -> str:
                     f"{_numero(estado.total)}")
         return f"{estado.erro or 'sem resposta'} · sem dado anterior"
 
+    parado_ha = estado.dados.get("ultimo_sinal_ha_s")
+    if estado.pendentes and not estado.robo_ativo:
+        quando = (f" · sem sinal há {_duracao(parado_ha / 3600)}"
+                  if parado_ha else "")
+        return f"{_numero(estado.pendentes)} itens esperando{quando}"
+
     if estado.suspensa:
         return "o portal recusou várias consultas · retoma sozinho"
 
-    parado_ha = estado.dados.get("ultimo_sinal_ha_s")
     if estado.robo_ativo:
         partes = [f"{_numero(estado.pendentes)} na fila"] if estado.pendentes \
             else []
@@ -271,10 +292,6 @@ def _detalhe_da_situacao(estado) -> str:
             partes.append(f"faltam {_duracao(max(horas))}")
         return "   ·   ".join(partes) or "trabalhando"
 
-    if estado.pendentes:
-        quando = (f" · sem sinal há {_duracao(parado_ha / 3600)}"
-                  if parado_ha else "")
-        return f"{_numero(estado.pendentes)} itens esperando{quando}"
     return "sem trabalho na fila"
 
 
@@ -399,6 +416,7 @@ class Aplicativo(ctk.CTk):
         self._maquinas_no_filtro: list[str] = []
         self._lotes_da_maquina: dict[str, int] = {}
         self._busca_em_curso = None
+        self._maquina_selecionada = ""
 
         self.title(f"{marca.NOME_PRODUTO} — {marca.DESCRICAO_PRODUTO}")
         self._dimensionar_pela_tela()
@@ -427,7 +445,7 @@ class Aplicativo(ctk.CTk):
     # Barra lateral
     # ------------------------------------------------------------------
     def _montar_lateral(self) -> None:
-        lateral = ctk.CTkFrame(self, width=268, corner_radius=0,
+        lateral = ctk.CTkFrame(self, width=238, corner_radius=0,
                                fg_color=marca.BARRA, border_width=0)
         lateral.grid(row=0, column=0, sticky="nsew")
         lateral.grid_rowconfigure(6, weight=1)
@@ -456,9 +474,8 @@ class Aplicativo(ctk.CTk):
         self.marcadores_menu: dict[str, ctk.CTkFrame] = {}
         self.icones_menu: dict[str, tuple] = {}
         for indice, (chave, rotulo, icone) in enumerate(
-            [("inicio", "Início", ""),
-             ("maquinas", "Máquinas", ""),
-             ("itens", "Consultar itens", ""),
+            [("inicio", "Painel", ""),
+             ("maquinas", "Operação", ""),
              ("registro", "Registro", ""),
              ("ajustes", "Ajustes", "")], start=1
         ):
@@ -768,22 +785,18 @@ class Aplicativo(ctk.CTk):
 
     # ---------------- Máquinas ----------------
     def _secao_maquinas(self, pai) -> ctk.CTkFrame:
-        """A saúde dos computadores: memória, disco e há quanto tempo ligados.
-
-        Separada do Início de propósito. O Início responde "como vai a
-        emissão"; aqui a pergunta é outra — "a máquina aguenta?" — e é o
-        lugar de onde se acessa cada uma pelo AnyDesk.
-        """
-        quadro = ctk.CTkScrollableFrame(pai, fg_color=marca.FUNDO)
+        """A operação por computador: escolha uma máquina e veja a fila dela."""
+        quadro = ctk.CTkFrame(pai, fg_color=marca.FUNDO)
+        quadro.grid_rowconfigure(2, weight=1)
         quadro.grid_columnconfigure(0, weight=1)
 
         cabecalho = ctk.CTkFrame(quadro, fg_color="transparent")
-        cabecalho.grid(row=0, column=0, sticky="ew", padx=46, pady=(44, 26))
+        cabecalho.grid(row=0, column=0, sticky="ew", padx=28, pady=(24, 14))
         cabecalho.grid_columnconfigure(0, weight=1)
-        self._titulo(cabecalho, "Máquinas",
-                     "Acompanhe o estado das máquinas e os trabalhos "
-                     "registrados").grid(row=0, column=0, sticky="w")
-        ctk.CTkButton(cabecalho, text="Atualizar agora", height=48, width=178,
+        self._titulo(cabecalho, "Operação",
+                     "Computador, fila e histórico no mesmo lugar").grid(
+            row=0, column=0, sticky="w")
+        ctk.CTkButton(cabecalho, text="Atualizar", height=42, width=136,
                       corner_radius=8, font=(FONTE, 13, "bold"),
                       fg_color=marca.AZUL_VIVO, hover_color=marca.AZUL,
                       text_color=marca.BRANCO,
@@ -792,31 +805,52 @@ class Aplicativo(ctk.CTk):
                       command=self._recarregar_saude).grid(row=0, column=1,
                                                            sticky="e")
 
-        # Resumo em uma linha: com quatro máquinas, é o que se lê antes de
-        # olhar cartão por cartão.
         faixa = ctk.CTkFrame(quadro, fg_color="transparent")
-        faixa.grid(row=1, column=0, sticky="ew", padx=46, pady=(0, 36))
+        faixa.grid(row=1, column=0, sticky="ew", padx=28, pady=(0, 14))
         self.icone_resumo = ctk.CTkLabel(faixa, text="", width=20)
         self.icone_resumo.grid(row=0, column=0, padx=(0, 8))
-        self.resumo_maquinas = ctk.CTkLabel(faixa, text="", font=(FONTE, 13),
+        self.resumo_maquinas = ctk.CTkLabel(faixa, text="", font=(FONTE, 12),
                                             text_color=marca.TEXTO_2,
                                             anchor="w")
         self.resumo_maquinas.grid(row=0, column=1, sticky="w")
 
-        # Cabeçalho e máquinas na MESMA grade: é a única forma de garantir
-        # que o título caia exatamente sobre o conteúdo da coluna.
-        self.painel_saude = ctk.CTkFrame(quadro, fg_color="transparent")
-        self.painel_saude.grid(row=2, column=0, sticky="ew", padx=46,
-                               pady=(0, 24))
-        _configurar_colunas_de_maquina(self.painel_saude)
+        corpo = ctk.CTkFrame(quadro, fg_color="transparent")
+        corpo.grid(row=2, column=0, sticky="nsew", padx=28, pady=(0, 24))
+        corpo.grid_rowconfigure(0, weight=1)
+        corpo.grid_columnconfigure(0, weight=0, minsize=264)
+        corpo.grid_columnconfigure(1, weight=1)
+
+        self.painel_saude = ctk.CTkScrollableFrame(
+            corpo, width=264, fg_color="transparent",
+            scrollbar_button_color=marca.BORDA_FORTE,
+            scrollbar_button_hover_color=marca.TEXTO_3)
+        self.painel_saude.grid(row=0, column=0, sticky="nsew",
+                               padx=(0, 14))
+        self.painel_saude.grid_columnconfigure(0, weight=1)
+
+        self.painel_operacao = self._cartao(corpo)
+        self.painel_operacao.grid(row=0, column=1, sticky="nsew")
+        self.painel_operacao.grid_rowconfigure(1, weight=1)
+        self.painel_operacao.grid_columnconfigure(0, weight=1)
+
+        self.resumo_maquina_selecionada = ctk.CTkFrame(
+            self.painel_operacao, fg_color="transparent", height=96)
+        self.resumo_maquina_selecionada.grid(row=0, column=0, sticky="ew",
+                                             padx=18, pady=(18, 0))
+        self.resumo_maquina_selecionada.grid_propagate(False)
+        self.resumo_maquina_selecionada.grid_columnconfigure(0, weight=1)
+
+        self._montar_itens_da_maquina(self.painel_operacao).grid(
+            row=1, column=0, sticky="nsew", padx=18, pady=18)
         return quadro
 
-    def _recarregar_saude(self) -> None:
-        for filho in self.painel_saude.winfo_children():
-            filho.destroy()
-        ctk.CTkLabel(self.painel_saude, text="Consultando as máquinas...",
-                     font=(FONTE, 12), text_color=marca.TEXTO_3).grid(
-            row=0, column=0, columnspan=len(COLUNAS_DE_MAQUINA), pady=30)
+    def _recarregar_saude(self, silencioso: bool = False) -> None:
+        if not silencioso:
+            for filho in self.painel_saude.winfo_children():
+                filho.destroy()
+            ctk.CTkLabel(self.painel_saude, text="Consultando as máquinas...",
+                         font=(FONTE, 12), text_color=marca.TEXTO_3).grid(
+                row=0, column=0, pady=30)
 
         def trabalho():
             estados = remoto.consultar_todas(self.cfg)
@@ -828,51 +862,273 @@ class Aplicativo(ctk.CTk):
         for filho in self.painel_saude.winfo_children():
             filho.destroy()
 
-        # Problema primeiro. Com quatro máquinas, a quebrada não pode ficar
-        # em terceiro por ordem alfabética: ela é o motivo de abrir a tela.
         estados = sorted(estados, key=lambda e: (e.gravidade, e.rotulo))
+        self._maquinas = estados
+        self._atualizar_filtro_de_orgao()
         self._resumir_maquinas(estados)
 
-        painel = self.painel_saude
         if not estados:
-            self._sem_maquinas(painel)
+            self._sem_maquinas(self.painel_saude)
+            self._desenhar_detalhe_da_maquina(None)
             return
 
-        for coluna, (texto, _, _) in enumerate(COLUNAS_DE_MAQUINA):
-            ctk.CTkLabel(painel, text=texto, font=(FONTE, 10, "bold"),
+        rotulos = [self._rotulo_da_maquina_no_filtro(e) for e in estados]
+        if (self._maquina_selecionada != TODAS_AS_MAQUINAS
+                and self._maquina_selecionada not in rotulos):
+            preferida = next((self._rotulo_da_maquina_no_filtro(e)
+                              for e in estados if e.online), rotulos[0])
+            self._maquina_selecionada = preferida
+        if hasattr(self, "filtro_maquina"):
+            self._atualizar_filtros_de_itens()
+            if self.filtro_maquina.get() != self._maquina_selecionada:
+                self.filtro_maquina.set(self._maquina_selecionada)
+
+        for linha, estado in enumerate(estados):
+            selecionado = (self._rotulo_da_maquina_no_filtro(estado)
+                           == self._maquina_selecionada)
+            self._cartao_seletor_de_maquina(
+                self.painel_saude, estado, selecionado).grid(
+                row=linha, column=0, sticky="ew", pady=(0, 10))
+
+        estado = self._estado_selecionado()
+        self._desenhar_detalhe_da_maquina(estado)
+        self._recarregar_itens()
+
+    def _rotulo_da_maquina_no_filtro(self, estado) -> str:
+        return ESTA_MAQUINA if estado.local else estado.maquina.orgao or estado.maquina.nome
+
+    def _estado_selecionado(self):
+        return next((e for e in self._maquinas
+                     if self._rotulo_da_maquina_no_filtro(e)
+                     == self._maquina_selecionada), None)
+
+    def _selecionar_maquina(self, rotulo: str) -> None:
+        self._maquina_selecionada = rotulo
+        self._lotes_da_maquina = {}
+        if hasattr(self, "filtro_maquina") and self.filtro_maquina.get() != rotulo:
+            self.filtro_maquina.set(rotulo)
+        if self._maquinas and self.secao_atual == "maquinas":
+            self._desenhar_saude(self._maquinas)
+        else:
+            self._recarregar_itens()
+
+    def _cartao_seletor_de_maquina(self, pai, estado, selecionado: bool):
+        frente, _ = self.CORES_DE_SITUACAO[estado.situacao[1]]
+        cartao = ctk.CTkFrame(
+            pai,
+            fg_color=marca.AZUL_VIVO_FUNDO if selecionado else marca.BRANCO,
+            corner_radius=8, border_width=1, height=136,
+            border_color=marca.AZUL_VIVO_BORDA if selecionado else marca.BORDA)
+        cartao.grid_propagate(False)
+        cartao.grid_columnconfigure(1, weight=1)
+        cartao.grid_rowconfigure(0, weight=1)
+
+        barra = ctk.CTkFrame(cartao, width=4, corner_radius=2,
+                             fg_color=marca.AZUL_VIVO if selecionado
+                             else "transparent")
+        barra.grid(row=0, column=0, sticky="nsw", pady=12)
+
+        corpo = ctk.CTkFrame(cartao, fg_color="transparent")
+        corpo.grid(row=0, column=1, sticky="nsew", padx=(14, 12), pady=12)
+        corpo.grid_columnconfigure(0, weight=1)
+
+        topo = ctk.CTkFrame(corpo, fg_color="transparent", height=24)
+        topo.grid(row=0, column=0, sticky="ew")
+        topo.grid_propagate(False)
+        topo.grid_columnconfigure(0, weight=1)
+
+        titulo = ctk.CTkLabel(topo, text=estado.rotulo.upper(),
+                              font=(FONTE, 11, "bold"), text_color=marca.TEXTO,
+                              anchor="w", justify="left", wraplength=142)
+        titulo.grid(row=0, column=0, sticky="w")
+        status, cor_status = estado.situacao
+        cor_texto, cor_fundo = self.CORES_DE_SITUACAO[cor_status]
+        ctk.CTkLabel(topo, text=status, height=22, corner_radius=11,
+                     fg_color=cor_fundo, font=(FONTE, 10, "bold"),
+                     text_color=cor_texto).grid(row=0, column=1, sticky="e",
+                                                padx=(10, 0))
+
+        subtitulo = estado.nome if not estado.local else "este computador"
+        ctk.CTkLabel(corpo, text=subtitulo, font=(FONTE, 10),
+                     text_color=marca.TEXTO_3, anchor="w",
+                     wraplength=210).grid(row=1, column=0, sticky="w",
+                                          pady=(4, 0))
+
+        detalhe = (_detalhe_da_situacao(estado) if not estado.online
+                   else f"{_numero(estado.pendentes)} na fila  ·  "
+                        f"{_numero(estado.concluidos)} concluídos")
+        ctk.CTkLabel(corpo, text=detalhe, font=(FONTE, 10),
+                     text_color=marca.TEXTO_2,
+                     anchor="w", justify="left", wraplength=210).grid(
+            row=2, column=0, sticky="w", pady=(10, 0))
+
+        if estado.online:
+            barra_progresso = ctk.CTkProgressBar(
+                corpo, height=4, corner_radius=2,
+                progress_color=frente, fg_color=marca.PAPEL_2)
+            barra_progresso.grid(row=3, column=0, sticky="ew", pady=(8, 0))
+            barra_progresso.set(estado.percentual / 100)
+
+        rotulo = self._rotulo_da_maquina_no_filtro(estado)
+        self._vincular_selecao(cartao, rotulo)
+        return cartao
+
+    def _vincular_selecao(self, widget, rotulo: str) -> None:
+        widget.configure(cursor="hand2")
+        widget.bind("<Button-1>", lambda _e: self._selecionar_maquina(rotulo))
+        for filho in widget.winfo_children():
+            self._vincular_selecao(filho, rotulo)
+
+    def _desenhar_detalhe_da_maquina(self, estado) -> None:
+        for filho in self.resumo_maquina_selecionada.winfo_children():
+            filho.destroy()
+        self.resumo_maquina_selecionada.grid_columnconfigure(0, weight=0)
+        self.resumo_maquina_selecionada.grid_columnconfigure(1, weight=1)
+
+        if estado is None:
+            self.resumo_maquina_selecionada.grid_columnconfigure(0, weight=1)
+            titulo = ("Busca em todas as máquinas"
+                      if self._maquina_selecionada == TODAS_AS_MAQUINAS
+                      else "Selecione um computador")
+            subtitulo = ("Use a tabela abaixo para localizar empresa, CNPJ ou pendência."
+                         if self._maquina_selecionada == TODAS_AS_MAQUINAS
+                         else "A fila aparece aqui quando houver máquina cadastrada.")
+            ctk.CTkLabel(self.resumo_maquina_selecionada,
+                         text=titulo,
+                         font=(FONTE, 16, "bold"),
+                         text_color=marca.TEXTO).grid(row=0, column=0,
+                                                      sticky="w")
+            ctk.CTkLabel(self.resumo_maquina_selecionada,
+                         text=subtitulo,
+                         font=(FONTE, 12), text_color=marca.TEXTO_3,
+                         anchor="w").grid(row=1, column=0, sticky="w",
+                                          pady=(4, 0))
+            return
+
+        topo = ctk.CTkFrame(self.resumo_maquina_selecionada,
+                            fg_color="transparent", height=44)
+        topo.grid(row=0, column=0, columnspan=2, sticky="ew")
+        topo.grid_propagate(False)
+        topo.grid_columnconfigure(0, weight=1)
+
+        titulo = ctk.CTkLabel(topo, text=estado.rotulo.upper(),
+                              font=(FONTE, 18, "bold"),
+                              text_color=marca.TEXTO, anchor="w")
+        titulo.grid(row=0, column=0, sticky="w")
+        if estado.acessavel:
+            self._transformar_em_link(titulo, estado, tamanho=18)
+        self._etiqueta(topo, *estado.situacao).grid(row=0, column=1,
+                                                    sticky="e")
+
+        ctk.CTkLabel(topo, text=estado.subtitulo, font=(FONTE, 11),
+                     text_color=marca.TEXTO_3, anchor="w",
+                     wraplength=520).grid(row=1, column=0, columnspan=2,
+                                          sticky="w", pady=(4, 0))
+
+        self._acoes_da_maquina(self.resumo_maquina_selecionada, estado).grid(
+            row=1, column=0, sticky="w", pady=(8, 0))
+
+        if estado.online:
+            detalhe = _resumo_compacto_da_maquina(estado)
+        else:
+            detalhe = _detalhe_da_situacao(estado)
+
+        ctk.CTkLabel(self.resumo_maquina_selecionada,
+                     text=detalhe,
+                     font=(FONTE, 11), text_color=marca.TEXTO_2,
+                     anchor="w", justify="left", wraplength=560).grid(
+            row=1, column=1, sticky="w", padx=(12, 0), pady=(8, 0))
+
+    def _metricas_da_maquina(self, pai, estado):
+        metricas = ctk.CTkFrame(pai, fg_color="transparent", height=56)
+        metricas.grid_propagate(False)
+        valores = [
+            ("Fila", estado.pendentes, marca.AMBAR if estado.pendentes else marca.TEXTO),
+            ("Concluídos", estado.concluidos, marca.AZUL_VIVO),
+            ("Negativas", estado.por_desfecho("NEGATIVA"), marca.VERDE),
+            ("Falhas", estado.falhados, marca.VERMELHO if estado.falhados else marca.TEXTO_3),
+        ]
+        for coluna, (rotulo, valor, cor) in enumerate(valores):
+            metricas.grid_columnconfigure(coluna * 2, weight=1, uniform="metricas")
+            if coluna:
+                ctk.CTkFrame(metricas, width=1, corner_radius=0,
+                             fg_color=marca.BORDA).grid(
+                    row=0, column=coluna * 2 - 1, sticky="ns", padx=12)
+            caixa = ctk.CTkFrame(metricas, fg_color="transparent")
+            caixa.grid(row=0, column=coluna * 2, sticky="w")
+            ctk.CTkLabel(caixa, text=rotulo.upper(), font=(FONTE, 9, "bold"),
                          text_color=marca.TEXTO_3, anchor="w").grid(
-                row=0, column=coluna, sticky="w",
-                padx=(RECUO_DO_CARTAO if not coluna else 0, 20),
-                pady=(0, 18))
+                row=0, column=0, sticky="w")
+            ctk.CTkLabel(caixa, text=_numero(valor), font=(FONTE, 18, "bold"),
+                         text_color=cor, anchor="w").grid(
+                row=1, column=0, sticky="w", pady=(2, 0))
+        return metricas
 
-        linha = 1
-        for estado in estados:
-            cartao = ctk.CTkFrame(
-                painel, fg_color=marca.BRANCO, corner_radius=8,
-                border_width=1, border_color=marca.BORDA_FORTE)
-            cartao.grid(row=linha, column=0,
-                        columnspan=len(COLUNAS_DE_MAQUINA), sticky="ew",
-                        pady=(0, 16))
-            _configurar_colunas_de_maquina(cartao)
+    def _linha_tecnica_da_maquina(self, pai, estado):
+        linha = ctk.CTkFrame(pai, fg_color="transparent", height=30)
+        linha.grid_propagate(False)
+        itens: list[tuple[bool | None, str]] = []
+        preparo = _preparo(estado)
+        itens.append(next((i for i in preparo if "Calibr" in i[1]),
+                          (None, "Calibragem")))
+        itens.append(next((i for i in preparo if "AnyDesk" in i[1]),
+                          (None, "AnyDesk")))
+        itens.append(next((i for i in preparo if "Painel" in i[1]),
+                          (None, "Painel")))
 
-            for coluna, montar in enumerate([
-                self._coluna_identidade, self._coluna_situacao,
-                self._coluna_preparo, self._coluna_disco, self._coluna_acoes,
-            ]):
-                montar(cartao, estado).grid(
-                    row=0, column=coluna,
-                    padx=(RECUO_DO_CARTAO if not coluna else 0,
-                          20 if coluna < 4 else RECUO_DO_CARTAO),
-                    pady=(26, 28),
-                    sticky="new" if coluna < 4 else "ne")
-                # Fio entre as colunas: separa os blocos sem gastar mais
-                # espaço em branco, que é o que faltaria numa tela de 1200px.
-                if coluna < len(COLUNAS_DE_MAQUINA) - 1:
-                    ctk.CTkFrame(cartao, width=1, corner_radius=0,
-                                 fg_color=marca.BORDA).grid(
-                        row=0, column=coluna, sticky="nse",
-                        padx=(0, 10), pady=(22, 22))
-            linha += 1
+        saude = estado.saude
+        if saude:
+            livre = saude["disco_livre_gb"]
+            itens.append((livre >= LIMITE_DISCO_GB,
+                          f"Disco {livre:.0f} GB livres"))
+
+        for coluna, (ok, texto) in enumerate(itens):
+            if texto.startswith("Calibrada"):
+                texto = "Calibrada"
+            elif texto.startswith("Nunca calibrada"):
+                texto = "Sem calibragem"
+            elif texto.startswith("AnyDesk"):
+                texto = "AnyDesk cadastrado"
+            elif texto.startswith("Painel"):
+                texto = "Painel respondendo"
+
+            if ok is True:
+                frente, fundo = marca.VERDE, marca.VERDE_FUNDO
+            elif ok is False:
+                frente, fundo = marca.AMBAR, marca.AMBAR_FUNDO
+            else:
+                frente, fundo = marca.TEXTO_3, marca.PAPEL
+            ctk.CTkLabel(linha, text=texto, height=28, corner_radius=8,
+                         fg_color=fundo, font=(FONTE, 10, "bold"),
+                         text_color=frente).grid(row=0, column=coluna,
+                                                 sticky="w", padx=(0, 8))
+        return linha
+
+    def _acoes_da_maquina(self, pai, estado):
+        acoes = ctk.CTkFrame(pai, fg_color="transparent")
+        cor = marca.AZUL_VIVO if estado.acessavel else marca.TEXTO_3
+        ctk.CTkButton(
+            acoes, text="AnyDesk", height=38, width=118, corner_radius=8,
+            font=(FONTE, 12, "bold"), fg_color=marca.BRANCO,
+            hover_color=marca.AZUL_VIVO_FUNDO, text_color=cor,
+            border_width=1, border_color=marca.BORDA,
+            image=self._glifo(ICONE_ABRIR_FORA, cor, 13), compound="right",
+            command=lambda e=estado: self._acessar(e)).grid(
+            row=0, column=0, padx=(0, 8))
+
+        if estado.online and not estado.local and estado.roda_robo:
+            self._botao_acao_maquina(
+                acoes, "Enviar planilha", ICONE_ENVIAR,
+                lambda e=estado: self._enviar_planilha(e),
+                cor=marca.AZUL_VIVO).grid(row=0, column=1, padx=(0, 8))
+            rodando = estado.robo_ativo
+            self._botao_acao_maquina(
+                acoes, "Parar robô" if rodando else "Iniciar robô",
+                ICONE_MAQUINA,
+                lambda e=estado, r=rodando: self._comandar_robo(e, r),
+                cor=marca.VERMELHO if rodando else marca.AZUL_VIVO).grid(
+                row=0, column=2)
+        return acoes
 
     def _sem_maquinas(self, painel) -> None:
         """Este computador acompanha, mas ainda não sabe a quem.
@@ -1642,131 +1898,137 @@ class Aplicativo(ctk.CTk):
         self._em_segundo_plano(trabalho, f"baixar de {estado.nome}")
 
     # ---------------- Itens ----------------
-    def _secao_itens(self, pai) -> ctk.CTkFrame:
-        quadro = ctk.CTkFrame(pai, fg_color=marca.FUNDO)
+    def _montar_itens_da_maquina(self, pai) -> ctk.CTkFrame:
+        quadro = ctk.CTkFrame(pai, fg_color="transparent")
         quadro.grid_rowconfigure(2, weight=1)
         quadro.grid_columnconfigure(0, weight=1)
 
-        self._titulo(quadro, "Consultar itens",
-                     "Cada linha é uma empresa em um órgão"
-                     ).grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 18))
+        topo = ctk.CTkFrame(quadro, fg_color="transparent", height=24)
+        topo.grid(row=0, column=0, sticky="ew")
+        topo.grid_propagate(False)
+        topo.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(topo, text="Fila e carteira", font=(FONTE, 14, "bold"),
+                     text_color=marca.TEXTO, anchor="w").grid(
+            row=0, column=0, sticky="w")
+        self.contador = ctk.CTkLabel(topo, text="", font=(FONTE, 11),
+                                     text_color=marca.TEXTO_3, anchor="e")
+        self.contador.grid(row=0, column=1, sticky="e")
 
-        filtros = ctk.CTkFrame(quadro, fg_color="transparent")
-        filtros.grid(row=1, column=0, sticky="ew", padx=34, pady=(0, 14))
+        filtros = ctk.CTkFrame(quadro, fg_color=marca.FUNDO, corner_radius=8,
+                               height=112)
+        filtros.grid(row=1, column=0, sticky="ew", pady=(10, 12))
+        filtros.grid_propagate(False)
+        for coluna in range(4):
+            filtros.grid_columnconfigure(coluna, weight=1, uniform="filtros")
 
-        self.busca = ctk.CTkEntry(filtros, placeholder_text="CNPJ ou razão social",
-                                  width=250, height=40, corner_radius=8,
-                                  fg_color=marca.BRANCO,
-                                  border_color=marca.BORDA_FORTE,
-                                  text_color=marca.TEXTO, font=(FONTE, 12))
-        self.busca.grid(row=0, column=0, padx=(0, 8))
+        self.busca = ctk.CTkEntry(
+            filtros, placeholder_text="CNPJ ou razão social", height=38,
+            corner_radius=8, fg_color=marca.BRANCO,
+            border_color=marca.BORDA_FORTE, text_color=marca.TEXTO,
+            font=(FONTE, 12))
+        self.busca.grid(row=0, column=0, columnspan=3, sticky="ew",
+                        padx=(12, 6), pady=(12, 8))
         self.busca.bind("<Return>", lambda _: self._recarregar_itens())
+        self._botao_secundario(
+            filtros, "Atualizar", self._recarregar_itens, largura=1).grid(
+            row=0, column=3, sticky="ew", padx=(6, 12), pady=(12, 8))
 
-        def seletor(valores: list[str], largura: int,
-                    ao_mudar=None) -> ctk.CTkOptionMenu:
-            # A seta na mesma cor do campo: com cor própria, o CustomTkinter
-            # a desenha como uma pastilha colada ao lado, e o filtro parece
-            # dois controles em vez de um.
+        def seletor(valores: list[str], ao_mudar=None):
             moldura = ctk.CTkFrame(filtros, fg_color=marca.BORDA_FORTE,
                                    corner_radius=8)
+            moldura.grid_columnconfigure(0, weight=1)
             menu = ctk.CTkOptionMenu(
-                moldura, width=largura, height=38, corner_radius=7,
+                moldura, width=1, height=36, corner_radius=7,
                 values=valores, fg_color=marca.BRANCO,
                 button_color=marca.BRANCO, button_hover_color=marca.PAPEL,
                 text_color=marca.TEXTO_2, dropdown_fg_color=marca.BRANCO,
                 dropdown_text_color=marca.TEXTO, dropdown_hover_color=marca.PAPEL,
-                font=(FONTE, 12), dropdown_font=(FONTE, 12),
+                font=(FONTE, 11), dropdown_font=(FONTE, 11),
                 command=ao_mudar or (lambda _: self._recarregar_itens()))
-            menu.grid(row=0, column=0, padx=1, pady=1)
-            menu.moldura = moldura      # quem posiciona é a moldura
+            menu.grid(row=0, column=0, sticky="ew", padx=1, pady=1)
+            menu.moldura = moldura
             return menu
 
-        # Filtrar por RESULTADO é o que a operação pede na prática: separar
-        # quem está limpa de quem tem pendência. Situação (na fila, falhou)
-        # interessa a quem acompanha o processamento, não o resultado.
-        self.filtro_resultado = seletor(list(RESULTADOS), 210)
-        self.filtro_resultado.moldura.grid(row=0, column=1, padx=(0, 8))
-
-        self.filtro_situacao = seletor(list(SITUACOES), 168)
-        self.filtro_situacao.moldura.grid(row=0, column=2, padx=(0, 8))
-
-        # A máquina manda em tudo o mais: sem escolher de quem é a lista,
-        # não há o que listar. Antes esta tela lia o banco DESTE
-        # computador — que no console está vazio, e você nunca veria nada.
-        self.filtro_maquina = seletor([TODAS_AS_MAQUINAS], 190,
+        self.filtro_maquina = seletor([TODAS_AS_MAQUINAS],
                                       ao_mudar=self._trocar_de_maquina)
-        self.filtro_maquina.moldura.grid(row=0, column=3, padx=(0, 8))
-
-        # Planilha e não mês: no uso real você manda planilhas, não meses —
-        # e sabe qual mandou. "agosto/2026" obrigaria a traduzir. O mês
-        # continua valendo na entrega, que é o recorte do cliente.
-        self.filtro_planilha = seletor([TODAS_AS_PLANILHAS], 230)
-        self.filtro_planilha.moldura.grid(row=0, column=4, padx=(0, 8))
-
-        self._botao_secundario(filtros, "Atualizar", self._recarregar_itens,
-                               largura=104).grid(row=0, column=5)
-
-        self.contador = ctk.CTkLabel(filtros, text="", font=(FONTE, 12),
-                                     text_color=marca.TEXTO_3)
-        self.contador.grid(row=0, column=6, padx=(14, 0))
+        self.filtro_maquina.moldura.grid(row=1, column=0, sticky="ew",
+                                         padx=(12, 6), pady=(0, 12))
+        self.filtro_planilha = seletor([TODAS_AS_PLANILHAS])
+        self.filtro_planilha.moldura.grid(row=1, column=1, sticky="ew",
+                                          padx=6, pady=(0, 12))
+        self.filtro_resultado = seletor(list(RESULTADOS))
+        self.filtro_resultado.moldura.grid(row=1, column=2, sticky="ew",
+                                           padx=6, pady=(0, 12))
+        self.filtro_situacao = seletor(list(SITUACOES))
+        self.filtro_situacao.moldura.grid(row=1, column=3, sticky="ew",
+                                          padx=(6, 12), pady=(0, 12))
         self._lotes_da_maquina: dict[str, int] = {}
 
-        moldura = self._cartao(quadro)
-        moldura.grid(row=2, column=0, sticky="nsew", padx=34, pady=(0, 28))
+        moldura = ctk.CTkFrame(quadro, fg_color=marca.BRANCO,
+                               corner_radius=8, border_width=1,
+                               border_color=marca.BORDA)
+        moldura.grid(row=2, column=0, sticky="nsew")
         moldura.grid_rowconfigure(0, weight=1)
         moldura.grid_columnconfigure(0, weight=1)
 
-        # Tabela nativa, e não uma pilha de widgets num quadro rolável: com
-        # milhares de itens, o quadro rolável cria um widget por célula, e o
-        # Windows não repinta todos a tempo quando a rolagem é rápida — as
-        # linhas antigas ficam na tela por cima das novas. O Treeview desenha
-        # só o que está visível e rola liso com a lista inteira.
         self._preparar_estilo_da_tabela()
-
-        # A coluna da árvore (#0) guarda o ponto colorido do resultado. É o
-        # único lugar do Treeview que aceita cor por célula — etiqueta pinta
-        # a linha inteira, e a razão social sairia verde ou vermelha junto.
         self.tabela = ttk.Treeview(
             moldura, style="Acta.Treeview", show="tree headings",
             selectmode="browse",
             columns=("empresa", "documento", "maquina", "mes", "resultado"),
         )
-        self.tabela.column("#0", width=34, minwidth=34, stretch=False)
+        self.tabela.column("#0", width=30, minwidth=30, stretch=False)
         self.tabela.heading("#0", text="")
-        # As larguras mínimas cabem o conteúdo mais longo de cada coluna:
-        # CNPJ com máscara tem 18 caracteres, "Com efeito de negativa" tem
-        # 22. Apertadas, o Tk corta o texto sem avisar — e resultado
-        # cortado numa tela de conferência é pior que coluna larga.
         for chave, titulo, largura, minimo in (
-            ("empresa", "EMPRESA", 380, 240),
-            ("documento", "DOCUMENTO", 200, 190),
-            # Buscando em todas as máquinas, saber DE ONDE veio a linha é
-            # metade da resposta: é a máquina em que se vai mexer.
-            ("maquina", "MÁQUINA", 180, 150),
-            # A mesma empresa reaparece a cada mês com resultado próprio;
-            # sem esta coluna, as repetições parecem duplicidade.
-            ("mes", "MÊS", 140, 130),
-            ("resultado", "RESULTADO", 240, 230),
+            ("empresa", "EMPRESA", 320, 180),
+            ("documento", "DOCUMENTO", 170, 150),
+            ("maquina", "MÁQUINA", 160, 0),
+            ("mes", "MÊS", 118, 96),
+            ("resultado", "RESULTADO", 210, 170),
         ):
             self.tabela.heading(chave, text=titulo, anchor="w")
             self.tabela.column(chave, width=largura, minwidth=minimo,
                                stretch=(chave == "empresa"), anchor="w")
         self.tabela.grid(row=0, column=0, sticky="nsew", padx=1, pady=1)
 
-        rolagem = ctk.CTkScrollbar(moldura, command=self.tabela.yview,
-                                   button_color=marca.BORDA,
-                                   button_hover_color=marca.TEXTO_3,
-                                   fg_color="transparent", width=16)
-        rolagem.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=6)
-        self.tabela.configure(yscrollcommand=rolagem.set)
+        rolagem_y = ctk.CTkScrollbar(moldura, command=self.tabela.yview,
+                                     button_color=marca.BORDA,
+                                     button_hover_color=marca.TEXTO_3,
+                                     fg_color="transparent", width=16)
+        rolagem_y.grid(row=0, column=1, sticky="ns", padx=(0, 4), pady=6)
+        rolagem_x = ctk.CTkScrollbar(
+            moldura, orientation="horizontal", command=self.tabela.xview,
+            button_color=marca.BORDA, button_hover_color=marca.TEXTO_3,
+            fg_color="transparent", height=14)
+        rolagem_x.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 4))
+        self.tabela.configure(yscrollcommand=rolagem_y.set,
+                              xscrollcommand=rolagem_x.set)
 
         self.tabela.tag_configure("par", background=marca.BRANCO)
         self.tabela.tag_configure("impar", background=marca.ZEBRA)
-        # Clique duplo abre o histórico. Era a lacuna desta tela: ela existe
-        # para responder "o que houve com a empresa X" e parava em "Erro
-        # técnico", sem o motivo que o portal deu — que está gravado.
         self.tabela.bind("<Double-1>", self._abrir_detalhe_do_item)
         self.tabela.bind("<Return>", self._abrir_detalhe_do_item)
+        return quadro
+
+    def _secao_itens(self, pai) -> ctk.CTkFrame:
+        quadro = ctk.CTkFrame(pai, fg_color=marca.FUNDO)
+        quadro.grid_columnconfigure(0, weight=1)
+        self._titulo(quadro, "Carteira",
+                     "A consulta agora fica dentro da operação por máquina"
+                     ).grid(row=0, column=0, sticky="ew", padx=30, pady=(26, 18))
+        cartao = self._cartao(quadro)
+        cartao.grid(row=1, column=0, sticky="ew", padx=30)
+        cartao.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(cartao, text="Abra Operação para escolher o computador.",
+                     font=(FONTE, 13), text_color=marca.TEXTO_2,
+                     anchor="w").grid(row=0, column=0, sticky="w",
+                                      padx=22, pady=22)
+        ctk.CTkButton(cartao, text="Ir para Operação", height=40, width=150,
+                      corner_radius=8, font=(FONTE, 13, "bold"),
+                      fg_color=marca.AZUL_VIVO, hover_color=marca.AZUL,
+                      text_color=marca.BRANCO,
+                      command=lambda: self.mostrar("maquinas")).grid(
+            row=0, column=1, padx=22, pady=22)
         return quadro
 
     def _abrir_detalhe_do_item(self, _evento=None) -> None:
@@ -2133,16 +2395,23 @@ class Aplicativo(ctk.CTk):
         Só mexe no que já se sabe sem perguntar a ninguém: rodar na thread
         da janela é o que permite que ela continue respondendo.
         """
-        maquinas = [TODAS_AS_MAQUINAS]
+        maquinas = []
         if self.cfg.rede.roda_robo:
             maquinas.append(ESTA_MAQUINA)
         maquinas += [m.orgao or m.nome for m in self.cfg.rede.maquinas]
+        maquinas = [*maquinas, TODAS_AS_MAQUINAS] if maquinas else [TODAS_AS_MAQUINAS]
         if maquinas != self._maquinas_no_filtro:
             self._maquinas_no_filtro = maquinas
             atual = self.filtro_maquina.get()
             self.filtro_maquina.configure(values=maquinas)
-            if atual not in maquinas:
+            if not self._maquina_selecionada:
                 self.filtro_maquina.set(maquinas[0])
+                self._maquina_selecionada = maquinas[0]
+            elif atual not in maquinas:
+                escolhido = self._maquina_selecionada \
+                    if self._maquina_selecionada in maquinas else maquinas[0]
+                self.filtro_maquina.set(escolhido)
+                self._maquina_selecionada = escolhido
 
         if self.filtro_maquina.get() == TODAS_AS_MAQUINAS:
             # Lote é numeração interna de cada máquina: o lote 3 de uma não
@@ -2192,7 +2461,9 @@ class Aplicativo(ctk.CTk):
 
     def _ver_pendencias(self) -> None:
         """Leva à lista já filtrada — a pergunta seguinte é sempre 'quais?'."""
-        self.mostrar("itens")
+        self.mostrar("maquinas")
+        self.filtro_maquina.set(TODAS_AS_MAQUINAS)
+        self._maquina_selecionada = TODAS_AS_MAQUINAS
         self.filtro_situacao.set("Falhou")
         self.filtro_resultado.set("Todos os resultados")
         self.busca.delete(0, "end")
@@ -2385,14 +2656,17 @@ class Aplicativo(ctk.CTk):
         rede por máquina, e o que a pessoa acompanha ali — a última empresa
         consultada — muda na casa das dezenas de segundos, não dos dois.
         """
-        if self.secao_atual != "inicio":
+        if self.secao_atual not in ("inicio", "maquinas"):
             self._ciclos_ate_renovar = 0
             return
 
         self._ciclos_ate_renovar -= 1
         if self._ciclos_ate_renovar <= 0:
             self._ciclos_ate_renovar = CICLOS_ENTRE_CONSULTAS_DE_REDE
-            self._recarregar_maquinas(silencioso=True)
+            if self.secao_atual == "inicio":
+                self._recarregar_maquinas(silencioso=True)
+            else:
+                self._recarregar_saude(silencioso=True)
 
     def _atualizar_situacao(self) -> None:
         panorama = ler_panorama(self.cfg)
@@ -2535,14 +2809,28 @@ class Aplicativo(ctk.CTk):
 
     def _trocar_de_maquina(self, _escolha=None) -> None:
         """Troca a máquina: as planilhas dela são outras."""
+        self._maquina_selecionada = self.filtro_maquina.get()
         self._lotes_da_maquina = {}
-        self._recarregar_itens()
+        if self._maquinas and self.secao_atual == "maquinas":
+            self._desenhar_saude(self._maquinas)
+        else:
+            self._recarregar_itens()
 
     def _maquina_escolhida(self):
         """A máquina selecionada, ou None se for esta."""
         escolhido = self.filtro_maquina.get()
         return next((m for m in self.cfg.rede.maquinas
                      if (m.orgao or m.nome) == escolhido), None)
+
+    def _ajustar_colunas_da_tabela(self, escolha: str) -> None:
+        if escolha == TODAS_AS_MAQUINAS:
+            self.tabela.heading("maquina", text="MÁQUINA", anchor="w")
+            self.tabela.column("maquina", width=160, minwidth=120,
+                               stretch=False, anchor="w")
+        else:
+            self.tabela.heading("maquina", text="", anchor="w")
+            self.tabela.column("maquina", width=0, minwidth=0,
+                               stretch=False, anchor="w")
 
     def _recarregar_itens(self) -> None:
         """Dispara a busca; a janela continua respondendo enquanto ela corre.
@@ -2551,8 +2839,12 @@ class Aplicativo(ctk.CTk):
         uma máquina desligada segurava a interface pelos seis segundos do
         tempo limite — e o Windows a marcava como "não está respondendo".
         """
+        if not hasattr(self, "tabela"):
+            return
         self._atualizar_filtros_de_itens()
         escolha = self.filtro_maquina.get()
+        self._maquina_selecionada = escolha
+        self._ajustar_colunas_da_tabela(escolha)
         maquina = self._maquina_escolhida()
         rotulo = self.filtro_planilha.get()
         filtros = {
@@ -2596,7 +2888,7 @@ class Aplicativo(ctk.CTk):
                         "", "", "", ""))
             return
 
-        recado = f"{len(itens)} item(ns)"
+        recado = "1 item" if len(itens) == 1 else f"{_numero(len(itens))} itens"
         if len(itens) >= LIMITE_DE_ITENS:
             recado += " (máximo)"
         if mudas:

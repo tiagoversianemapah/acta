@@ -1,144 +1,496 @@
-{% if not orquestrador_vivo %}
-<div class="alerta-caixa">
-  <div>
-    <strong>O robô não está em execução.</strong>
-    {% if orquestrador_idade is none %}
-      Nenhum sinal de vida foi registrado nesta máquina — o processo ainda não foi iniciado.
+{% macro situacao_maquina(estado) %}
+  {% set cor = estado.situacao[1] %}
+  <span class="estado {{ cor }}">{{ estado.situacao[0] }}</span>
+{% endmacro %}
+
+{% macro resultado(desfecho, em_curso=false, interrompida=false) %}
+  {% if em_curso %}
+    <span class="selo info">Em execução</span>
+  {% elif interrompida %}
+    <span class="selo alerta">Interrompida</span>
+  {% elif desfecho == 'NEGATIVA' %}
+    <span class="selo ok">Negativa</span>
+  {% elif desfecho == 'CPEN' %}
+    <span class="selo ok">Efeito de negativa</span>
+  {% elif desfecho == 'POSITIVA' %}
+    <span class="selo alerta">Positiva</span>
+  {% elif desfecho == 'PENDENCIA_MANUAL' %}
+    <span class="selo alerta">Informações insuficientes</span>
+  {% elif desfecho == 'APROVEITADA' %}
+    <span class="selo info">Aproveitada</span>
+  {% elif desfecho == 'BLOQUEIO_TEMPORARIO' %}
+    <span class="selo alerta">Bloqueio temporário</span>
+  {% elif desfecho == 'RESULTADO_PENDENTE' %}
+    <span class="selo alerta">Resultado pendente</span>
+  {% elif desfecho == 'CAPTCHA' %}
+    <span class="selo erro">Captcha</span>
+  {% elif desfecho == 'ERRO_TECNICO' %}
+    <span class="selo erro">Erro técnico</span>
+  {% elif desfecho %}
+    <span class="selo">{{ desfecho }}</span>
+  {% else %}
+    <span class="muted">Sem retorno</span>
+  {% endif %}
+{% endmacro %}
+
+{% macro icone_metrica(tipo) %}
+  <span class="icone-metrica {{ tipo }}" aria-hidden="true">
+    {% if tipo == 'planilha' %}
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8"/><path d="M8 17h8"/><path d="M8 9h2"/></svg>
+    {% elif tipo == 'fila' %}
+      <svg viewBox="0 0 24 24"><path d="M3 6h8"/><path d="M3 12h8"/><path d="M3 18h8"/><path d="M16 7h5"/><path d="M16 12h5"/><path d="M16 17h5"/><circle cx="13.5" cy="7" r="1"/><circle cx="13.5" cy="12" r="1"/><circle cx="13.5" cy="17" r="1"/></svg>
+    {% elif tipo == 'pendentes' %}
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 7v5l3 2"/></svg>
     {% else %}
-      Último sinal há {{ (orquestrador_idade // 60) | int }} minuto(s).
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.2 2.2 4.8-5.2"/></svg>
     {% endif %}
-    <div class="dica">Nada será processado até que o serviço volte. Verifique o servidor.</div>
-  </div>
-</div>
-{% endif %}
+  </span>
+{% endmacro %}
 
-<div class="colunas">
-{% for item in resumos %}
-  {% set r = item.r %}
-  {% set neg = r.por_desfecho.get('NEGATIVA', 0) %}
-  {% set cpen = r.por_desfecho.get('CPEN', 0) %}
-  {% set pos = r.por_desfecho.get('POSITIVA', 0) %}
-  {% set pen = r.por_desfecho.get('PENDENCIA_MANUAL', 0) %}
-  {% set apr = r.por_desfecho.get('APROVEITADA', 0) %}
+{% macro icone_acao(tipo) %}
+  {% if tipo == 'parar' %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v14H5z"/></svg>
+  {% elif tipo == 'iniciar' %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 5 11 7-11 7z"/></svg>
+  {% elif tipo == 'anydesk' %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8"/><path d="M12 16v4"/></svg>
+  {% elif tipo == 'planilha' %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8"/><path d="M8 12h8"/><path d="M8 16h3"/><path d="M14 16h2"/></svg>
+  {% elif tipo == 'atualizar' %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 0 1-15.4 6.4"/><path d="M3 12A9 9 0 0 1 18.4 5.6"/><path d="M21 4v6h-6"/><path d="M3 20v-6h6"/></svg>
+  {% else %}
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-4"/></svg>
+  {% endif %}
+{% endmacro %}
 
-  <section class="painel">
-    <div class="painel-topo">
-      <h2>{{ r.orgao }}</h2>
-      {% if r.breaker_estado == 'FECHADO' %}
-        <span class="estado ok">Em operação</span>
-      {% elif r.breaker_estado == 'ABERTO' %}
-        <span class="estado erro">Suspenso automaticamente</span>
-      {% else %}
-        <span class="estado alerta">Verificando o portal</span>
-      {% endif %}
+{% macro icone_ficha(tipo) %}
+  <span class="icone-ficha" aria-hidden="true">
+    {% if tipo == 'ram' %}
+      <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4"/><path d="M15 2v4"/><path d="M9 18v4"/><path d="M15 18v4"/><path d="M2 9h4"/><path d="M2 15h4"/><path d="M18 9h4"/><path d="M18 15h4"/><path d="M10 10h4v4h-4z"/></svg>
+    {% elif tipo == 'disco' %}
+      <svg viewBox="0 0 24 24"><path d="M4 14 7 4h10l3 10v5a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M4 14h16"/><circle cx="12" cy="18" r="1"/></svg>
+    {% elif tipo == 'ligada' %}
+      <svg viewBox="0 0 24 24"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>
+    {% elif tipo == 'certidoes' %}
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+    {% else %}
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2"/><path d="M12 2v3"/><path d="M12 19v3"/><path d="M2 12h3"/><path d="M19 12h3"/></svg>
+    {% endif %}
+  </span>
+{% endmacro %}
+
+{% macro icone_linha(tipo) %}
+  <span class="icone-linha" aria-hidden="true">
+    {% if tipo == 'clock' %}
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    {% endif %}
+  </span>
+{% endmacro %}
+
+<div class="workspace">
+  <aside class="maquinas">
+    <div class="secao-topo">
+      <h2>Máquinas</h2>
+      <span class="contador-secao">{{ estados | length }}</span>
     </div>
+    <div class="lista-maquinas">
+      {% for estado in estados %}
+        {% set cor = estado.situacao[1] %}
+        <a href="/?maquina={{ loop.index0 }}"
+           class="maquina-linha {{ 'selecionada' if loop.index0 == selecionada_idx }}">
+          <span class="ponto {{ cor }}"></span>
+          <span class="maquina-texto">
+            <strong>{{ estado.rotulo }}</strong>
+            <small>{{ estado.nome }}</small>
+          </span>
+          <span class="maquina-percentual">{{ '%.0f' % estado.percentual }}%</span>
+          <span class="maquina-planilha">{{ estado.lote_nome }}</span>
+        </a>
+      {% else %}
+        <div class="vazio compacto">
+          <b>Nenhuma máquina cadastrada</b>
+          Configure a rede do ACTA para acompanhar os robôs.
+        </div>
+      {% endfor %}
+    </div>
+  </aside>
 
-    <div class="painel-corpo">
-      <div class="legenda-progresso">
-        <span><b>{{ '{:,}'.format(r.concluidos).replace(',','.') }}</b> de
-              {{ '{:,}'.format(r.total).replace(',','.') }} concluídos</span>
-        <span class="{{ 'estado' if item.eta }}">
-          {% if item.eta %}Previsão: {{ '%.0f' % item.eta }}h restantes
-          {% else %}<span style="color:var(--texto-3)">{{ '%.1f' % r.percentual }}%</span>{% endif %}
+  {% if selecionada %}
+  {% set situacao_texto = selecionada.situacao[0] %}
+  {% set situacao_cor = selecionada.situacao[1] %}
+  {% set disco_total = saude.disco_total_gb or 0 %}
+  {% set disco_livre = saude.disco_livre_gb or 0 %}
+  {% set disco_usado = disco_total - disco_livre %}
+  {% set disco_pct = (disco_usado / disco_total * 100) if disco_total else 0 %}
+  {% set ram_total = saude.ram_total_gb or 0 %}
+  {% set ram_usada = saude.ram_usada_gb or 0 %}
+  {% set ram_pct = (ram_usada / ram_total * 100) if ram_total else 0 %}
+  {% set ligada_h = saude.ligada_ha_h or 0 %}
+  {% set negativas = totais.negativas %}
+  {% set cpen = totais.cpen %}
+  {% set positivas = totais.positivas %}
+  {% set insuficientes = totais.insuficientes %}
+  {% set robo_parado_com_fila = selecionada.pendentes and not selecionada.robo_ativo %}
+
+  <section class="operacao">
+    <header class="operacao-topo">
+      <div class="identidade">
+        <div class="linha-identidade">
+          <h2>{{ selecionada.rotulo }}</h2>
+          {{ situacao_maquina(selecionada) }}
+        </div>
+        <p>
+          {{ selecionada.nome }}
+          {% if selecionada.maquina.base %}<span>· {{ selecionada.maquina.base }}</span>{% endif %}
+          {% if not selecionada.online and selecionada.erro %}<span>· {{ selecionada.erro }}</span>{% endif %}
+        </p>
+      </div>
+
+      <div class="acoes-operacao">
+        {% if selecionada.online and selecionada.roda_robo %}
+          <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
+                enctype="multipart/form-data" class="upload-planilha">
+            <label class="botao">
+              {{ icone_acao('planilha') }}<span>Enviar planilha</span>
+              <input type="file" name="arquivo" accept=".xlsx,.xlsm" onchange="this.form.submit()">
+            </label>
+          </form>
+        {% endif %}
+        {% if selecionada.online and selecionada.roda_robo %}
+          {% if selecionada.robo_ativo %}
+            {% if usa_rede and not selecionada.local %}
+            <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/robo/parar">
+              <button class="perigo"
+                      title="Pausa o robô no próximo ponto seguro">{{ icone_acao('parar') }}<span>Parar robô</span></button>
+            </form>
+            {% else %}
+            <button class="perigo"
+                    data-api-action="/api/robo/parar"
+                    data-label="Parar robô"
+                    title="Pausa o robô no próximo ponto seguro">{{ icone_acao('parar') }}<span>Parar robô</span></button>
+            {% endif %}
+          {% else %}
+            {% if usa_rede and not selecionada.local %}
+            <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/robo/iniciar">
+              <button class="primario"
+                      title="Inicia o robô visual nesta máquina">{{ icone_acao('iniciar') }}<span>Iniciar robô</span></button>
+            </form>
+            {% else %}
+            <button class="primario"
+                    data-api-action="/api/robo/iniciar"
+                    data-label="Iniciar robô"
+                    title="Inicia o robô visual nesta máquina">{{ icone_acao('iniciar') }}<span>Iniciar robô</span></button>
+            {% endif %}
+          {% endif %}
+        {% endif %}
+
+        {% if selecionada.acessavel %}
+          <a class="botao" href="anydesk:{{ selecionada.anydesk }}">{{ icone_acao('anydesk') }}<span>AnyDesk</span></a>
+        {% endif %}
+        {% if selecionada.online %}
+          {% if usa_rede and not selecionada.local %}
+            <button class="botao"
+                    data-update-form="/acoes/maquina/{{ selecionada_idx }}/atualizar"
+                    title="Atualiza esta maquina usando o pacote publicado pelo console">
+              {{ icone_acao('atualizar') }}<span>Atualizar</span>
+            </button>
+          {% elif selecionada.local %}
+            <button class="botao"
+                    data-update-api="/api/atualizar"
+                    title="Atualiza esta maquina usando o pacote publicado pelo console">
+              {{ icone_acao('atualizar') }}<span>Atualizar</span>
+            </button>
+          {% endif %}
+        {% endif %}
+        {% if selecionada.online %}
+          <a class="botao" href="{{ base_download }}/relatorio/{{ mes }}.xlsx">{{ icone_acao('planilha') }}<span>Planilha resultado</span></a>
+          <a class="botao" href="{{ base_download }}/certidoes/{{ mes }}.zip">{{ icone_acao('certidoes') }}<span>Certidões</span></a>
+        {% endif %}
+      </div>
+    </header>
+
+    <div class="faixa-operacao">
+      <div>
+        {{ icone_metrica('planilha') }}
+        <span class="metrica-corpo">
+          <span class="rotulo">Planilha atual</span>
+          <strong>{{ lote_nome }}</strong>
+          <small>fila de processamento</small>
         </span>
       </div>
-      <div class="progresso" title="{{ '%.1f' % r.percentual }}% concluído">
-        <i class="ok" style="width: {{ '%.2f' % r.percentual }}%"></i>
-        <i class="erro" style="width: {{ '%.2f' % (r.falhados / r.total * 100 if r.total else 0) }}%"></i>
+      <div>
+        {{ icone_metrica('fila') }}
+        <span class="metrica-corpo">
+          <span class="rotulo">Fila</span>
+          <strong>{{ '{:,.0f}'.format(totais.concluidos).replace(',', '.') }} de {{ '{:,.0f}'.format(totais.total).replace(',', '.') }}</strong>
+          <small>{{ '%.1f' % totais.percentual }}% concluído</small>
+        </span>
+      </div>
+      <div>
+        {{ icone_metrica('pendentes') }}
+        <span class="metrica-corpo">
+          <span class="rotulo">Pendentes</span>
+          <strong>{{ '{:,.0f}'.format(totais.pendentes).replace(',', '.') }}</strong>
+          <small>{{ totais.em_execucao }} em execução</small>
+        </span>
+      </div>
+      <div>
+        {{ icone_metrica('resultado') }}
+        <span class="metrica-corpo">
+          <span class="rotulo">Resultado</span>
+          <span class="resultado-geral">
+            <span><strong>{{ negativas }}</strong><small>negativas</small></span>
+            <span><strong>{{ positivas }}</strong><small>positivas</small></span>
+          </span>
+          <small><span class="bolinha-texto verde">{{ cpen }} CPEN</span> · <span>{{ insuficientes }} informações insuficientes</span></small>
+        </span>
       </div>
     </div>
 
-    <div class="metricas">
-      <div class="metrica {{ 'destaque' if neg else 'zero' }}">
-        <div class="n">{{ neg }}</div><div class="t">Negativas</div>
-      </div>
-      <div class="metrica {{ 'destaque' if cpen else 'zero' }}">
-        <div class="n">{{ cpen }}</div><div class="t">Com efeito de negativa</div>
-      </div>
-      <div class="metrica {{ 'atencao' if (pos + pen) else 'zero' }}">
-        <div class="n">{{ pos + pen }}</div><div class="t">Com pendência</div>
-      </div>
-      <div class="metrica {{ 'falha' if r.falhados else 'zero' }}">
-        <div class="n">{{ r.falhados }}</div><div class="t">Falhas</div>
-      </div>
+    <div class="linha-progresso" title="{{ '%.1f' % totais.percentual }}% concluído">
+      <span style="width: {{ '%.2f' % totais.percentual }}%"></span>
     </div>
 
-    <div class="rolagem" style="border-top:1px solid var(--linha)">
-      <table>
-        <tbody>
-          <tr>
-            <td style="color:var(--texto-2)">Restam na fila</td>
-            <td class="num">{{ '{:,}'.format(r.pendentes).replace(',','.') }}</td>
-            <td style="color:var(--texto-2)">Processando agora</td>
-            <td class="num">{{ r.em_execucao }}</td>
-          </tr>
-          <tr>
-            <td style="color:var(--texto-2)">Velocidade atual</td>
-            <td class="num">
-              {% if r.intervalo_s %}1 a cada {{ '%.0f' % r.intervalo_s }}s{% else %}—{% endif %}
-            </td>
-            <td style="color:var(--texto-2)">Feitas na última hora</td>
-            <td class="num">{{ r.ritmo_por_hora | int if r.ritmo_por_hora else 0 }}</td>
-          </tr>
-          <tr>
-            <td style="color:var(--texto-2)">Recusas do portal</td>
-            <td class="num">
-              {% if r.taxa_captcha is not none %}
-                <span class="selo {{ 'erro' if r.taxa_captcha > 0.1 else ('alerta' if r.taxa_captcha > 0.02 else 'ok') }}">
-                  {{ '%.1f' % (r.taxa_captcha * 100) }}%
-                </span>
-              {% else %}—{% endif %}
-            </td>
-            <td style="color:var(--texto-2)">Reaproveitadas</td>
-            <td class="num">{{ apr }}</td>
-          </tr>
-          <tr>
-            <td style="color:var(--texto-2)">Última tentativa</td>
-            <td colspan="3" class="mono">{{ r.ultima_tentativa or '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    {% if r.breaker_estado == 'ABERTO' %}
-    <div class="painel-corpo" style="border-top:1px solid var(--linha);background:var(--vermelho-fraco)">
-      <strong style="font-size:12.5px">Por que parou:</strong>
-      <span style="font-size:12.5px">{{ r.breaker_motivo }}</span>
-      <div class="dica">
-        O robô se pausou sozinho para não insistir contra o portal.
-        Retomada automática prevista para <span class="mono">{{ r.breaker_ate }}</span>.
+    {% if robo_parado_com_fila %}
+    <section class="linha-alerta erro">
+      <div>
+        <span class="rotulo">Robô parado</span>
+        <strong>{{ '{:,.0f}'.format(selecionada.pendentes).replace(',', '.') }} item(ns) na fila e sem processo ativo</strong>
       </div>
-    </div>
+      <div class="bloqueios">
+        <div>
+          <b>Retomada automática indisponível</b>
+          <span>
+            O painel está no ar, mas o robô não envia sinal
+            {% if dados.ultimo_sinal_ha_s %}
+              há {{ '%.0f' % ((dados.ultimo_sinal_ha_s or 0) / 60) }} min
+            {% endif %}.
+          </span>
+          {% if bloqueios %}
+            <span>Há pausa do portal registrada; ela só é reavaliada quando o robô está em execução.</span>
+          {% endif %}
+        </div>
+      </div>
+    </section>
+    {% elif bloqueios %}
+    <section class="linha-alerta">
+      <div>
+        <span class="rotulo">Pausa automática</span>
+        <strong>{{ bloqueios | length }} órgão(s) aguardando o portal liberar</strong>
+      </div>
+      <div class="bloqueios">
+        {% for b in bloqueios %}
+          <div>
+            <b>{{ b.rotulo or rotulo_orgao(b.orgao) }}</b>
+            <span>{{ b.disjuntor_motivo or 'bloqueio temporário' }}</span>
+            {% if b.disjuntor_ate %}
+              <span class="bloqueio-tempo">
+                {% if b.disjuntor_pausa %}
+                  <span class="tempo-pill"><b>Pausa</b> {{ b.disjuntor_pausa }}</span>
+                {% endif %}
+                <span class="tempo-pill"><b>Retoma</b> <span data-retoma-hora="{{ b.disjuntor_ate }}"></span></span>
+                <span class="tempo-pill"><b>Faltam</b> <span data-countdown="{{ b.disjuntor_ate }}"></span></span>
+              </span>
+            {% endif %}
+            <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ b.orgao }}/retomar">
+              <button class="botao botao-mini" type="submit">Resetar pausa</button>
+            </form>
+          </div>
+        {% endfor %}
+      </div>
+    </section>
     {% endif %}
 
-    <div class="painel-corpo" style="border-top:1px solid var(--linha)">
-      <div class="controles">
-        {% if r.breaker_estado == 'ABERTO' %}
-          <form method="post" action="/acoes/breaker/{{ r.orgao }}/retomar">
-            <button class="primario">Retomar agora</button>
-          </form>
-        {% else %}
-          <form method="post" action="/acoes/breaker/{{ r.orgao }}/pausar">
-            <button>Suspender temporariamente</button>
-          </form>
-        {% endif %}
-        <a class="botao" href="/jobs?orgao={{ r.orgao }}">Ver todos os itens</a>
-        {% if r.falhados %}
-          <a class="botao" href="/jobs?orgao={{ r.orgao }}&status=FAILED">
-            Ver as {{ r.falhados }} falhas
-          </a>
+    <section class="maquina-resumo">
+      <div class="secao-topo">
+        <h2>Máquina</h2>
+        <span>{{ dados.versao or 'sem versão' }}</span>
+      </div>
+      <div class="ficha-maquina">
+        <div>
+          {{ icone_ficha('ram') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">RAM</span>
+            <strong>{{ '%.1f' % ram_usada }} GB de {{ '%.1f' % ram_total }} GB</strong>
+            <div class="barra"><span style="width: {{ '%.1f' % ram_pct }}%"></span></div>
+          </div>
+        </div>
+        <div>
+          {{ icone_ficha('disco') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">Disco</span>
+            <strong>{{ '%.1f' % disco_usado }} GB usados · {{ '%.1f' % disco_livre }} GB livres</strong>
+            <div class="barra"><span style="width: {{ '%.1f' % disco_pct }}%"></span></div>
+          </div>
+        </div>
+        <div>
+          {{ icone_ficha('ligada') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">Ligada há</span>
+            <strong>{% if ligada_h >= 0 %}{{ '%.1f' % ligada_h }} h{% else %}sem leitura{% endif %}</strong>
+          </div>
+        </div>
+        <div>
+          {{ icone_ficha('certidoes') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">Certidões salvas</span>
+            <strong>{{ dados.certidoes.arquivos or 0 }} PDFs · {{ dados.certidoes.gb or 0 }} GB</strong>
+          </div>
+        </div>
+        <div>
+          {{ icone_ficha('calibragem') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">Calibragem</span>
+            <strong>
+              {% if dados.calibragem %}
+                {{ dados.calibragem.pontos }} pontos · {{ dados.calibragem.quando }}
+              {% else %}
+                sem registro
+              {% endif %}
+            </strong>
+          </div>
+        </div>
+        {% if saude.avisos %}
+        <div>
+          {{ icone_ficha('calibragem') }}
+          <div class="ficha-corpo">
+            <span class="rotulo-ficha">Avisos</span>
+            <strong>{{ saude.avisos | join(' · ') }}</strong>
+          </div>
+        </div>
         {% endif %}
       </div>
-    </div>
-  </section>
-{% else %}
-  <div class="painel">
-    <div class="vazio">
-      <b>Nenhum lote importado</b>
-      Importe uma planilha para começar: <span class="mono">cnd importar arquivo.xlsx</span>
-    </div>
-  </div>
-{% endfor %}
-</div>
+    </section>
 
-<p class="dica">Atualizado às {{ agora[11:19] }} — a página se renova sozinha a cada 5 segundos.</p>
+    <section class="tabela-operacional">
+      <div class="secao-topo">
+        <h2>Órgãos e fila</h2>
+        <span>{{ orgaos | length }}</span>
+      </div>
+      <div class="rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th>Órgão</th>
+              <th>Situação</th>
+              <th class="num">Fila</th>
+              <th class="num">Concluído</th>
+              <th class="num">Falhas</th>
+              <th>Ritmo</th>
+              <th>Bloqueio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for r in orgaos %}
+            <tr>
+              <td>
+                <strong>{{ r.rotulo or rotulo_orgao(r.orgao) }}</strong>
+                <small class="linha-menor">{{ r.orgao }}</small>
+              </td>
+              <td>
+                {% if not selecionada.robo_ativo and r.pendentes %}
+                  <span class="estado vermelho">Parado</span>
+                {% elif r.disjuntor == 'ABERTO' %}
+                  <span class="estado ambar">Pausado</span>
+                {% elif r.em_execucao %}
+                  <span class="estado verde">Em execução</span>
+                {% else %}
+                  <span class="estado cinza">Aguardando</span>
+                {% endif %}
+              </td>
+              <td class="num">{{ '{:,.0f}'.format(r.pendentes).replace(',', '.') }}</td>
+              <td class="num">{{ '%.1f' % r.percentual }}%</td>
+              <td class="num">{{ r.falhados }}</td>
+              <td>
+                {% if r.por_hora %}
+                  {{ '%.0f' % r.por_hora }}/h
+                {% elif r.intervalo_s %}
+                  1 a cada {{ '%.0f' % r.intervalo_s }}s
+                {% else %}
+                  <span class="muted">sem leitura</span>
+                {% endif %}
+              </td>
+              <td>
+                {% if r.disjuntor == 'ABERTO' %}
+                  <span class="texto-alerta">{{ r.disjuntor_motivo or 'bloqueio temporário' }}</span>
+                  {% if r.disjuntor_ate %}
+                    <small class="linha-menor">
+                      {% if r.disjuntor_pausa %}pausa {{ r.disjuntor_pausa }} · {% endif %}
+                      retoma às <span data-retoma-hora="{{ r.disjuntor_ate }}"></span>
+                    </small>
+                    <small class="linha-menor">faltam <span data-countdown="{{ r.disjuntor_ate }}"></span></small>
+                  {% endif %}
+                  <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ r.orgao }}/retomar">
+                    <button class="botao botao-mini" type="submit">Resetar pausa</button>
+                  </form>
+                {% else %}
+                  <span class="muted">sem bloqueio</span>
+                {% endif %}
+              </td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7">
+                <div class="vazio compacto">
+                  <b>Sem fila carregada</b>
+                  Nenhuma planilha ativa foi encontrada nesta máquina.
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="historico">
+      <div class="secao-topo">
+        <h2>Últimas consultas</h2>
+        <span class="contador-secao">{{ atividade | length }}</span>
+      </div>
+      <div class="rolagem">
+        <table>
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th>Empresa</th>
+              <th>Documento</th>
+              <th>Órgão</th>
+              <th>Resultado</th>
+              <th>Retorno do portal</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in atividade %}
+            <tr>
+              <td><span class="hora-consulta">{{ icone_linha('clock') }}<span class="mono">{{ a.hora or (a.quando or '')[11:19] }}</span></span></td>
+              <td>{{ a.nome }}</td>
+              <td class="mono">{{ a.documento }}</td>
+              <td>{{ rotulo_orgao(a.orgao) }}</td>
+              <td>{{ resultado(a.desfecho, a.em_curso, a.interrompida) }}</td>
+              <td class="retorno">{{ a.mensagem_portal or 'sem mensagem' }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="6">
+                <div class="vazio compacto">
+                  <b>Sem tentativas recentes</b>
+                  Quando o robô consultar, os retornos aparecem aqui.
+                </div>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </section>
+  {% else %}
+    <section class="operacao">
+      <div class="vazio">
+        <b>Nenhuma máquina disponível</b>
+        Cadastre uma máquina ou rode o painel em um computador do robô.
+      </div>
+    </section>
+  {% endif %}
+</div>

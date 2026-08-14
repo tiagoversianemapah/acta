@@ -9,30 +9,53 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import re
 import secrets
+import shutil
+import socket
 import sqlite3
+import tempfile
+import time
+import urllib.parse
 from pathlib import Path
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
     Response,
 )
+from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from cnd.core import breaker, fila, tempo
-from cnd.infra import alertas, heartbeat
+from cnd.core.documentos import formatar
+from cnd.desktop import remoto
+from cnd.infra import alertas, heartbeat, maquina
+from cnd.infra.config import Maquina
 from cnd.infra.config import carregar as carregar_config
-from cnd.infra.db import RAIZ_PROJETO, conectar, conectar_leitura
+from cnd.infra.db import RAIZ_PROJETO, conectar, conectar_leitura, criar_schema
 from cnd.infra.log import configurar as configurar_log
 from cnd.infra.log import obter
-from cnd.web import api, comandos, consultas, relatorio
+from cnd.web import api, carteira, comandos, consultas, diagnostico, relatorio
 
 log = obter("web")
 cfg = carregar_config()
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
+app_static = Path(__file__).parent / "static"
+PLANILHA_ENVIADA = File(...)
+
+
+def _rotulo_orgao(codigo: str) -> str:
+    orgao = cfg.orgaos.get(codigo)
+    return orgao.rotulo if orgao else codigo
+
+
+templates.env.globals.update(
+    versao_acta=maquina.versao() or "",
+    rotulo_orgao=_rotulo_orgao,
+)
 
 
 def ler() -> sqlite3.Connection:
@@ -41,6 +64,51 @@ def ler() -> sqlite3.Connection:
 
 def escrever() -> sqlite3.Connection:
     return conectar(cfg.banco)
+
+
+INTERVALO_RETOMADA_AUTOMATICA_S = 300.0
+_ultima_retomada_automatica = -INTERVALO_RETOMADA_AUTOMATICA_S
+
+
+def _tentar_retomada_automatica(idade: float | None, na_fila: int) -> bool:
+    """Relanca o robo quando ele morreu no meio de uma fila."""
+    global _ultima_retomada_automatica
+
+    if not cfg.rede.roda_robo or not na_fila:
+        return False
+    if idade is None or idade <= cfg.alertas.heartbeat_timeout_s:
+        return False
+
+    agora = time.monotonic()
+    if agora - _ultima_retomada_automatica < INTERVALO_RETOMADA_AUTOMATICA_S:
+        return False
+    _ultima_retomada_automatica = agora
+
+    ok, situacao = comandos.iniciar_robo_da_maquina(
+        cfg, RAIZ_PROJETO, automatico=True
+    )
+    ja_estava_rodando = situacao.lower().startswith("ja esta")
+    if ok and not ja_estava_rodando:
+        log.warning(
+            "robo_retomado_automaticamente",
+            extra={"sem_sinal_ha_s": round(idade), "itens_na_fila": na_fila,
+                   "situacao": situacao},
+        )
+        return True
+    if ok:
+        log.warning(
+            "retomada_automatica_encontrou_robo_sem_heartbeat",
+            extra={"sem_sinal_ha_s": round(idade), "itens_na_fila": na_fila,
+                   "situacao": situacao},
+        )
+        return False
+
+    log.warning(
+        "retomada_automatica_nao_iniciou",
+        extra={"sem_sinal_ha_s": round(idade), "itens_na_fila": na_fila,
+               "motivo": situacao},
+    )
+    return False
 
 
 async def vigiar_orquestrador() -> None:
@@ -65,7 +133,9 @@ async def vigiar_orquestrador() -> None:
             limite = cfg.alertas.heartbeat_timeout_s
             mudo = idade is not None and idade > limite
 
-            if mudo and na_fila:
+            retomou = _tentar_retomada_automatica(idade, na_fila) if mudo else False
+
+            if mudo and na_fila and not retomou:
                 alertas.abrir_incidente(
                     cfg.alertas, "heartbeat",
                     "Robô parado com trabalho na fila",
@@ -101,6 +171,7 @@ async def ciclo_de_vida(app: FastAPI):
 
 
 app = FastAPI(title="CND Bot", lifespan=ciclo_de_vida)
+app.mount("/static", StaticFiles(directory=str(app_static)), name="static")
 app.include_router(api.montar(lambda: cfg, ler))
 # As rotas que mexem na máquina ficam num roteador separado, e exigem senha
 # configurada — a capacidade perigosa nasce desligada.
@@ -174,80 +245,339 @@ async def exigir_senha(request: Request, seguir):
 # Painel
 # ----------------------------------------------------------------------
 
-def _contexto_painel(conn: sqlite3.Connection, lote_id: int | None) -> dict:
-    todos = consultas.lotes(conn)
-    if lote_id is None and todos:
-        lote_id = todos[0]["id"]
+def _maquinas_operacao() -> list[remoto.EstadoRemoto]:
+    """Estados exibidos na tela de operacao, locais ou remotos."""
+    return remoto.consultar_todas(cfg)
 
-    resumos = []
-    for orgao in consultas.orgaos_do_lote(conn, lote_id):
-        r = consultas.resumo(conn, orgao, lote_id)
-        resumos.append({"r": r, "eta": consultas.eta_horas(r)})
 
-    idade = heartbeat.segundos_desde(conn, "orquestrador")
+def _indice_da_maquina(
+    estados: list[remoto.EstadoRemoto], maquina: int | None
+) -> int | None:
+    if not estados:
+        return None
+    if maquina is not None and 0 <= maquina < len(estados):
+        return maquina
+    return min(range(len(estados)), key=lambda i: estados[i].gravidade)
+
+
+def _totais(orgaos: list[dict]) -> dict:
+    por_desfecho: dict[str, int] = {}
+    for orgao in orgaos:
+        for chave, valor in orgao.get("por_desfecho", {}).items():
+            por_desfecho[chave] = por_desfecho.get(chave, 0) + int(valor or 0)
+
+    total = sum(int(o.get("total") or 0) for o in orgaos)
+    concluidos = sum(int(o.get("concluidos") or 0) for o in orgaos)
+    falhados = sum(int(o.get("falhados") or 0) for o in orgaos)
+    pendentes = sum(int(o.get("pendentes") or 0) for o in orgaos)
+    em_execucao = sum(int(o.get("em_execucao") or 0) for o in orgaos)
     return {
-        "lotes": todos,
-        "lote_id": lote_id,
-        "resumos": resumos,
-        "rotulos": consultas.ROTULOS,
-        "orquestrador_vivo": idade is not None and idade <= cfg.alertas.heartbeat_timeout_s,
-        "orquestrador_idade": idade,
+        "total": total,
+        "concluidos": concluidos,
+        "falhados": falhados,
+        "pendentes": pendentes,
+        "em_execucao": em_execucao,
+        "percentual": (concluidos / total * 100) if total else 0.0,
+        "por_desfecho": por_desfecho,
+        "negativas": por_desfecho.get("NEGATIVA", 0),
+        "positivas": por_desfecho.get("POSITIVA", 0),
+        "cpen": por_desfecho.get("CPEN", 0),
+        "insuficientes": por_desfecho.get("PENDENCIA_MANUAL", 0),
+    }
+
+
+def _url_destino(
+    rota: str, maquina: int | str | None = None,
+    mensagem: str | None = None, erro: str | None = None,
+    arquivo: int | None = None,
+) -> str:
+    params: dict[str, str] = {}
+    if maquina is not None:
+        params["maquina"] = str(maquina)
+    if arquivo is not None:
+        params["arquivo"] = str(arquivo)
+    if mensagem:
+        params["mensagem"] = mensagem[:220]
+    if erro:
+        params["erro"] = erro[:220]
+    consulta = urllib.parse.urlencode(params)
+    return f"{rota}?{consulta}" if consulta else rota
+
+
+_CORRECOES_FLASH = (
+    (r"\bRobo\b", "Robô"),
+    (r"\brobo\b", "robô"),
+    (r"\bMaquina\b", "Máquina"),
+    (r"\bmaquina\b", "máquina"),
+    (r"\bAtualizacao\b", "Atualização"),
+    (r"\batualizacao\b", "atualização"),
+    (r"\bnao\b", "não"),
+    (r"\bNao\b", "Não"),
+    (r"\besta\b", "está"),
+    (r"\bEsta\b", "Está"),
+    (r"\bja\b", "já"),
+    (r"\bJa\b", "Já"),
+    (r"\bexecucao\b", "execução"),
+    (r"\bExecucao\b", "Execução"),
+    (r"\bsessao\b", "sessão"),
+    (r"\bSessao\b", "Sessão"),
+)
+
+
+def _formatar_flash(texto: str | None) -> str | None:
+    if not texto:
+        return None
+
+    frase = " ".join(str(texto).split())
+    for origem, destino in _CORRECOES_FLASH:
+        frase = re.sub(origem, destino, frase)
+    if frase:
+        frase = frase[:1].upper() + frase[1:]
+    if frase and frase[-1] not in ".!?":
+        frase += "."
+    return frase
+
+
+def _ip_da_rede() -> str:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def _origem_atualizacao(request: Request) -> str:
+    host = request.url.hostname or ""
+    if host in {"", "localhost", "127.0.0.1", "::1"}:
+        host = _ip_da_rede()
+    return f"http://{host}:8899"
+
+
+def _origem_atualizacao_salva() -> str:
+    arquivo = RAIZ_PROJETO / "data" / "ultima_origem_atualizacao.txt"
+    with contextlib.suppress(OSError):
+        return arquivo.read_text(encoding="utf-8-sig").strip().rstrip("/")
+    return ""
+
+
+def _contexto_painel(
+    maquina: int | None,
+    mensagem: str | None = None,
+    erro: str | None = None,
+    request: Request | None = None,
+) -> dict:
+    estados = _maquinas_operacao()
+    indice = _indice_da_maquina(estados, maquina)
+    selecionada = estados[indice] if indice is not None else None
+    dados = selecionada.dados if selecionada else {}
+    orgaos = selecionada.orgaos if selecionada else []
+    totais = _totais(orgaos)
+    lotes = dados.get("lotes", [])
+    meses = dados.get("meses", [])
+    mes_atual = meses[0] if meses else relatorio.mes_corrente()
+    base_download = (
+        "" if not selecionada or selecionada.local else selecionada.maquina.base
+    )
+
+    return {
+        "estados": estados,
+        "selecionada": selecionada,
+        "selecionada_idx": indice,
+        "dados": dados,
+        "orgaos": orgaos,
+        "totais": totais,
+        "bloqueios": [o for o in orgaos if o.get("disjuntor") == "ABERTO"],
+        "atividade": selecionada.atividade if selecionada else [],
+        "saude": selecionada.saude if selecionada else {},
+        "lotes": lotes,
+        "lote_id": dados.get("lote_id"),
+        "lote_nome": dados.get("lote_nome") or "sem planilha ativa",
+        "mes": mes_atual,
+        "base_download": base_download,
+        "usa_rede": bool(cfg.rede.maquinas),
+        "pode_controlar_local": bool(selecionada and selecionada.local),
+        "origem_atualizacao_padrao": (
+            _origem_atualizacao_salva()
+            or (_origem_atualizacao(request) if request else "")
+        ),
+        "mensagem_operacao": _formatar_flash(mensagem),
+        "erro_operacao": _formatar_flash(erro),
         "agora": tempo.agora_iso(),
-        "mes": relatorio.mes_corrente(),
     }
 
 
 @app.get("/", response_class=HTMLResponse)
-def painel(request: Request, lote: int | None = None):
-    with contextlib.closing(ler()) as conn:
-        ctx = _contexto_painel(conn, lote)
+def painel(
+    request: Request, maquina: int | None = None,
+    mensagem: str | None = None, erro: str | None = None,
+):
+    ctx = _contexto_painel(maquina, mensagem, erro, request)
     return templates.TemplateResponse(request, "painel.html", ctx)
 
 
 @app.get("/fragmento/resumo", response_class=HTMLResponse)
-def fragmento_resumo(request: Request, lote: int | None = None):
-    """Pedaço recarregado a cada 5s pelo JavaScript da página — só os cartões."""
-    with contextlib.closing(ler()) as conn:
-        ctx = _contexto_painel(conn, lote)
+def fragmento_resumo(request: Request, maquina: int | None = None):
+    """Pedaço recarregado pelo JavaScript: estado operacional da máquina."""
+    ctx = _contexto_painel(maquina, request=request)
     return templates.TemplateResponse(request, "_cards.html", ctx)
 
 
+def _contexto_diagnostico(maquina: int | None, dias: int) -> dict:
+    dias = diagnostico.normalizar_dias(dias)
+    estados = _maquinas_operacao()
+    indice = _indice_da_maquina(estados, maquina)
+    selecionada = estados[indice] if indice is not None else None
+    diagnosticos, erro = diagnostico.coletar_da_maquina(
+        selecionada, dias, ler, cfg.rede.senha
+    )
+    return diagnostico.contexto(
+        estados, selecionada, indice, diagnosticos, erro, dias
+    )
+
+
 # ----------------------------------------------------------------------
-# Triagem
+# Fila
 # ----------------------------------------------------------------------
 
+TODAS_AS_MAQUINAS = "__todas__"
+LOCAL_ID = "__local__"
+
+
+def _maquinas_da_fila() -> list[tuple[str, str, Maquina | None]]:
+    if cfg.rede.maquinas:
+        return [
+            (str(indice), maquina_cfg.rotulo, maquina_cfg)
+            for indice, maquina_cfg in enumerate(cfg.rede.maquinas)
+        ]
+    if cfg.rede.roda_robo:
+        return [(LOCAL_ID, cfg.rede.nome or "Esta máquina", None)]
+    return []
+
+
+def _maquina_da_carteira(maquina_id: str | None) -> tuple[str, int | None]:
+    maquinas = _maquinas_da_fila()
+    if not maquinas:
+        return "", None
+
+    ids = {ident for ident, _rotulo, _maquina in maquinas}
+    escolhido = maquina_id if maquina_id in ids else maquinas[0][0]
+    indice = int(escolhido) if escolhido.isdigit() else 0
+    return escolhido, indice
+
+
+def _ids_escolhidos(maquina_id: str | None) -> set[str]:
+    ids = {ident for ident, _rotulo, _maquina in _maquinas_da_fila()}
+    if maquina_id and maquina_id in ids:
+        return {maquina_id}
+    return ids
+
+
+def _certidao_do_item(item: dict) -> dict | None:
+    if not item.get("caminho_pdf"):
+        return None
+    return {
+        "tipo": item.get("tipo"),
+        "emitida_em": item.get("emitida_em"),
+        "valida_ate": item.get("valida_ate"),
+        "codigo_controle": item.get("codigo_controle"),
+        "caminho_pdf": item.get("caminho_pdf"),
+    }
+
+
+def _buscar_item(
+    job_id: int, maquina_id: str | None
+) -> tuple[dict | None, list[dict], dict | None, str]:
+    candidatos = [
+        m for m in _maquinas_da_fila()
+        if m[0] in _ids_escolhidos(maquina_id)
+    ] or _maquinas_da_fila()
+
+    for ident, rotulo, maquina_cfg in candidatos:
+        if maquina_cfg is None:
+            with contextlib.closing(ler()) as conn:
+                linhas = consultas.jobs(conn, job_id=job_id, limite=1)
+                if not linhas:
+                    continue
+                item = dict(linhas[0])
+                item["maquina_id"] = ident
+                item["maquina"] = rotulo
+                item["documento_fmt"] = formatar(item.get("documento") or "")
+                tentativas = [
+                    dict(linha) for linha in consultas.tentativas_do_job(conn, job_id)
+                ]
+                return item, tentativas, _certidao_do_item(item), rotulo
+
+        else:
+            linhas = remoto.listar_itens(
+                maquina_cfg, cfg.rede.senha, job_id=job_id, limite=1
+            )
+            if not linhas:
+                continue
+            item = dict(linhas[0])
+            item["maquina_id"] = ident
+            item["maquina"] = rotulo
+            item["documento_fmt"] = formatar(item.get("documento") or "")
+            tentativas = remoto.tentativas_do_job(maquina_cfg, cfg.rede.senha, job_id)
+            return item, tentativas, _certidao_do_item(item), rotulo
+
+    return None, [], None, ""
+
 @app.get("/jobs", response_class=HTMLResponse)
-def listar_jobs(request: Request, lote: int | None = None, orgao: str | None = None,
-                status: str | None = None, desfecho: str | None = None,
-                busca: str | None = None):
-    with contextlib.closing(ler()) as conn:
-        linhas = consultas.jobs(conn, lote, orgao or None, status or None,
-                                desfecho or None, busca or None)
-        orgaos = consultas.orgaos_do_lote(conn, lote)
-        lotes = consultas.lotes(conn)
-    return templates.TemplateResponse(request, "jobs.html", {
-        "jobs": linhas, "orgaos": orgaos, "lotes": lotes,
-        "lote_id": lote, "filtros": {"orgao": orgao, "status": status,
-                                     "desfecho": desfecho, "busca": busca},
-    })
+def listar_jobs(
+    request: Request,
+    maquina: str | None = None,
+    arquivo: int | None = None,
+    orgao: str | None = None,
+    status: str | None = None,
+    desfecho: str | None = None,
+    busca: str | None = None,
+    pagina: int = 1,
+    limite: int = carteira.ITENS_POR_PAGINA,
+    mensagem: str | None = None,
+    erro: str | None = None,
+):
+    estados = _maquinas_operacao()
+    maquina_id, indice = _maquina_da_carteira(maquina)
+    selecionada = estados[indice] if indice is not None and indice < len(estados) else None
+    pagina = carteira.normalizar_pagina(pagina)
+    limite = carteira.normalizar_limite(limite)
+    maquinas_fila = _maquinas_da_fila()
+    arquivos = carteira.arquivos_do_estado(selecionada)
+    arquivo_atual = carteira.escolher_arquivo(arquivos, arquivo)
+    arquivo_id = arquivo_atual["id"] if arquivo_atual else None
+    filtros = carteira.filtros_contexto(
+        maquina_id, arquivo_id, orgao, status, desfecho, busca
+    )
+    linhas, mudas, orgaos, total, contagens_status = carteira.listar(
+        maquina_id, arquivo_id, orgao, status, desfecho, busca, pagina, limite,
+        maquinas_fila, ler, cfg.rede.senha,
+    )
+    ctx = carteira.contexto(
+        estados, selecionada, indice, filtros, arquivos, arquivo_atual, linhas,
+        mudas, orgaos, total, contagens_status, pagina, limite,
+    )
+    ctx.update({"mensagem_carteira": mensagem, "erro_carteira": erro})
+    return templates.TemplateResponse(request, "jobs.html", ctx)
 
 
 @app.get("/job/{job_id}", response_class=HTMLResponse)
-def detalhe_job(request: Request, job_id: int):
-    with contextlib.closing(ler()) as conn:
-        job = conn.execute(
-            """
-            SELECT j.*, e.documento, e.nome FROM job j
-              JOIN empresa e ON e.id = j.empresa_id WHERE j.id = ?
-            """,
-            (job_id,),
-        ).fetchone()
-        tentativas = consultas.tentativas_do_job(conn, job_id)
-        certidao = conn.execute(
-            "SELECT * FROM certidao WHERE job_id = ?", (job_id,)
-        ).fetchone()
+def detalhe_job(
+    request: Request, job_id: int, maquina: str | None = None,
+    arquivo: int | None = None,
+):
+    job, tentativas, certidao, origem = _buscar_item(job_id, maquina)
     return templates.TemplateResponse(request, "job.html", {
         "job": job, "tentativas": tentativas, "certidao": certidao,
+        "rotulos": consultas.ROTULOS,
+        "origem": origem,
+        "voltar_url": (
+            _url_destino(
+                "/jobs",
+                maquina,
+                arquivo=arquivo,
+            ) if maquina or arquivo else "/jobs"
+        ),
     })
 
 
@@ -278,7 +608,7 @@ def ping():
         return JSONResponse({"ok": False, "motivo": f"banco inacessível: {erro}"},
                             status_code=503)
 
-    ativo = idade is not None and idade <= cfg.alertas.heartbeat_timeout_s
+    ativo = api._robo_ativo_por_sinal(idade, cfg.alertas.heartbeat_timeout_s)
     vivo = ativo or not pendentes
     corpo = {
         "ok": vivo,
@@ -298,27 +628,307 @@ def ping():
 
 
 @app.get("/saude", response_class=HTMLResponse)
-def saude(request: Request):
-    with contextlib.closing(ler()) as conn:
-        dados = {orgao: consultas.captcha_por_hora(conn, orgao)
-                 for orgao in consultas.orgaos_do_lote(conn, None)}
-        idade = heartbeat.segundos_desde(conn, "orquestrador")
-    return templates.TemplateResponse(request, "saude.html", {
-        "dados": dados, "idade": idade,
-        "timeout": cfg.alertas.heartbeat_timeout_s,
-    })
+def saude(request: Request, maquina: int | None = None, dias: int = 7):
+    return templates.TemplateResponse(
+        request, "saude.html", _contexto_diagnostico(maquina, dias)
+    )
+
+
+@app.get("/diagnostico.json")
+def baixar_diagnostico(maquina: int | None = None, dias: int = 7):
+    ctx = _contexto_diagnostico(maquina, dias)
+    nome = ctx["selecionada"].nome if ctx["selecionada"] else "diagnostico"
+    arquivo = "".join(c if c.isalnum() else "_" for c in nome).strip("_")
+    return JSONResponse(
+        {
+            "maquina": nome,
+            "periodo": ctx["periodo"],
+            "dias": ctx["dias"],
+            "erro": ctx["erro_diagnostico"],
+            "orgaos": ctx["diagnosticos"],
+            "gerado_em": tempo.agora_iso(),
+        },
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="diagnostico_{arquivo or "acta"}.json"'
+            )
+        },
+    )
 
 
 # ----------------------------------------------------------------------
 # Ações
 # ----------------------------------------------------------------------
 
-@app.post("/acoes/reenfileirar")
-def acao_reenfileirar(orgao: str = Form(default="")):
+async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
+    nome = Path(arquivo.filename or "planilha.xlsx").name
+    if not nome.lower().endswith((".xlsx", ".xlsm")):
+        raise ValueError("Envie um arquivo .xlsx ou .xlsm.")
+
+    destino = Path(tempfile.mkdtemp(prefix="acta_upload_")) / nome
+    tamanho = 0
+    with destino.open("wb") as saida:
+        while bloco := await arquivo.read(1 << 20):
+            tamanho += len(bloco)
+            if tamanho > comandos.LIMITE_DA_PLANILHA_MB * 1024 * 1024:
+                raise ValueError(
+                    f"Planilha maior que {comandos.LIMITE_DA_PLANILHA_MB} MB."
+                )
+            saida.write(bloco)
+    return destino
+
+
+def _importar_planilha_local(caminho: Path) -> dict:
+    from cnd.ingestao.planilha import importar
+
+    conn = conectar(cfg.banco)
+    try:
+        criar_schema(conn)
+        lote_id, leitura = importar(
+            conn, caminho, f"Importacao de {caminho.name}", ["RFB"]
+        )
+        return {
+            "lote": lote_id,
+            "criados": len(leitura.itens),
+            "total_rejeitados": len(leitura.rejeitados),
+        }
+    finally:
+        conn.close()
+
+
+def _mensagem_importacao(resposta: dict, inicio: str | None = None) -> str:
+    criados = int(resposta.get("criados") or 0)
+    rejeitados = int(resposta.get("total_rejeitados") or 0)
+    partes = [f"{criados} item(ns) entraram na fila"]
+    if rejeitados:
+        partes.append(f"{rejeitados} rejeitado(s)")
+    if inicio:
+        partes.append(inicio)
+    return "; ".join(partes)
+
+
+def _resetar_pausa_local(orgao: str) -> None:
     with contextlib.closing(escrever()) as conn:
-        quantidade = fila.reenfileirar_falhados(conn, orgao or None)
-    log.info("reenfileirados", extra={"orgao": orgao or "todos", "quantidade": quantidade})
-    return RedirectResponse("/jobs?status=FAILED", status_code=303)
+        breaker.fechar(conn, orgao)
+        conn.execute("UPDATE breaker SET aberturas = 0 WHERE orgao = ?", (orgao,))
+
+
+@app.post("/acoes/maquina/{indice}/planilha")
+async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA):
+    caminho: Path | None = None
+    try:
+        caminho = await _salvar_planilha_temporaria(arquivo)
+        if cfg.rede.maquinas:
+            if indice < 0 or indice >= len(cfg.rede.maquinas):
+                return RedirectResponse(
+                    _url_destino("/", erro="Maquina nao encontrada."),
+                    status_code=303,
+                )
+            resposta = remoto.enviar_planilha(
+                cfg.rede.maquinas[indice], caminho, cfg.rede.senha
+            )
+            inicio = None
+            try:
+                robo = remoto.comandar_robo(
+                    cfg.rede.maquinas[indice], iniciar=True,
+                    senha=cfg.rede.senha,
+                )
+                inicio = robo.get("mensagem") or robo.get("situacao") or "Robo iniciado"
+            except Exception as erro:
+                inicio = f"robo nao iniciou: {erro}"
+        else:
+            if indice != 0 or not cfg.rede.roda_robo:
+                return RedirectResponse(
+                    _url_destino("/", erro="Maquina nao encontrada."),
+                    status_code=303,
+                )
+            resposta = _importar_planilha_local(caminho)
+            ok, situacao = comandos.iniciar_robo_da_maquina(cfg, RAIZ_PROJETO)
+            inicio = situacao if ok else f"robo nao iniciou: {situacao}"
+
+        destino = "/jobs"
+        lote = int(resposta.get("lote") or 0) or None
+        return RedirectResponse(
+            _url_destino(
+                destino, indice, arquivo=lote,
+                mensagem=_mensagem_importacao(resposta, inicio),
+            ),
+            status_code=303,
+        )
+    except Exception as erro:
+        log.warning("envio_planilha_falhou", extra={"maquina": indice, "erro": str(erro)})
+        return RedirectResponse(
+            _url_destino("/", indice, erro=str(erro)),
+            status_code=303,
+        )
+    finally:
+        if caminho is not None:
+            shutil.rmtree(caminho.parent, ignore_errors=True)
+
+
+@app.post("/acoes/maquina/{indice}/robo/{acao}")
+def acao_robo_remoto(indice: int, acao: str):
+    if acao not in {"iniciar", "parar"}:
+        return RedirectResponse(
+            _url_destino("/", indice, erro="Comando inválido."),
+            status_code=303,
+        )
+    if not cfg.rede.maquinas:
+        return RedirectResponse(
+            _url_destino("/", indice, erro="Nenhuma máquina remota cadastrada."),
+            status_code=303,
+        )
+    if indice < 0 or indice >= len(cfg.rede.maquinas):
+        return RedirectResponse(
+            _url_destino("/", erro="Máquina não encontrada."),
+            status_code=303,
+        )
+
+    try:
+        resposta = remoto.comandar_robo(
+            cfg.rede.maquinas[indice], iniciar=acao == "iniciar",
+            senha=cfg.rede.senha
+        )
+    except Exception as erro:
+        log.warning(
+            "comando_remoto_falhou",
+            extra={"maquina": indice, "acao": acao, "erro": str(erro)},
+        )
+        return RedirectResponse(
+            _url_destino("/", indice, erro=str(erro)),
+            status_code=303,
+        )
+
+    situacao = resposta.get("mensagem") or resposta.get("situacao") or (
+        "Robô iniciado." if acao == "iniciar" else "Parada do robô solicitada."
+    )
+    if not str(situacao).lower().startswith("robô") and acao == "iniciar":
+        situacao = f"Robô {str(situacao).strip().rstrip('.!?').lower()}."
+    elif acao == "parar" and "parada" in str(situacao).lower():
+        situacao = "Parada do robô solicitada."
+    return RedirectResponse(
+        _url_destino("/", indice, mensagem=situacao),
+        status_code=303,
+    )
+
+
+@app.post("/acoes/maquina/{indice}/breaker/{orgao}/retomar")
+def acao_resetar_pausa_maquina(indice: int, orgao: str):
+    try:
+        if cfg.rede.maquinas:
+            if indice < 0 or indice >= len(cfg.rede.maquinas):
+                raise RuntimeError("Maquina nao encontrada.")
+            resposta = remoto.retomar_pausa(
+                cfg.rede.maquinas[indice], orgao, cfg.rede.senha
+            )
+            if resposta is None:
+                raise RuntimeError("Nao consegui resetar a pausa da maquina.")
+        else:
+            if indice != 0:
+                raise RuntimeError("Maquina nao encontrada.")
+            _resetar_pausa_local(orgao)
+    except Exception as erro:
+        log.warning(
+            "reset_pausa_falhou",
+            extra={"maquina": indice, "orgao": orgao, "erro": str(erro)},
+        )
+        return RedirectResponse(
+            _url_destino("/", indice, erro=str(erro)),
+            status_code=303,
+        )
+
+    log.info("breaker_retomado_manualmente", extra={"orgao": orgao, "maquina": indice})
+    return RedirectResponse(
+        _url_destino("/", indice, mensagem="Pausa resetada."),
+        status_code=303,
+    )
+
+
+@app.post("/acoes/maquina/{indice}/atualizar")
+def acao_atualizar_maquina(
+    indice: int, request: Request, origem: str = Form(default="")
+):
+    if not cfg.rede.maquinas:
+        return RedirectResponse(
+            _url_destino("/", indice, erro="Nenhuma máquina remota cadastrada."),
+            status_code=303,
+        )
+    if indice < 0 or indice >= len(cfg.rede.maquinas):
+        return RedirectResponse(
+            _url_destino("/", erro="Máquina não encontrada."),
+            status_code=303,
+        )
+
+    origem = (origem or _origem_atualizacao(request)).strip()
+    try:
+        resposta = remoto.atualizar(
+            cfg.rede.maquinas[indice], cfg.rede.senha, origem
+        )
+    except Exception as erro:
+        log.warning(
+            "atualizacao_remota_falhou",
+            extra={"maquina": indice, "origem": origem, "erro": str(erro)},
+        )
+        return RedirectResponse(
+            _url_destino("/", indice, erro=f"Atualização não iniciou: {erro}"),
+            status_code=303,
+        )
+
+    situacao = resposta.get("mensagem") or resposta.get("situacao") or "Atualização iniciada."
+    return RedirectResponse(
+        _url_destino("/", indice, mensagem=situacao),
+        status_code=303,
+    )
+
+
+@app.post("/acoes/reenfileirar")
+def acao_reenfileirar(
+    orgao: str = Form(default=""), maquina: str = Form(default=""),
+    arquivo: int = Form(default=0),
+):
+    maquinas = {
+        ident: maquina_cfg
+        for ident, _rotulo, maquina_cfg in _maquinas_da_fila()
+    }
+    maquina_cfg = maquinas.get(maquina)
+    if maquina_cfg is None:
+        with contextlib.closing(escrever()) as conn:
+            quantidade = fila.reenfileirar_falhados(
+                conn, orgao or None, arquivo or None
+            )
+    else:
+        resposta = remoto.reenfileirar_falhados(
+            maquina_cfg, cfg.rede.senha, orgao or None, arquivo or None
+        )
+        if resposta is None:
+            return RedirectResponse(
+                _url_destino(
+                    "/jobs",
+                    maquina=maquina or None,
+                    arquivo=arquivo or None,
+                    erro="Não consegui reenviar falhas da máquina.",
+                ),
+                status_code=303,
+            )
+        quantidade = int(resposta.get("quantidade") or 0)
+    log.info(
+        "reenfileirados",
+        extra={
+            "orgao": orgao or "todos",
+            "maquina": maquina or "local",
+            "arquivo": arquivo or None,
+            "quantidade": quantidade,
+        },
+    )
+    return RedirectResponse(
+        _url_destino(
+            "/jobs",
+            maquina=maquina or None,
+            arquivo=arquivo or None,
+            mensagem=f"{quantidade} falha(s) reenviada(s).",
+        ),
+        status_code=303,
+    )
 
 
 @app.post("/acoes/breaker/{orgao}/pausar")
@@ -333,8 +943,7 @@ def acao_pausar(orgao: str):
 
 @app.post("/acoes/breaker/{orgao}/retomar")
 def acao_retomar(orgao: str):
-    with contextlib.closing(escrever()) as conn:
-        breaker.fechar(conn, orgao)
+    _resetar_pausa_local(orgao)
     log.info("breaker_retomado_manualmente", extra={"orgao": orgao})
     return RedirectResponse("/", status_code=303)
 

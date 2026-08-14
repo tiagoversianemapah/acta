@@ -27,10 +27,12 @@ import contextlib
 import random
 import re
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
+from cnd.adapters import rfb_matriz
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real
 from cnd.infra.arquivos import caminho_certidao
@@ -70,6 +72,10 @@ ASSINATURAS_CAPTCHA = (
 FRASE_SUCESSO = "certidão foi emitida com sucesso"
 FRASE_INSUFICIENTE = "são insuficientes para emitir a certidão pela internet"
 FRASE_PROCESSANDO = "estamos analisando seu pedido"
+FRASE_RETORNE_RESULTADO = "retorne em alguns minutos para o resultado"
+FRASE_SERVICO_INDISPONIVEL = (
+    "servico de emissao de certidao esta temporariamente indisponivel"
+)
 
 # Faixa amarela no topo do formulário, com código de erro do portal:
 # "Não foi possível concluir a ação para o contribuinte informado.
@@ -77,6 +83,11 @@ FRASE_PROCESSANDO = "estamos analisando seu pedido"
 # Não é captcha, mas é o portal nos barrando — a resposta certa é a mesma:
 # desacelerar e voltar depois.
 FRASE_BLOQUEIO = "tente novamente dentro de alguns minutos"
+FRASES_BLOQUEIO = (
+    FRASE_BLOQUEIO,
+    "não foi possível emitir a certidão",
+    "não foi possível concluir a ação para o contribuinte informado",
+)
 
 # Títulos do PDF, na ORDEM em que devem ser testados. CPEN vem primeiro
 # porque o título dela contém a palavra "positiva" — testar positiva
@@ -98,6 +109,16 @@ def _normalizar(texto: str) -> str:
     """Minúsculas com espaços colapsados — o portal quebra linha no meio das
     frases, então comparar o texto cru daria falso negativo."""
     return re.sub(r"\s+", " ", (texto or "")).strip().lower()
+
+
+def _normalizar_sem_acento(texto: str) -> str:
+    sem_acento = unicodedata.normalize("NFKD", texto or "")
+    ascii_puro = sem_acento.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", ascii_puro).strip().lower()
+
+
+def _tem_bloqueio(texto_normalizado: str) -> bool:
+    return any(frase in texto_normalizado for frase in FRASES_BLOQUEIO)
 
 
 @dataclass
@@ -259,27 +280,36 @@ class AdapterRFBPJ:
         self._garantir_navegador()
         pagina = self._pagina
         self._downloads.clear()
+        aviso_matriz: str | None = None
+
+        def com_aviso_matriz(resultado: ResultadoTentativa) -> ResultadoTentativa:
+            return rfb_matriz.anotar_matriz(resultado, aviso_matriz)
 
         try:
+            doc_consulta, aviso_matriz = rfb_matriz.documento_para_consulta(doc)
             self._ir_para_formulario(pagina)
 
             if self._tem_captcha(pagina):
-                return ResultadoTentativa(
-                    Desfecho.CAPTCHA,
-                    mensagem_portal="captcha exibido antes da consulta",
-                    evidencia=self._evidencia(pagina, doc, "captcha-entrada"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.CAPTCHA,
+                        mensagem_portal="captcha exibido antes da consulta",
+                        evidencia=self._evidencia(pagina, doc, "captcha-entrada"),
+                    )
                 )
 
-            self._digitar_documento(pagina, doc.documento)
+            self._digitar_documento(pagina, doc_consulta.documento)
 
             erro_campo = self._erro_do_campo(pagina)
             if erro_campo:
                 # Melhor parar aqui do que clicar em emitir com o formulário
                 # inválido e receber uma tela que não sabemos classificar.
-                return ResultadoTentativa(
-                    Desfecho.ERRO_TECNICO,
-                    mensagem_portal=f"campo recusado pelo portal: {erro_campo}",
-                    evidencia=self._evidencia(pagina, doc, "campo-invalido"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.ERRO_TECNICO,
+                        mensagem_portal=f"campo recusado pelo portal: {erro_campo}",
+                        evidencia=self._evidencia(pagina, doc, "campo-invalido"),
+                    )
                 )
 
             # Uma pessoa confere o que digitou antes de enviar.
@@ -289,17 +319,21 @@ class AdapterRFBPJ:
             reacao = self._aguardar_reacao(pagina)
 
             if reacao == "captcha":
-                return ResultadoTentativa(
-                    Desfecho.CAPTCHA,
-                    mensagem_portal="captcha exibido após o envio",
-                    evidencia=self._evidencia(pagina, doc, "captcha-envio"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.CAPTCHA,
+                        mensagem_portal="captcha exibido após o envio",
+                        evidencia=self._evidencia(pagina, doc, "captcha-envio"),
+                    )
                 )
 
             if reacao == "bloqueio":
-                return ResultadoTentativa(
-                    Desfecho.BLOQUEIO_TEMPORARIO,
-                    mensagem_portal=self._texto_do_alerta(pagina),
-                    evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.BLOQUEIO_TEMPORARIO,
+                        mensagem_portal=self._texto_do_alerta(pagina),
+                        evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
+                    )
                 )
 
             if reacao == "modal":
@@ -311,38 +345,46 @@ class AdapterRFBPJ:
                 reacao = self._aguardar_reacao(pagina, aceitar_modal=False)
 
                 if reacao == "bloqueio":
-                    return ResultadoTentativa(
-                        Desfecho.BLOQUEIO_TEMPORARIO,
-                        mensagem_portal=self._texto_do_alerta(pagina),
-                        evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
+                    return com_aviso_matriz(
+                        ResultadoTentativa(
+                            Desfecho.BLOQUEIO_TEMPORARIO,
+                            mensagem_portal=self._texto_do_alerta(pagina),
+                            evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
+                        )
                     )
 
             if reacao != "resultado":
-                return ResultadoTentativa(
-                    Desfecho.ERRO_TECNICO,
-                    mensagem_portal="o portal não respondeu ao envio a tempo",
-                    evidencia=self._evidencia(pagina, doc, "sem-reacao"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.ERRO_TECNICO,
+                        mensagem_portal="o portal não respondeu ao envio a tempo",
+                        evidencia=self._evidencia(pagina, doc, "sem-reacao"),
+                    )
                 )
 
             texto = self._aguardar_resultado(pagina)
 
             if self._tem_captcha(pagina):
-                return ResultadoTentativa(
-                    Desfecho.CAPTCHA,
-                    mensagem_portal="captcha exibido após o envio",
-                    evidencia=self._evidencia(pagina, doc, "captcha-resultado"),
+                return com_aviso_matriz(
+                    ResultadoTentativa(
+                        Desfecho.CAPTCHA,
+                        mensagem_portal="captcha exibido após o envio",
+                        evidencia=self._evidencia(pagina, doc, "captcha-resultado"),
+                    )
                 )
 
-            return self._classificar(pagina, doc, texto)
+            return com_aviso_matriz(self._classificar(pagina, doc, texto))
 
         except Exception as erro:
             # Página que não bate com o fluxo esperado nem com captcha é forte
             # indício de mudança de layout (risco R1): guarda tudo para análise.
             log.exception("falha_no_fluxo", extra={"documento": doc.documento})
-            return ResultadoTentativa(
-                Desfecho.ERRO_TECNICO,
-                mensagem_portal=f"{type(erro).__name__}: {erro}"[:500],
-                evidencia=self._evidencia(pagina, doc, "erro"),
+            return com_aviso_matriz(
+                ResultadoTentativa(
+                    Desfecho.ERRO_TECNICO,
+                    mensagem_portal=f"{type(erro).__name__}: {erro}"[:500],
+                    evidencia=self._evidencia(pagina, doc, "erro"),
+                )
             )
 
     # ------------------------------------------------------------------
@@ -556,7 +598,7 @@ class AdapterRFBPJ:
             if self._tem_captcha(pagina):
                 return "captcha"
 
-            if FRASE_BLOQUEIO in _normalizar(self._texto_do_alerta(pagina)):
+            if _tem_bloqueio(_normalizar(self._texto_do_alerta(pagina))):
                 return "bloqueio"
 
             if aceitar_modal and self._visivel(pagina, SELETORES["modal_titulo"]):
@@ -599,7 +641,10 @@ class AdapterRFBPJ:
         texto = ""
         while time.monotonic() < limite:
             texto = pagina.inner_text(SELETORES["resultado"])
-            if FRASE_PROCESSANDO not in _normalizar(texto):
+            normalizado = _normalizar(texto)
+            if FRASE_RETORNE_RESULTADO in normalizado:
+                return texto
+            if FRASE_PROCESSANDO not in normalizado:
                 return texto
             if self._tem_captcha(pagina):
                 return texto
@@ -610,6 +655,21 @@ class AdapterRFBPJ:
     # ------------------------------------------------------------------
     def _classificar(self, pagina, doc: Documento, texto: str) -> ResultadoTentativa:
         normalizado = _normalizar(texto)
+
+        if (FRASE_RETORNE_RESULTADO in normalizado
+                or FRASE_SERVICO_INDISPONIVEL in _normalizar_sem_acento(texto)):
+            return ResultadoTentativa(
+                Desfecho.RESULTADO_PENDENTE,
+                mensagem_portal=texto.strip()[:500],
+                evidencia=self._evidencia(pagina, doc, "resultado-pendente"),
+            )
+
+        if _tem_bloqueio(normalizado):
+            return ResultadoTentativa(
+                Desfecho.BLOQUEIO_TEMPORARIO,
+                mensagem_portal=texto.strip()[:500],
+                evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
+            )
 
         if FRASE_INSUFICIENTE in normalizado:
             return ResultadoTentativa(

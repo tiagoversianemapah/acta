@@ -6,10 +6,9 @@ comportem como o documento 04 descreve.
 """
 from __future__ import annotations
 
-from tests.conftest import criar_job
-
 from cnd.core import fila, tempo
 from cnd.core.modelos import Desfecho, ResultadoTentativa, Status
+from tests.conftest import criar_job
 
 
 def test_reivindicar_marca_running(conn, lote):
@@ -140,6 +139,30 @@ def test_reenfileirar_falhados_zera_tentativas(conn, lote):
     assert quantidade == 1
     assert linha["status"] == Status.PENDING
     assert linha["tentativas"] == 0
+
+
+def test_reenfileirar_falhados_respeita_lote(conn, lote):
+    outro_lote = conn.execute(
+        "INSERT INTO lote (descricao, arquivo_origem) VALUES ('outro', 'outro.xlsx')"
+    ).lastrowid
+    job_do_lote = criar_job(conn, lote, documento="11222333000181", orgao="FAKE")
+    job_do_outro = criar_job(conn, outro_lote, documento="11444777000161", orgao="FAKE")
+    conn.execute(
+        "UPDATE job SET status = ?, desfecho = ?, tentativas = 3 WHERE id IN (?, ?)",
+        (Status.FAILED, Desfecho.ERRO_TECNICO, job_do_lote, job_do_outro),
+    )
+
+    quantidade = fila.reenfileirar_falhados(conn, "FAKE", lote)
+
+    status_lote = conn.execute(
+        "SELECT status FROM job WHERE id = ?", (job_do_lote,)
+    ).fetchone()["status"]
+    status_outro = conn.execute(
+        "SELECT status FROM job WHERE id = ?", (job_do_outro,)
+    ).fetchone()["status"]
+    assert quantidade == 1
+    assert status_lote == Status.PENDING
+    assert status_outro == Status.FAILED
 
 
 def test_ha_trabalho(conn, lote):

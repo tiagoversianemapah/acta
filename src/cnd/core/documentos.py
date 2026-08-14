@@ -7,12 +7,20 @@ RE_NAO_ALFANUM = re.compile(r"[^0-9A-Za-z]")
 RE_CNPJ = re.compile(r"^[0-9A-Z]{12}[0-9]{2}$")
 RE_CPF = re.compile(r"^[0-9]{11}$")
 
+
 class DocumentoInvalido(ValueError):
     """Documento reprovado. A mensagem explica o motivo."""
+
 
 def _limpar(valor) -> str:
     """Remove pontos, barras, traços e espaços."""
     return RE_NAO_ALFANUM.sub("", str(valor or "")).upper()
+
+
+def limpar(valor) -> str:
+    """Normaliza documento ou busca de documento para comparação."""
+    return _limpar(valor)
+
 
 def _dv_cnpj(valores: list[int]) -> int:
     """Calcula um dígito verificador do CNPJ."""
@@ -24,6 +32,7 @@ def _dv_cnpj(valores: list[int]) -> int:
     resto = soma % 11
     return 0 if resto < 2 else 11 - resto
 
+
 def _dv_cpf(digitos: list[int]) -> int:
     """Calcula um dígito verificador do CPF."""
     pesos = range(len(digitos) + 1, 1, -1)
@@ -33,6 +42,7 @@ def _dv_cpf(digitos: list[int]) -> int:
     soma = sum(d * p for d, p in zip(digitos, pesos, strict=True))
     resto = soma % 11
     return 0 if resto < 2 else 11 - resto
+
 
 def validar_cnpj(valor) -> str:
     """Devolve o CNPJ limpo se for válido. Se não for, acusa o erro."""
@@ -56,6 +66,24 @@ def validar_cnpj(valor) -> str:
         raise DocumentoInvalido(f"CNPJ com dígito verificador inválido: {doc!r}")
     return doc
 
+
+def cnpj_da_matriz(valor) -> str:
+    """CNPJ da matriz correspondente ao CNPJ informado.
+
+    A Receita Federal emite a CND de pessoa juridica pela matriz. Quando a
+    carteira vem com filial, o portal devolve um aviso pedindo o CNPJ 0001.
+    """
+    doc = validar_cnpj(valor)
+    if doc[8:12] == "0001":
+        return doc
+
+    base = f"{doc[:8]}0001"
+    valores = [ord(c) - 48 for c in base]
+    dv1 = _dv_cnpj(valores)
+    dv2 = _dv_cnpj([*valores, dv1])
+    return f"{base}{dv1}{dv2}"
+
+
 def validar_cpf(valor) -> str:
     """Devolve o CPF limpo se for válido. Se não for, acusa o erro."""
     doc = _limpar(valor)
@@ -75,6 +103,7 @@ def validar_cpf(valor) -> str:
         raise DocumentoInvalido(f"CPF com dígito verificador inválido: {doc!r}")
     return doc
 
+
 def validar(valor, tipo: str) -> str:
     """Valida conforme o tipo: 'CNPJ' ou 'CPF'."""
     if tipo == "CNPJ":
@@ -82,6 +111,7 @@ def validar(valor, tipo: str) -> str:
     if tipo == "CPF":
         return validar_cpf(valor)
     raise ValueError(f"Tipo de documento desconhecido: {tipo!r}")
+
 
 def formatar(documento: str) -> str:
     """Coloca a máscara de volta, só para exibir na tela."""

@@ -32,6 +32,7 @@ ROTULOS = {
     "PENDENCIA_MANUAL": "Exigem atendimento",
     "APROVEITADA": "Já emitidas no mês",
     "BLOQUEIO_TEMPORARIO": "Recusadas pelo portal",
+    "RESULTADO_PENDENTE": "Resultado pendente no portal",
     "CAPTCHA": "Bloqueadas por captcha",
     "ERRO_TECNICO": "Erros técnicos",
 }

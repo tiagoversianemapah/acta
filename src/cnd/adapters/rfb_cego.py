@@ -29,9 +29,11 @@ import random
 import shutil
 import subprocess
 import time
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cnd.adapters import rfb_matriz
 from cnd.adapters.rfb_pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real, tela
@@ -68,6 +70,23 @@ TEMPO_REACAO_S = 45.0
 INTERVALO_MODAL_S = 0.15
 PAUSA_ANTES_EMITIR_NOVA_S = (0.20, 0.35)
 TEMPO_PDF_S = 70.0
+TEMPO_PRIMEIRA_LEITURA_TEXTO_S = 5.0
+INTERVALO_LEITURA_TEXTO_S = 2.0
+
+FRASE_INSUFICIENTE = "sao insuficientes para emitir a certidao pela internet"
+FRASE_RETORNE_RESULTADO = "retorne em alguns minutos para o resultado"
+FRASE_SERVICO_INDISPONIVEL = (
+    "servico de emissao de certidao esta temporariamente indisponivel"
+)
+FRASES_RETENTAR_TEXTO = (
+    FRASE_RETORNE_RESULTADO,
+    FRASE_SERVICO_INDISPONIVEL,
+)
+FRASES_BLOQUEIO_TEXTO = (
+    "tente novamente em alguns minutos",
+    "nao foi possivel emitir a certidao",
+    "nao foi possivel concluir a acao para o contribuinte informado",
+)
 
 # Pontos fora do centro da tela. O modal branco costuma cobrir o centro; o
 # veu escuro aparece melhor nas laterais.
@@ -88,6 +107,13 @@ PONTOS_FAIXA_ALERTA = (
     (0.25, 0.26),
     (0.50, 0.26),
 )
+
+PONTOS_SCAN_FAIXA_ALERTA = tuple(
+    (fx, fy)
+    for fy in (0.16, 0.20, 0.24, 0.28)
+    for fx in (0.12, 0.22, 0.34, 0.46, 0.58, 0.70, 0.82)
+)
+MINIMO_PONTOS_FAIXA_ALERTA = 3
 
 
 class CalibragemAusente(RuntimeError):
@@ -114,6 +140,27 @@ def _tem_veu_modal(cores: list[tuple[int, int, int]],
                    referencia: tuple[int, int, int]) -> bool:
     escuros = sum(1 for cor in cores if tela.escurecida(cor, referencia))
     return escuros >= MINIMO_PONTOS_VEU_MODAL
+
+
+def _normalizar_texto(texto: str) -> str:
+    sem_acento = unicodedata.normalize("NFKD", texto or "")
+    ascii_puro = sem_acento.encode("ascii", "ignore").decode("ascii")
+    return " ".join(ascii_puro.lower().split())
+
+
+def _mensagem_curta(texto: str) -> str:
+    return " ".join((texto or "").split())[:400]
+
+
+def _classificar_texto_portal(texto: str) -> str | None:
+    normalizado = _normalizar_texto(texto)
+    if any(frase in normalizado for frase in FRASES_RETENTAR_TEXTO):
+        return "retentar"
+    if any(frase in normalizado for frase in FRASES_BLOQUEIO_TEXTO):
+        return "bloqueio"
+    if FRASE_INSUFICIENTE in normalizado:
+        return "insuficiente"
+    return None
 
 
 @dataclass
@@ -215,6 +262,7 @@ class AdapterRFBCego:
     pasta_downloads: Path
     caminho_calibragem: Path
     _calibragem: Calibragem | None = field(default=None, repr=False)
+    _ultimo_texto_portal: str | None = field(default=None, repr=False)
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -310,26 +358,28 @@ class AdapterRFBCego:
     # Fluxo
     # ------------------------------------------------------------------
     def emitir(self, doc: Documento) -> ResultadoTentativa:
+        self._ultimo_texto_portal = None
         try:
+            doc_consulta, aviso_matriz = rfb_matriz.documento_para_consulta(doc)
             self._focar()
             entrada_real.ir_para_url(URL_FORMULARIO)
             self._esperar_formulario()
 
-            self._limpar_downloads_antigos(doc.documento)
+            self._limpar_downloads_antigos(doc_consulta.documento)
 
             # Digitar o CNPJ
             self._exigir_foco()
             entrada_real.clicar(*self._ponto("campo_cnpj"))
             time.sleep(random.uniform(0.2, 0.5))
             entrada_real.limpar_campo()
-            entrada_real.digitar(doc.documento)
+            entrada_real.digitar(doc_consulta.documento)
             time.sleep(random.uniform(0.7, 1.8))     # confere o que digitou
 
             # Enviar
             self._exigir_foco()
             entrada_real.clicar(*self._ponto("botao_emitir"))
 
-            reacao, caminho_baixado = self._aguardar_reacao(doc.documento)
+            reacao, caminho_baixado = self._aguardar_reacao(doc_consulta.documento)
 
             if reacao == "modal":
                 # Regra de negócio: sempre emitir nova. A certidão vale 180
@@ -342,12 +392,22 @@ class AdapterRFBCego:
                 # vale esperar mais, porque o processamento é assíncrono e o
                 # download vem só no fim.
                 reacao, caminho_baixado = self._aguardar_reacao(
-                    doc.documento, aceitar_modal=False, segundos=TEMPO_PDF_S)
+                    doc_consulta.documento,
+                    aceitar_modal=False,
+                    segundos=TEMPO_PDF_S,
+                )
 
             if caminho_baixado is not None:
-                return self._ler_pdf(caminho_baixado, doc)
+                return rfb_matriz.anotar_matriz(
+                    self._ler_pdf(caminho_baixado, doc), aviso_matriz
+                )
 
-            return self._diagnosticar_falha(doc)
+            return rfb_matriz.anotar_matriz(
+                self._diagnosticar_falha(
+                    doc, bloqueio_ja_visto=reacao == "bloqueio"
+                ),
+                aviso_matriz,
+            )
 
         except Exception as erro:
             log.exception("falha_no_fluxo_cego", extra={"documento": doc.documento})
@@ -448,11 +508,13 @@ class AdapterRFBCego:
         Olhar as três ao mesmo tempo também evita o desperdício oposto:
         empresas sem certidão vigente não pagam a espera da janelinha.
 
-        Devolve ('modal' | 'pdf' | 'bloqueio' | 'nada', caminho_do_pdf).
+        Devolve ('modal' | 'pdf' | 'bloqueio' | 'texto' | 'nada',
+        caminho_do_pdf).
         """
         inicio = time.monotonic()
         limite = inicio + segundos
         proximo_foco = 0.0
+        proxima_leitura_texto = inicio + TEMPO_PRIMEIRA_LEITURA_TEXTO_S
 
         while time.monotonic() < limite:
             agora = time.monotonic()
@@ -481,17 +543,26 @@ class AdapterRFBCego:
                     return "modal", None
 
             # 3. Faixa de aviso no topo: o portal nos barrou.
-            for cor_faixa in (
-                tela.cor_media(imagem, x, y, raio=10)
-                for x, y in self._pontos_da_faixa_alerta()
-            ):
-                tipo = tela.parece_alerta(cor_faixa)
-                if not tipo:
-                    continue
+            tipo, cor_faixa = self._alerta_na_imagem(imagem)
+            if tipo:
                 log.warning("faixa_de_alerta_detectada",
                             extra={"orgao": self.orgao, "cor": cor_faixa,
+                                   "tipo": tipo,
                                    "em_s": round(agora - inicio, 1)})
                 return "bloqueio", None
+
+            if agora >= proxima_leitura_texto:
+                texto = self._texto_da_pagina()
+                tipo_texto = _classificar_texto_portal(texto)
+                if tipo_texto:
+                    self._ultimo_texto_portal = texto
+                    log.warning("texto_do_portal_detectado",
+                                extra={"orgao": self.orgao,
+                                       "tipo": tipo_texto,
+                                       "em_s": round(agora - inicio, 1),
+                                       "texto": _mensagem_curta(texto)})
+                    return "texto", None
+                proxima_leitura_texto = agora + INTERVALO_LEITURA_TEXTO_S
 
             time.sleep(INTERVALO_MODAL_S)
 
@@ -538,7 +609,119 @@ class AdapterRFBCego:
             with contextlib.suppress(OSError):
                 antigo.unlink()
 
-    def _diagnosticar_falha(self, doc: Documento) -> ResultadoTentativa:
+    def _alerta_na_imagem(self, imagem) -> tuple[str | None,
+                                                 tuple[int, int, int] | None]:
+        """Procura a faixa de erro/aviso do portal na regiao visivel."""
+        for cor_lida in (
+            tela.cor_media(imagem, x, y, raio=10)
+            for x, y in self._pontos_da_faixa_alerta()
+        ):
+            tipo = tela.parece_alerta(cor_lida)
+            if tipo:
+                return tipo, cor_lida
+
+        contagem: dict[str, int] = {}
+        primeira_cor: dict[str, tuple[int, int, int]] = {}
+        janela = self._janela()
+        for fx, fy in PONTOS_SCAN_FAIXA_ALERTA:
+            x, y = _ponto_fracionario(janela, fx, fy)
+            cor_lida = tela.cor_media(imagem, x, y, raio=10)
+            tipo = tela.parece_alerta(cor_lida)
+            if not tipo:
+                continue
+            contagem[tipo] = contagem.get(tipo, 0) + 1
+            primeira_cor.setdefault(tipo, cor_lida)
+            if contagem[tipo] >= MINIMO_PONTOS_FAIXA_ALERTA:
+                return tipo, primeira_cor[tipo]
+        return None, None
+
+    def _texto_da_pagina(self) -> str:
+        """Seleciona/copia a pagina para ler mensagens sem automacao do browser."""
+        try:
+            self._exigir_foco()
+            entrada_real.limpar_area_transferencia()
+            entrada_real.atalho(entrada_real.VK_CONTROL, entrada_real.VK_A)
+            time.sleep(0.05)
+            entrada_real.atalho(entrada_real.VK_CONTROL, entrada_real.VK_C)
+            time.sleep(0.15)
+            return entrada_real.texto_area_transferencia()
+        except Exception as erro:
+            log.warning("falha_ao_ler_texto_da_pagina",
+                        extra={"erro": str(erro)})
+            return ""
+        finally:
+            self._limpar_selecao_da_pagina()
+
+    def _limpar_selecao_da_pagina(self) -> None:
+        """Tira o azul do Ctrl+A para o proximo clique cair numa tela limpa."""
+        with contextlib.suppress(Exception):
+            entrada_real.tecla(entrada_real.VK_ESCAPE)
+            time.sleep(0.03)
+            entrada_real.tecla(entrada_real.VK_RIGHT)
+
+    def _resultado_por_texto(
+        self, doc: Documento, texto: str, evidencia: Path | None
+    ) -> ResultadoTentativa | None:
+        tipo = _classificar_texto_portal(texto)
+        if tipo == "bloqueio":
+            mensagem = _mensagem_curta(texto) or (
+                "portal pediu para tentar novamente em alguns minutos"
+            )
+            log.warning("bloqueio_detectado_por_texto",
+                        extra={"documento": doc.documento,
+                               "mensagem": mensagem[:250]})
+            return ResultadoTentativa(
+                Desfecho.BLOQUEIO_TEMPORARIO,
+                mensagem_portal=mensagem,
+                evidencia=evidencia,
+            )
+        if tipo == "insuficiente":
+            return ResultadoTentativa(
+                Desfecho.PENDENCIA_MANUAL,
+                mensagem_portal=_mensagem_curta(texto) or (
+                    "informações insuficientes para emitir a certidão pela internet"
+                ),
+                evidencia=evidencia,
+            )
+        if tipo == "retentar":
+            return ResultadoTentativa(
+                Desfecho.RESULTADO_PENDENTE,
+                mensagem_portal=_mensagem_curta(texto) or (
+                    "portal ainda processando a emissao; tentar novamente depois"
+                ),
+                evidencia=evidencia,
+            )
+        return None
+
+    def _voltar_para_topo(self) -> None:
+        """O erro 106 pode rolar a pagina; a faixa sai dos pontos medidos."""
+        self._exigir_foco()
+        entrada_real.atalho(entrada_real.VK_CONTROL, entrada_real.VK_HOME)
+        time.sleep(0.35)
+
+    def _resultado_bloqueio(self, doc: Documento, tipo: str | None,
+                            cor: tuple[int, int, int] | None,
+                            evidencia: Path | None,
+                            presumido: bool = False) -> ResultadoTentativa:
+        if presumido:
+            mensagem = (
+                "faixa de alerta detectada durante a espera, mas a pagina "
+                "saiu da posicao antes da evidencia; sessao sera reiniciada"
+            )
+        else:
+            mensagem = f"faixa de {tipo} no topo da pagina (cor {cor})"
+        log.warning("bloqueio_detectado_por_cor",
+                    extra={"documento": doc.documento, "tipo": tipo,
+                           "cor": cor, "presumido": presumido})
+        return ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal=mensagem,
+            evidencia=evidencia,
+        )
+
+    def _diagnosticar_falha(self, doc: Documento,
+                            bloqueio_ja_visto: bool = False
+                            ) -> ResultadoTentativa:
         """Sem PDF. A cor da faixa no topo diz se foi bloqueio do portal."""
         try:
             self._exigir_foco()
@@ -550,32 +733,34 @@ class AdapterRFBCego:
             )
 
         imagem = tela.capturar()
-        cor = None
-        tipo = None
-        for cor_lida in (
-            tela.cor_media(imagem, x, y, raio=10)
-            for x, y in self._pontos_da_faixa_alerta()
-        ):
-            tipo = tela.parece_alerta(cor_lida)
+        tipo, cor = self._alerta_na_imagem(imagem)
+        if not tipo:
+            self._voltar_para_topo()
+            imagem_topo = tela.capturar()
+            tipo, cor = self._alerta_na_imagem(imagem_topo)
             if tipo:
-                cor = cor_lida
-                break
+                imagem = imagem_topo
         evidencia = self._print(doc, "sem-pdf", imagem)
 
         if tipo:
-            log.warning("bloqueio_detectado_por_cor",
-                        extra={"documento": doc.documento, "tipo": tipo, "cor": cor})
-            return ResultadoTentativa(
-                Desfecho.BLOQUEIO_TEMPORARIO,
-                mensagem_portal=f"faixa de {tipo} no topo da página (cor {cor})",
-                evidencia=evidencia,
-            )
+            return self._resultado_bloqueio(doc, tipo, cor, evidencia)
 
-        # Sem faixa e sem PDF: pode ser "informações insuficientes", pode ser
-        # outra coisa. Cego, não dá para afirmar — quem olha o print decide.
+        texto = self._ultimo_texto_portal or self._texto_da_pagina()
+        if resultado := self._resultado_por_texto(doc, texto, evidencia):
+            return resultado
+
+        if bloqueio_ja_visto:
+            return self._resultado_bloqueio(
+                doc, tipo, cor, evidencia, presumido=True)
+
+        # Sem faixa de bloqueio e sem PDF é o padrão da tela de informações
+        # insuficientes no fluxo cego. É conclusivo: insistir gastaria
+        # tentativas repetindo uma resposta de negócio.
         return ResultadoTentativa(
-            Desfecho.ERRO_TECNICO,
-            mensagem_portal="não veio PDF e não há faixa de aviso — ver evidência",
+            Desfecho.PENDENCIA_MANUAL,
+            mensagem_portal=(
+                "informações insuficientes para emitir a certidão pela internet"
+            ),
             evidencia=evidencia,
         )
 

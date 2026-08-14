@@ -15,7 +15,7 @@ from pathlib import Path
 from queue import Empty, Queue
 
 from cnd.core import breaker
-from cnd.infra import heartbeat
+from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config
 from cnd.infra.db import conectar_leitura
 from cnd.web import consultas
@@ -86,8 +86,11 @@ def ler_panorama(cfg: Config) -> Panorama:
         nome = (lotes[0]["arquivo_origem"] or lotes[0]["descricao"]) if lotes else "—"
         resumos = [consultas.resumo(conn, orgao, lote_id)
                    for orgao in consultas.orgaos_do_lote(conn, lote_id)]
+        robo_ativo = idade is not None and idade <= cfg.alertas.heartbeat_timeout_s
+        if robo_ativo and maquina.processo_robo_rodando() is False:
+            robo_ativo = False
         return Panorama(
-            robo_ativo=idade is not None and idade <= cfg.alertas.heartbeat_timeout_s,
+            robo_ativo=robo_ativo,
             robo_idade_s=idade, lote_id=lote_id, lote_nome=nome, resumos=resumos,
         )
     except Exception:

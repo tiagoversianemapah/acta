@@ -46,6 +46,22 @@ def test_captcha_pune_multiplicativamente(conn):
     assert estado.intervalo_s == 40.0    # 10 * 4
 
 
+def test_bloqueio_temporario_pune_menos_que_captcha(conn):
+    estado = ritmo.registrar_bloqueio_temporario(conn, "FAKE", P)
+
+    assert estado.intervalo_s == 14.0
+    assert estado.intervalo_s < 40.0
+
+
+def test_sucesso_recupera_ritmo_alto_sem_esperar_limiar(conn):
+    ritmo.registrar_captcha(conn, "FAKE", P)
+
+    estado = ritmo.registrar_sucesso(conn, "FAKE", P)
+
+    assert estado.intervalo_s == 20.0
+    assert estado.consultas_limpas == 0
+
+
 def test_captcha_zera_a_sequencia_limpa(conn):
     ritmo.registrar_sucesso(conn, "FAKE", P)
     ritmo.registrar_sucesso(conn, "FAKE", P)

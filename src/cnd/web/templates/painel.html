@@ -1,58 +1,194 @@
 {% extends "base.html" %}
 {% set pagina = 'painel' %}
-{% block titulo %}Acompanhamento — CND{% endblock %}
-
-{% block ferramentas %}
-<div class="ferramentas">
-  <form method="get" action="/">
-    <label>Lote
-      <select name="lote" onchange="this.form.submit()">
-        {% for l in lotes %}
-          <option value="{{ l.id }}" {% if l.id == lote_id %}selected{% endif %}>
-            #{{ l.id }} · {{ l.arquivo_origem or l.descricao }} · {{ '{:,}'.format(l.jobs).replace(',','.') }} itens
-          </option>
-        {% endfor %}
-      </select>
-    </label>
-
-  {% if orquestrador_vivo %}
-    <span class="estado ok">Robô em execução</span>
-  {% elif orquestrador_idade is none %}
-    <span class="estado">Robô não iniciado</span>
-  {% else %}
-    <span class="estado erro">Robô parado</span>
-  {% endif %}
-  </form>
-
-  {% if lote_id %}
-  <span class="direita">
-    <a class="botao" href="/relatorio/{{ lote_id }}.xlsx">Exportar planilha</a>
-    <a class="botao" href="/certidoes/{{ mes }}.zip">Baixar certidões do mês</a>
-  </span>
-  {% endif %}
-</div>
-{% endblock %}
+{% block titulo %}Operação - ACTA{% endblock %}
 
 {% block conteudo %}
-<div class="titulo-pagina">
-  <h1>Acompanhamento</h1>
-  <p class="sub">Situação de cada órgão no lote selecionado.</p>
-</div>
+{% if mensagem_operacao %}
+<div class="aviso ok">{{ mensagem_operacao }}</div>
+{% endif %}
+{% if erro_operacao %}
+<div class="aviso erro">{{ erro_operacao }}</div>
+{% endif %}
 
-<div id="resumo">
+<div id="resumo" data-maquina="{{ selecionada_idx if selecionada_idx is not none else '' }}">
   {% include "_cards.html" %}
 </div>
 
 <script>
-  // Recarrega apenas o quadro. Para leitura humana, 5 segundos equivale a
-  // tempo real e evita manter conexão aberta (ADR-005).
-  var lote = {{ lote_id or 'null' }};
+  const indiceMaquina = document.getElementById('resumo').dataset.maquina;
+
+  function fixarLinkDoPainel() {
+    const atual = new URL(window.location.href);
+    const limpo = new URL(window.location.href);
+    limpo.searchParams.delete('mensagem');
+    limpo.searchParams.delete('erro');
+    if (limpo.toString() !== atual.toString()) {
+      window.history.replaceState({}, document.title, limpo.pathname + limpo.search);
+    }
+  }
+
+  function rotaFragmento() {
+    return '/fragmento/resumo' + (indiceMaquina !== '' ? '?maquina=' + indiceMaquina : '');
+  }
+
+  function formatarTempo(ms) {
+    if (ms <= 0) return 'retomando agora';
+    const total = Math.ceil(ms / 1000);
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const s = total % 60;
+    if (h) return h + 'h ' + String(m).padStart(2, '0') + 'min';
+    if (m) return m + 'min ' + String(s).padStart(2, '0') + 's';
+    return s + 's';
+  }
+
+  function formatarHoraLocal(iso) {
+    const data = new Date(iso || '');
+    if (!Number.isFinite(data.getTime())) return 'sem horário';
+    return data.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  }
+
+  function atualizarContadores() {
+    document.querySelectorAll('[data-countdown]').forEach(function (el) {
+      const fim = Date.parse(el.dataset.countdown || '');
+      if (!Number.isFinite(fim)) {
+        el.textContent = 'sem horário';
+        return;
+      }
+      el.textContent = formatarTempo(fim - Date.now());
+    });
+    document.querySelectorAll('[data-retoma-hora]').forEach(function (el) {
+      el.textContent = formatarHoraLocal(el.dataset.retomaHora);
+    });
+  }
+
+  function origemPadraoAtualizacao() {
+    const salva = {{ origem_atualizacao_padrao|default('')|tojson }};
+    const propriaMaquina = 'http://' + window.location.hostname + ':8899';
+    const origemSalva = salva && salva !== propriaMaquina ? salva : '';
+    return localStorage.getItem('actaOrigemAtualizacao') ||
+      origemSalva ||
+      'http://100.125.207.8:8899';
+  }
+
+  function pedirOrigemAtualizacao() {
+    const origem = prompt('Origem da atualização', origemPadraoAtualizacao());
+    if (!origem) return '';
+    const limpa = origem.trim().replace(/\/+$/, '');
+    if (limpa) localStorage.setItem('actaOrigemAtualizacao', limpa);
+    return limpa;
+  }
+
+  function destinoComMensagem(texto) {
+    const destino = new URL(window.location.href);
+    destino.searchParams.set('mensagem', texto);
+    destino.searchParams.delete('erro');
+    return destino.toString();
+  }
+
+  function avisarErro(erro) {
+    const destino = new URL(window.location.href);
+    destino.searchParams.set('erro', erro.message || String(erro));
+    destino.searchParams.delete('mensagem');
+    window.location.href = destino.toString();
+  }
+
+  function mensagemDaApi(corpo, fallback) {
+    return (corpo && (corpo.mensagem || corpo.situacao)) || fallback;
+  }
+
+  document.addEventListener('click', function (evento) {
+    const atualizar = evento.target.closest('[data-update-api], [data-update-form]');
+    if (atualizar) {
+      evento.preventDefault();
+      const origem = pedirOrigemAtualizacao();
+      if (!origem) return;
+
+      if (atualizar.dataset.updateForm) {
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = atualizar.dataset.updateForm;
+        const campo = document.createElement('input');
+        campo.type = 'hidden';
+        campo.name = 'origem';
+        campo.value = origem;
+        form.appendChild(campo);
+        document.body.appendChild(form);
+        form.submit();
+        return;
+      }
+
+      atualizar.disabled = true;
+      atualizar.dataset.originalHtml = atualizar.innerHTML;
+      const textoAtualizar = atualizar.querySelector('span');
+      if (textoAtualizar) textoAtualizar.textContent = 'Atualizando';
+      else atualizar.textContent = 'Atualizando';
+      fetch(atualizar.dataset.updateApi, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({origem: origem})
+      })
+        .then(function (resposta) {
+          if (!resposta.ok) return resposta.json().then(function (corpo) {
+            throw new Error(corpo.detail || 'Atualização recusada');
+          });
+          return resposta.json();
+        })
+        .then(function (corpo) {
+          window.location.href = destinoComMensagem(
+            mensagemDaApi(corpo, 'Atualização iniciada.')
+          );
+        })
+        .catch(function (erro) {
+          atualizar.disabled = false;
+          atualizar.innerHTML = atualizar.dataset.originalHtml || 'Atualizar';
+          avisarErro(erro);
+        });
+      return;
+    }
+
+    const botao = evento.target.closest('[data-api-action]');
+    if (!botao) return;
+    evento.preventDefault();
+    botao.disabled = true;
+    botao.dataset.originalHtml = botao.innerHTML;
+    const texto = botao.querySelector('span');
+    if (texto) texto.textContent = 'Aguarde';
+    else botao.textContent = 'Aguarde';
+    fetch(botao.dataset.apiAction, { method: 'POST', credentials: 'same-origin' })
+      .then(function (resposta) {
+        if (!resposta.ok) return resposta.json().then(function (corpo) {
+          throw new Error(corpo.detail || 'Comando recusado');
+        });
+        return resposta.json();
+      })
+      .then(function (corpo) {
+        window.location.href = destinoComMensagem(
+          mensagemDaApi(corpo, 'Comando aceito.')
+        );
+      })
+      .catch(function (erro) {
+        botao.disabled = false;
+        botao.innerHTML = botao.dataset.originalHtml || botao.dataset.label;
+        avisarErro(erro);
+      });
+  });
+
+  setInterval(atualizarContadores, 1000);
+  fixarLinkDoPainel();
+  atualizarContadores();
+
   setInterval(function () {
     if (document.hidden) return;
-    fetch('/fragmento/resumo' + (lote ? '?lote=' + lote : ''))
+    fetch(rotaFragmento())
       .then(function (r) { return r.ok ? r.text() : null; })
-      .then(function (html) { if (html) document.getElementById('resumo').innerHTML = html; })
-      .catch(function () { /* rede oscilou; tenta no próximo ciclo */ });
+      .then(function (html) {
+        if (!html) return;
+        document.getElementById('resumo').innerHTML = html;
+        atualizarContadores();
+      })
+      .catch(function () {});
   }, 5000);
 </script>
 {% endblock %}

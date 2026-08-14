@@ -1,11 +1,22 @@
 {% extends "base.html" %}
 {% set pagina = 'jobs' %}
-{% block titulo %}{{ job.documento if job else 'Item' }} — CND{% endblock %}
+{% block titulo %}{{ job.documento_fmt or job.documento if job else 'Item' }} - ACTA{% endblock %}
+
+{% macro estado_job(s) %}
+  {% if s == 'DONE' %}<span class="estado ok">Concluído</span>
+  {% elif s == 'FAILED' %}<span class="estado erro">Falhou</span>
+  {% elif s == 'RUNNING' %}<span class="estado ativo">Processando</span>
+  {% elif s == 'RETRY_WAIT' %}<span class="estado alerta">Vai tentar de novo</span>
+  {% else %}<span class="estado">Na fila</span>{% endif %}
+{% endmacro %}
 
 {% block ferramentas %}
 <div class="ferramentas">
-  <a class="botao" href="/jobs">← Voltar para a lista</a>
-  {% if job %}<span>Item #{{ job.id }} · lote #{{ job.lote_id }}</span>{% endif %}
+  <a class="botao" href="{{ voltar_url or '/jobs' }}">Voltar para a carteira</a>
+  {% if job %}
+    <span class="chip">{{ origem or job.maquina }}</span>
+    <span class="chip secundario">Item #{{ job.id }}</span>
+  {% endif %}
 </div>
 {% endblock %}
 
@@ -15,25 +26,30 @@
 {% else %}
 
 <div class="titulo-pagina">
-  <h1>{{ job.nome }}</h1>
-  <p class="sub"><span class="mono">{{ job.documento }}</span> · {{ job.orgao }}</p>
+  <div>
+    <h1>{{ job.nome }}</h1>
+    <p class="sub">
+      <span class="mono">{{ job.documento_fmt or job.documento }}</span> ·
+      {{ rotulo_orgao(job.orgao) }} ·
+      {{ origem or job.maquina }}
+    </p>
+  </div>
 </div>
 
 <div class="colunas">
   <section class="painel">
     <div class="painel-topo">
-      <h2>Situação</h2>
-      {% if job.status == 'DONE' %}<span class="estado ok">Concluído</span>
-      {% elif job.status == 'FAILED' %}<span class="estado erro">Falhou</span>
-      {% else %}<span class="estado">{{ job.status }}</span>{% endif %}
+      <h2>Situação do item</h2>
+      {{ estado_job(job.status) }}
     </div>
     <div class="rolagem">
       <table class="ficha">
         <tbody>
-          <tr><td>Desfecho</td><td>{{ job.desfecho or '—' }}</td></tr>
+          <tr><td>Resultado</td><td>{{ rotulos.get(job.desfecho, job.desfecho) if job.desfecho else '-' }}</td></tr>
           <tr><td>Tentativas realizadas</td><td>{{ job.tentativas }}</td></tr>
-          <tr><td>Próxima execução</td><td class="mono">{{ job.proxima_execucao_em }}</td></tr>
-          <tr><td>Última atualização</td><td class="mono">{{ job.atualizado_em }}</td></tr>
+          <tr><td>Próxima execução</td><td class="mono">{{ job.proxima_execucao_em or '-' }}</td></tr>
+          <tr><td>Última atualização</td><td class="mono">{{ job.atualizado_em or '-' }}</td></tr>
+          <tr><td>Retorno do portal</td><td>{{ job.ultima_mensagem or 'sem mensagem' }}</td></tr>
         </tbody>
       </table>
     </div>
@@ -48,17 +64,17 @@
     <div class="rolagem">
       <table class="ficha">
         <tbody>
-          <tr><td>Emitida em</td><td class="mono">{{ certidao.emitida_em }}</td></tr>
-          <tr><td>Válida até</td><td class="mono">{{ certidao.valida_ate or '—' }}</td></tr>
-          <tr><td>Código de controle</td><td class="mono">{{ certidao.codigo_controle or '—' }}</td></tr>
+          <tr><td>Emitida em</td><td class="mono">{{ certidao.emitida_em or '-' }}</td></tr>
+          <tr><td>Válida até</td><td class="mono">{{ certidao.valida_ate or '-' }}</td></tr>
+          <tr><td>Código de controle</td><td class="mono">{{ certidao.codigo_controle or '-' }}</td></tr>
           <tr><td>Arquivo</td><td class="mono" style="word-break:break-all">{{ certidao.caminho_pdf }}</td></tr>
         </tbody>
       </table>
     </div>
     {% else %}
       <div class="vazio">
-        <b>Sem certidão</b>
-        Este item não gerou PDF — veja o histórico abaixo para entender o motivo.
+        <b>Sem PDF emitido</b>
+        O histórico abaixo mostra o retorno mais recente do portal.
       </div>
     {% endif %}
   </section>
@@ -67,28 +83,39 @@
 <section class="painel">
   <div class="painel-topo">
     <h2>Histórico de tentativas</h2>
-    <span class="dica" style="margin:0">{{ tentativas | length }} registro(s)</span>
+    <span class="contador-secao">{{ tentativas | length }}</span>
   </div>
   <div class="rolagem">
     <table>
       <thead>
-        <tr><th class="num">Nº</th><th>Início</th><th>Término</th><th>Desfecho</th>
-            <th>Retorno do portal</th><th>Evidência</th></tr>
+        <tr>
+          <th class="num">Nº</th>
+          <th>Início</th>
+          <th>Término</th>
+          <th>Resultado</th>
+          <th>Retorno do portal</th>
+          <th>Evidência</th>
+        </tr>
       </thead>
       <tbody>
       {% for t in tentativas %}
         <tr>
           <td class="num">{{ t.numero }}</td>
           <td class="mono">{{ t.iniciada_em[:19].replace('T',' ') }}</td>
-          <td class="mono">{{ t.finalizada_em[:19].replace('T',' ') if t.finalizada_em else '—' }}</td>
+          <td class="mono">{{ t.finalizada_em[:19].replace('T',' ') if t.finalizada_em else '-' }}</td>
           <td>
-            {% if t.desfecho in ['CAPTCHA','ERRO_TECNICO','BLOQUEIO_TEMPORARIO'] %}
+            {% if t.desfecho in ['CAPTCHA','ERRO_TECNICO'] %}
               <span class="selo erro">{{ t.desfecho }}</span>
-            {% elif t.desfecho %}<span class="selo ok">{{ t.desfecho }}</span>
-            {% else %}—{% endif %}
+            {% elif t.desfecho in ['PENDENCIA_MANUAL','BLOQUEIO_TEMPORARIO','RESULTADO_PENDENTE'] %}
+              <span class="selo alerta">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>
+            {% elif t.desfecho %}
+              <span class="selo ok">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>
+            {% else %}
+              <span class="muted">sem retorno</span>
+            {% endif %}
           </td>
-          <td style="color:var(--texto-2)">{{ (t.mensagem_portal or '—') | truncate(100) }}</td>
-          <td class="mono" style="color:var(--texto-3)">{{ (t.evidencia or '—') | truncate(45) }}</td>
+          <td class="retorno">{{ t.mensagem_portal or 'sem mensagem' }}</td>
+          <td class="mono muted">{{ t.evidencia or '-' }}</td>
         </tr>
       {% else %}
         <tr><td colspan="6"><div class="vazio">Ainda não foi processado.</div></td></tr>

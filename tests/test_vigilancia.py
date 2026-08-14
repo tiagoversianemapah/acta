@@ -6,11 +6,10 @@ avise duas vezes o mesmo item.
 """
 from __future__ import annotations
 
-from tests.conftest import criar_job
-
 from cnd.core import fila, tempo
 from cnd.core.modelos import Desfecho, ResultadoTentativa
 from cnd.orquestrador import vigilancia
+from tests.conftest import criar_job
 
 
 def _concluir(conn, orgao="FAKE", desfecho=Desfecho.NEGATIVA):

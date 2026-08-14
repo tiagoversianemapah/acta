@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import threading
 
-from tests.conftest import criar_job
-
+from cnd.adapters import fake
 from cnd.core import breaker, ritmo
 from cnd.core.breaker import ParametrosBreaker
 from cnd.core.modelos import CONCLUSIVOS, Status
@@ -17,6 +16,7 @@ from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 from cnd.infra.db import caminho_pedido_parada
 from cnd.orquestrador.loop import Contexto, _consumir_pedido_de_parada, executar
+from tests.conftest import criar_job
 
 
 def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
@@ -133,3 +133,27 @@ def test_esgotar_tentativas_leva_a_failed(conn, lote, tmp_path):
     linha = conn.execute("SELECT status, tentativas FROM job").fetchone()
     assert linha["status"] == Status.FAILED
     assert linha["tentativas"] == 3, "precisa parar no máximo configurado"
+
+
+def test_erro_tecnico_reinicia_sessao_do_adapter(conn, lote, tmp_path, monkeypatch):
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    reinicios = []
+    reiniciar_original = fake.AdapterFake.reiniciar_sessao
+
+    def reiniciar_contando(self):
+        reinicios.append(self.orgao)
+        reiniciar_original(self)
+
+    monkeypatch.setattr(fake.AdapterFake, "reiniciar_sessao", reiniciar_contando)
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+        simulacao={
+            "chance_erro_tecnico": 1.0,
+            "duracao_min_s": 0.0,
+            "duracao_max_s": 0.0,
+        },
+    )
+
+    executar(cfg, ate_esvaziar=True)
+
+    assert reinicios == ["FAKE", "FAKE", "FAKE"]

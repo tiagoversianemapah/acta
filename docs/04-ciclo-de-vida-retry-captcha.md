@@ -105,6 +105,7 @@ Complementos comportamentais no worker (inalterados pelo ritmo):
 |---|---|
 | `ERRO_TECNICO` | Backoff exponencial com jitter: 2 min → 10 min → 45 min; máx. **4 tentativas**; depois `FAILED` |
 | `CAPTCHA` | Backoff longo com jitter: 1 h → 4 h → 12 h; máx. **4 tentativas**; a partir da 2ª ocorrência, reiniciar o contexto do browser (sessão nova) antes de tentar; depois `FAILED` |
+| `RESULTADO_PENDENTE` | Portal indisponível/processando: volta para a fila e tenta de novo em **1 h**; não conta como bloqueio do órgão |
 | `FAILED` | Terminal para o sistema; dashboard permite reenfileirar em massa após correção da causa |
 
 Backoff calculado no orquestrador ao gravar `RETRY_WAIT`:
@@ -118,7 +119,7 @@ do mesmo órgão só reforça o sinal de robô. Por isso o disjuntor é **por ó
 ```mermaid
 stateDiagram-v2
     FECHADO --> ABERTO : ≥3 CAPTCHAs nos últimos 10 jobs\nou ≥5 ERRO_TECNICO seguidos
-    ABERTO --> MEIO_ABERTO : cooldown (30 min, dobra a cada\nreabertura, teto 4 h)
+    ABERTO --> MEIO_ABERTO : cooldown (30 min, dobra a cada\nreabertura, teto 2h30)
     MEIO_ABERTO --> FECHADO : job de sondagem OK
     MEIO_ABERTO --> ABERTO : sondagem bate captcha/erro
 ```

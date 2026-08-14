@@ -1,125 +1,257 @@
 {% extends "base.html" %}
 {% set pagina = 'jobs' %}
-{% block titulo %}Itens — CND{% endblock %}
+{% import "_icons.html" as icons %}
+{% block titulo %}Carteira - ACTA{% endblock %}
 
 {% macro situacao(s) %}
-  {% if s == 'DONE' %}<span class="estado ok">Concluído</span>
-  {% elif s == 'FAILED' %}<span class="estado erro">Falhou</span>
+  {% if s == 'DONE' %}<span class="estado ok">Concluido</span>
+  {% elif s == 'FAILED' %}<span class="estado erro">Erro tecnico</span>
   {% elif s == 'RUNNING' %}<span class="estado ativo">Processando</span>
   {% elif s == 'RETRY_WAIT' %}<span class="estado alerta">Vai tentar de novo</span>
   {% else %}<span class="estado">Na fila</span>{% endif %}
 {% endmacro %}
 
-{% macro desfecho(d) %}
-  {% if d == 'NEGATIVA' %}<span class="selo ok">Negativa</span>
-  {% elif d == 'CPEN' %}<span class="selo ok">Efeito de negativa</span>
-  {% elif d == 'POSITIVA' %}<span class="selo alerta">Positiva</span>
-  {% elif d == 'PENDENCIA_MANUAL' %}<span class="selo alerta">Exige atendimento</span>
-  {% elif d == 'APROVEITADA' %}<span class="selo info">Já emitida no mês</span>
-  {% elif d == 'BLOQUEIO_TEMPORARIO' %}<span class="selo erro">Portal recusou</span>
-  {% elif d == 'CAPTCHA' %}<span class="selo erro">Captcha</span>
-  {% elif d == 'ERRO_TECNICO' %}<span class="selo erro">Erro técnico</span>
-  {% elif d %}<span class="selo">{{ d }}</span>
-  {% else %}<span style="color:var(--texto-3)">—</span>{% endif %}
+{% macro desfecho_item(d) %}
+  {% if d %}
+    <span class="selo {{ classe_desfecho(d) }}">{{ rotulo_desfecho(d) }}</span>
+  {% else %}
+    <span class="muted">-</span>
+  {% endif %}
 {% endmacro %}
 
-{% block ferramentas %}
-<div class="ferramentas">
-  <form method="get" action="/jobs" class="controles" style="width:100%">
-    <label>Lote
-      <select name="lote">
-        <option value="">Todos</option>
-        {% for l in lotes %}
-          <option value="{{ l.id }}" {% if l.id == lote_id %}selected{% endif %}>#{{ l.id }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Órgão
-      <select name="orgao">
-        <option value="">Todos</option>
-        {% for o in orgaos %}
-          <option value="{{ o }}" {% if o == filtros.orgao %}selected{% endif %}>{{ o }}</option>
-        {% endfor %}
-      </select>
-    </label>
-    <label>Situação
-      <select name="status">
-        <option value="">Todas</option>
-        <option value="PENDING"    {% if filtros.status == 'PENDING' %}selected{% endif %}>Na fila</option>
-        <option value="RUNNING"    {% if filtros.status == 'RUNNING' %}selected{% endif %}>Processando</option>
-        <option value="RETRY_WAIT" {% if filtros.status == 'RETRY_WAIT' %}selected{% endif %}>Vai tentar de novo</option>
-        <option value="DONE"       {% if filtros.status == 'DONE' %}selected{% endif %}>Concluído</option>
-        <option value="FAILED"     {% if filtros.status == 'FAILED' %}selected{% endif %}>Falhou</option>
-      </select>
-    </label>
-    <label>Desfecho
-      <select name="desfecho">
-        <option value="">Todos</option>
-        <option value="NEGATIVA"            {% if filtros.desfecho == 'NEGATIVA' %}selected{% endif %}>Negativa</option>
-        <option value="CPEN"                {% if filtros.desfecho == 'CPEN' %}selected{% endif %}>Efeito de negativa</option>
-        <option value="POSITIVA"            {% if filtros.desfecho == 'POSITIVA' %}selected{% endif %}>Positiva</option>
-        <option value="PENDENCIA_MANUAL"    {% if filtros.desfecho == 'PENDENCIA_MANUAL' %}selected{% endif %}>Exige atendimento</option>
-        <option value="APROVEITADA"         {% if filtros.desfecho == 'APROVEITADA' %}selected{% endif %}>Já emitida no mês</option>
-        <option value="BLOQUEIO_TEMPORARIO" {% if filtros.desfecho == 'BLOQUEIO_TEMPORARIO' %}selected{% endif %}>Portal recusou</option>
-        <option value="ERRO_TECNICO"        {% if filtros.desfecho == 'ERRO_TECNICO' %}selected{% endif %}>Erro técnico</option>
-      </select>
-    </label>
-    <label>Buscar
-      <input name="busca" value="{{ filtros.busca or '' }}" size="24" placeholder="CNPJ ou razão social">
-    </label>
-    <button class="primario">Pesquisar</button>
-    <a class="botao" href="/jobs">Limpar filtros</a>
-  </form>
-</div>
-{% endblock %}
-
 {% block conteudo %}
-<div class="titulo-pagina">
-  <h1>Itens</h1>
-  <p class="sub">Cada linha é uma empresa em um órgão. Clique para ver o histórico completo.</p>
-</div>
+{% if mensagem_carteira %}
+  <div class="aviso ok">{{ mensagem_carteira }}</div>
+{% endif %}
+{% if erro_carteira %}
+  <div class="aviso erro">{{ erro_carteira }}</div>
+{% endif %}
+{% if maquinas_mudas %}
+  <div class="aviso erro">Sem resposta de: {{ maquinas_mudas | join(', ') }}</div>
+{% endif %}
 
-<section class="painel">
-  <div class="painel-topo">
-    <h2>{{ jobs | length }} registro(s) encontrado(s)</h2>
-    <form method="post" action="/acoes/reenfileirar"
-          onsubmit="return confirm('Confirma o reenvio de todos os itens com falha para a fila?')">
-      <input type="hidden" name="orgao" value="{{ filtros.orgao or '' }}">
-      <button>Reenviar itens com falha{% if filtros.orgao %} de {{ filtros.orgao }}{% endif %}</button>
-    </form>
-  </div>
-  <div class="rolagem">
-    <table>
-      <thead>
-        <tr>
-          <th>Razão social</th><th>Documento</th><th>Órgão</th>
-          <th>Situação</th><th>Desfecho</th><th class="num">Tentativas</th>
-          <th>Retorno do portal</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-      {% for j in jobs %}
-        <tr>
-          <td>{{ j.nome }}</td>
-          <td class="mono">{{ j.documento }}</td>
-          <td style="color:var(--texto-2)">{{ j.orgao }}</td>
-          <td>{{ situacao(j.status) }}</td>
-          <td>{{ desfecho(j.desfecho) }}</td>
-          <td class="num">{{ j.tentativas }}</td>
-          <td style="color:var(--texto-2)">{{ (j.ultima_mensagem or '') | truncate(75) }}</td>
-          <td><a href="/job/{{ j.id }}">Detalhar</a></td>
-        </tr>
+<div class="workspace carteira-workspace">
+  <aside class="maquinas carteira-sidebar">
+    <div class="secao-topo">
+      <h2>Maquinas</h2>
+      <span class="contador-secao">{{ estados|length }}</span>
+    </div>
+    <div class="lista-maquinas">
+      {% for estado in estados %}
+      {% set situacao_maquina = estado.situacao %}
+      <a class="maquina-linha {{ 'selecionada' if loop.index0 == selecionada_idx }}"
+         href="/jobs?maquina={{ loop.index0 }}{% if arquivo_atual %}&arquivo={{ arquivo_atual.id }}{% endif %}">
+        <span class="ponto {{ situacao_maquina[1] }}"></span>
+        <span class="maquina-texto">
+          <strong>{{ estado.nome }}</strong>
+          <small>{{ estado.rotulo_do_orgao or estado.rotulo }}</small>
+        </span>
+        <span class="maquina-percentual">{{ '%.0f' % estado.percentual }}%</span>
+      </a>
       {% else %}
-        <tr><td colspan="8">
-          <div class="vazio">
-            <b>Nenhum item encontrado</b>
-            Tente remover algum filtro ou <a href="/jobs">limpar todos</a>.
-          </div>
-        </td></tr>
+      <div class="vazio compacto">
+        <b>Nenhuma maquina</b>
+        Configure uma maquina robo para visualizar a carteira.
+      </div>
       {% endfor %}
-      </tbody>
-    </table>
-  </div>
-</section>
-<p class="dica">A consulta retorna no máximo 200 registros por vez.</p>
+    </div>
+
+    <div class="secao-topo arquivos-topo">
+      <h2>Arquivos recentes</h2>
+      <span class="contador-secao">{{ arquivos_recentes|length }}</span>
+    </div>
+    <div class="lista-arquivos">
+      {% for arquivo in arquivos_recentes %}
+      <a class="arquivo-linha {{ 'selecionada' if arquivo_atual and arquivo.id == arquivo_atual.id }}"
+         href="/jobs?maquina={{ filtros.maquina }}&arquivo={{ arquivo.id }}">
+        <span class="arquivo-icone">{{ icons.icone('arquivo') }}</span>
+        <span>
+          <strong>{{ arquivo.nome }}</strong>
+          <small>{{ arquivo.itens }} itens · {{ arquivo.criado_fmt }}</small>
+        </span>
+      </a>
+      {% else %}
+      <div class="vazio compacto">
+        <b>Nenhum arquivo enviado</b>
+        Envie uma planilha para criar a carteira.
+      </div>
+      {% endfor %}
+    </div>
+  </aside>
+
+  <section class="carteira-conteudo">
+    <div class="carteira-cabecalho">
+      <div>
+        <h1>Carteira por arquivo</h1>
+        <p class="sub">
+          {% if arquivo_atual %}
+            {{ arquivo_atual.nome }} · {{ arquivo_atual.itens }} itens
+          {% else %}
+            Nenhum arquivo carregado
+          {% endif %}
+        </p>
+      </div>
+      <div class="carteira-acoes">
+        {% if selecionada and selecionada.online %}
+        <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
+              enctype="multipart/form-data" class="upload-planilha">
+          <label class="botao botao-quieto">
+            {{ icons.icone('arquivo') }} Enviar planilha
+            <input type="file" name="arquivo" accept=".xlsx,.xlsm" onchange="this.form.submit()">
+          </label>
+        </form>
+        {% endif %}
+        <form method="post" action="{{ reenfileirar_url }}">
+          <input type="hidden" name="maquina" value="{{ filtros.maquina }}">
+          <input type="hidden" name="arquivo" value="{{ filtros.arquivo }}">
+          <input type="hidden" name="orgao" value="{{ filtros.orgao or '' }}">
+          <button class="botao botao-quieto" type="submit">
+            {{ icons.icone('atualizar') }} Reenviar falhas do arquivo
+          </button>
+        </form>
+        {% if arquivo_atual %}
+          <a class="botao botao-quieto" href="/jobs?maquina={{ filtros.maquina }}&arquivo={{ arquivo_atual.id }}">
+            {{ icons.icone('calendario') }} {{ arquivo_atual.criado_fmt }}
+          </a>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="carteira-kpis">
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone azul">{{ icons.icone('arquivo') }}</span>
+        <span>
+          <small>Total na fila</small>
+          <strong>{{ metricas.total_fila_fmt }}</strong>
+          <em>Neste arquivo</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone verde">{{ icons.icone('check') }}</span>
+        <span>
+          <small>Concluidos</small>
+          <strong>{{ metricas.concluidos_fmt }}</strong>
+          <em>Neste arquivo</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone ambar">{{ icons.icone('atualizar') }}</span>
+        <span>
+          <small>Vai tentar de novo</small>
+          <strong>{{ metricas.retry_fmt }}</strong>
+          <em>Neste arquivo</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone vermelho">{{ icons.icone('alerta') }}</span>
+        <span>
+          <small>Erros</small>
+          <strong>{{ metricas.erros_fmt }}</strong>
+          <em>Neste arquivo</em>
+        </span>
+      </article>
+    </div>
+
+    <form method="get" action="/jobs" class="carteira-filtros">
+      <input type="hidden" name="maquina" value="{{ filtros.maquina }}">
+      <label>
+        <span>Arquivo</span>
+        <select name="arquivo">
+          {% if not arquivos %}<option value="">Nenhum arquivo</option>{% endif %}
+          {% for arquivo in arquivos %}
+            <option value="{{ arquivo.id }}" {% if arquivo_atual and arquivo.id == arquivo_atual.id %}selected{% endif %}>
+              {{ arquivo.nome }}
+            </option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Orgao</span>
+        <select name="orgao">
+          <option value="">Todos</option>
+          {% for o in orgaos %}
+            <option value="{{ o }}" {% if o == filtros.orgao %}selected{% endif %}>{{ rotulo_orgao(o) }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>
+        <span>Status</span>
+        <select name="status">
+          <option value="">Todos</option>
+          <option value="PENDING" {% if filtros.status == 'PENDING' %}selected{% endif %}>Na fila</option>
+          <option value="RUNNING" {% if filtros.status == 'RUNNING' %}selected{% endif %}>Processando</option>
+          <option value="RETRY_WAIT" {% if filtros.status == 'RETRY_WAIT' %}selected{% endif %}>Vai tentar de novo</option>
+          <option value="DONE" {% if filtros.status == 'DONE' %}selected{% endif %}>Concluido</option>
+          <option value="FAILED" {% if filtros.status == 'FAILED' %}selected{% endif %}>Erro tecnico</option>
+        </select>
+      </label>
+      <label class="campo-busca">
+        <span>CNPJ ou razao social</span>
+        <input name="busca" value="{{ filtros.busca or '' }}" placeholder="Buscar empresa...">
+      </label>
+      <button class="primario" type="submit">Pesquisar</button>
+      <a class="botao" href="/jobs?maquina={{ filtros.maquina }}{% if arquivo_atual %}&arquivo={{ arquivo_atual.id }}{% endif %}">Limpar</a>
+    </form>
+
+    <section class="diagnostico-painel carteira-tabela">
+      <div class="rolagem">
+        <table class="tabela-limpa">
+          <thead>
+            <tr>
+              <th>Empresa</th>
+              <th>Documento</th>
+              <th>Orgao</th>
+              <th>Status</th>
+              <th>Desfecho</th>
+              <th class="num">Tentativas</th>
+              <th>Ultima atualizacao</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for j in jobs %}
+            <tr class="linha-clicavel"
+                onclick="window.location.href='{{ j.detalhe_url }}'"
+                tabindex="0"
+                onkeydown="if(event.key === 'Enter'){ window.location.href='{{ j.detalhe_url }}'; }">
+              <td><a class="linha-link" href="{{ j.detalhe_url }}">{{ j.nome }}</a></td>
+              <td class="mono">{{ j.documento_fmt }}</td>
+              <td>{{ rotulo_orgao(j.orgao) }}</td>
+              <td>{{ situacao(j.status) }}</td>
+              <td>{{ desfecho_item(j.desfecho) }}</td>
+              <td class="num">{{ j.tentativas }}</td>
+              <td class="mono">{{ j.atualizado_fmt }}</td>
+              <td class="num"><a class="botao botao-mini" href="{{ j.detalhe_url }}">Abrir</a></td>
+            </tr>
+          {% else %}
+            <tr>
+              <td colspan="8">
+                <div class="vazio">
+                  <b>Nenhum item encontrado</b>
+                  Ajuste os filtros ou limpe a busca.
+                </div>
+              </td>
+            </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      <div class="carteira-paginacao">
+        <span>{{ paginacao.inicio }}-{{ paginacao.fim }} de {{ paginacao.total }} itens</span>
+        <div class="paginas">
+          <a class="botao botao-mini {{ 'desabilitado' if not paginacao.tem_anterior }}" href="{{ paginacao.anterior_url }}">‹</a>
+          <span class="pagina-atual">{{ paginacao.pagina }}</span>
+          <span>de {{ paginacao.paginas }}</span>
+          <a class="botao botao-mini {{ 'desabilitado' if not paginacao.tem_proxima }}" href="{{ paginacao.proxima_url }}">›</a>
+        </div>
+        <span>{{ paginacao.limite }} por pagina</span>
+      </div>
+    </section>
+
+    <div class="insight-caixa carteira-info">
+      <span class="diagnostico-icone azul pequeno">{{ icons.icone('info') }}</span>
+      <p>Carteira do arquivo selecionado: fila, tentativas, resultados e falhas deste envio.</p>
+    </div>
+  </section>
+</div>
 {% endblock %}

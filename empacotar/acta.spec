@@ -31,6 +31,7 @@ ctk_datas, ctk_binarios, ctk_ocultos = collect_all("customtkinter")
 dados = ctk_datas + [
     (str(FONTE / "infra" / "schema.sql"), "cnd/infra"),
     (str(FONTE / "web" / "templates"), "cnd/web/templates"),
+    (str(FONTE / "web" / "static"), "cnd/web/static"),
 ]
 
 ocultos = ctk_ocultos + [

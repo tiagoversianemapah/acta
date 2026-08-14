@@ -10,6 +10,7 @@ sem saber absolutamente nada sobre navegador ou sobre o site do órgão.
 """
 from __future__ import annotations
 
+import contextlib
 import signal
 import threading
 import time
@@ -18,16 +19,11 @@ from dataclasses import dataclass, field
 from cnd.adapters.base import AdapterOrgao
 from cnd.adapters.base import carregar as carregar_adapter
 from cnd.core import breaker, fila, ritmo, tempo
-from cnd.core.modelos import (
-    BLOQUEIOS,
-    CONCLUSIVOS,
-    Desfecho,
-    ResultadoTentativa,
-)
+from cnd.core.modelos import CONCLUSIVOS, RETENTAVEIS, Desfecho, ResultadoTentativa
 from cnd.infra import alertas, heartbeat
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.config import carregar as carregar_config
-from cnd.infra.db import caminho_pedido_parada, conectar
+from cnd.infra.db import caminho_parada_manual, caminho_pedido_parada, conectar
 from cnd.infra.log import configurar as configurar_log
 from cnd.infra.log import obter
 from cnd.orquestrador import vigilancia
@@ -237,22 +233,35 @@ class Worker(threading.Thread):
 
     # ------------------------------------------------------------------
     def _ajustar_ritmo(self, desfecho: Desfecho) -> None:
-        if desfecho in BLOQUEIOS:
+        if desfecho == Desfecho.CAPTCHA:
             novo = ritmo.registrar_captcha(self.conn, self.orgao.codigo, self.orgao.pacing)
             log.info("ritmo_punido", extra={"orgao": self.orgao.codigo,
                                             "desfecho": str(desfecho),
                                             "intervalo_s": round(novo.intervalo_s, 2)})
-            try:
-                self.adapter.reiniciar_sessao()
-            except Exception:
-                log.exception("falha_ao_reiniciar_sessao",
-                              extra={"orgao": self.orgao.codigo})
-        elif desfecho != Desfecho.ERRO_TECNICO:
+        elif desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
+            novo = ritmo.registrar_bloqueio_temporario(
+                self.conn, self.orgao.codigo, self.orgao.pacing
+            )
+            log.info("ritmo_punido", extra={"orgao": self.orgao.codigo,
+                                            "desfecho": str(desfecho),
+                                            "intervalo_s": round(novo.intervalo_s, 2)})
+        elif desfecho not in RETENTAVEIS:
             antes = ritmo.estado(self.conn, self.orgao.codigo, self.orgao.pacing)
             novo = ritmo.registrar_sucesso(self.conn, self.orgao.codigo, self.orgao.pacing)
             if novo.intervalo_s < antes.intervalo_s:
                 log.info("ritmo_acelerado", extra={"orgao": self.orgao.codigo,
                                                    "intervalo_s": round(novo.intervalo_s, 2)})
+
+        if desfecho in RETENTAVEIS:
+            try:
+                self.adapter.reiniciar_sessao()
+                log.info("sessao_reiniciada_apos_falha",
+                         extra={"orgao": self.orgao.codigo,
+                                "desfecho": str(desfecho)})
+            except Exception:
+                log.exception("falha_ao_reiniciar_sessao",
+                              extra={"orgao": self.orgao.codigo,
+                                     "desfecho": str(desfecho)})
 
     def _avaliar_breaker(self, desfecho: Desfecho) -> None:
         antes = breaker.consultar(self.conn, self.orgao.codigo)
@@ -579,6 +588,8 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
 
     if _consumir_pedido_de_parada(cfg):
         log.info("pedido_de_parada_antigo_descartado")
+    with contextlib.suppress(OSError):
+        caminho_parada_manual(cfg.banco).unlink()
 
     if problema := _conferir_espaco(conn, cfg):
         log.error("disco_insuficiente", extra={"detalhe": problema})

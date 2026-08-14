@@ -183,12 +183,12 @@ class EstadoRemoto:
         """
         if not self.online:
             return "Sem resposta", "cinza"
+        if self.pendentes and not self.robo_ativo:
+            return "Parada com fila", "vermelho"
         if self.suspensa:
             return "Suspensa", "ambar"
         if self.robo_ativo:
             return "Trabalhando", "verde"
-        if self.pendentes:
-            return "Parada com fila", "vermelho"
         # Verde, e não cinza: ociosa com a fila limpa é o estado saudável
         # do mês — a máquina fez o que tinha para fazer. Cinza sugeriria
         # que não se sabe o que está acontecendo com ela.
@@ -215,6 +215,19 @@ class EstadoRemoto:
 def _pedir(maquina: Maquina, rota: str, senha: str, parametros: str = "") -> object:
     url = f"{maquina.base}{rota}{parametros}"
     pedido = urllib.request.Request(url)
+    if senha:
+        pedido.add_header("X-CND-Senha", senha)
+    with urllib.request.urlopen(pedido, timeout=TEMPO_LIMITE_S) as resposta:
+        return json.loads(resposta.read())
+
+
+def _postar(
+    maquina: Maquina, rota: str, senha: str, dados: dict[str, str] | None = None
+) -> object:
+    url = f"{maquina.base}{rota}"
+    corpo = urllib.parse.urlencode(dados or {}).encode("utf-8")
+    pedido = urllib.request.Request(url, data=corpo, method="POST")
+    pedido.add_header("Content-Type", "application/x-www-form-urlencoded")
     if senha:
         pedido.add_header("X-CND-Senha", senha)
     with urllib.request.urlopen(pedido, timeout=TEMPO_LIMITE_S) as resposta:
@@ -276,12 +289,20 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     """
     import platform
 
+    from cnd.core import breaker
     from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
     from cnd.infra import maquina
+    from cnd.infra.db import conectar_leitura
     from cnd.infra.maquina import ler as ler_saude
-    from cnd.web.consultas import eta_horas
+    from cnd.web import consultas
+    from cnd.web.consultas import eta_horas, rotulo_duracao
 
     panorama = ler_panorama(cfg)
+    try:
+        with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
+            lotes = consultas.lotes(conn)
+    except Exception:
+        lotes = []
     # Sem AnyDesk no cartão local: é o computador em que a pessoa já está,
     # e oferecer acesso remoto a si mesmo só confundiria.
     esta = Maquina(cfg.rede.nome or platform.node(), "")
@@ -292,6 +313,12 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
         "lote_nome": panorama.lote_nome,
         "atividade": ler_atividade(cfg),
         "meses": ler_meses(cfg),
+        "lotes": [{"id": lote["id"], "descricao": lote["descricao"],
+                   "arquivo": lote["arquivo_origem"],
+                   "itens": lote["jobs"],
+                   "criado_em": lote["criado_em"],
+                   "encerrado_em": lote["encerrado_em"]}
+                  for lote in lotes],
         "saude": ler_saude(cfg.pasta_certidoes).como_dicionario(),
         "papel": "robo" if cfg.rede.roda_robo else "console",
         "versao": maquina.versao(),
@@ -312,6 +339,22 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
             "eta_horas": eta_horas(r),
             "disjuntor": r.breaker_estado, "disjuntor_motivo": r.breaker_motivo,
             "disjuntor_ate": r.breaker_ate,
+            "disjuntor_aberturas": r.breaker_aberturas,
+            "disjuntor_pausa_s": (
+                pausa_s := breaker.cooldown_atual_s(
+                    breaker.EstadoBreaker(
+                        r.breaker_estado,
+                        r.breaker_ate,
+                        r.breaker_aberturas,
+                        r.breaker_motivo,
+                    ),
+                    (
+                        cfg.orgaos[r.orgao].breaker if r.orgao in cfg.orgaos
+                        else breaker.ParametrosBreaker()
+                    ),
+                )
+            ),
+            "disjuntor_pausa": rotulo_duracao(pausa_s),
             "ultima_tentativa": r.ultima_tentativa,
         } for r in panorama.resumos],
     })
@@ -353,6 +396,47 @@ def listar_itens(maquina: Maquina, senha: str = "",
         return None
 
 
+def contar_itens(maquina: Maquina, senha: str = "", **filtros) -> int | None:
+    filtros = {**filtros, "limite": 1, "incluir_total": "true"}
+    partes = [
+        f"{chave}={urllib.parse.quote(str(valor))}"
+        for chave, valor in filtros.items()
+        if valor not in (None, "")
+    ]
+    consulta = ("?" + "&".join(partes)) if partes else ""
+    try:
+        resultado = _pedir(maquina, "/api/itens", senha, consulta)
+        if isinstance(resultado, dict):
+            return int(resultado.get("total") or 0)
+        if isinstance(resultado, list):
+            return len(resultado)
+    except Exception:
+        return None
+    return None
+
+
+def reenfileirar_falhados(
+    maquina: Maquina, senha: str = "", orgao: str | None = None,
+    lote_id: int | None = None,
+) -> dict | None:
+    try:
+        resultado = _postar(
+            maquina, "/api/reenfileirar", senha,
+            {"orgao": orgao or "", "lote_id": str(lote_id or 0)},
+        )
+        return resultado if isinstance(resultado, dict) else None
+    except Exception:
+        return None
+
+
+def retomar_pausa(maquina: Maquina, orgao: str, senha: str = "") -> dict | None:
+    try:
+        resultado = _postar(maquina, f"/api/breaker/{orgao}/retomar", senha)
+        return resultado if isinstance(resultado, dict) else None
+    except Exception:
+        return None
+
+
 def tentativas_do_job(maquina: Maquina, senha: str,
                       job_id: int) -> list[dict]:
     """O histórico daquele item, buscado na máquina que o processou."""
@@ -361,6 +445,18 @@ def tentativas_do_job(maquina: Maquina, senha: str,
         return resultado if isinstance(resultado, list) else []
     except Exception:
         return []
+
+
+def diagnostico(maquina: Maquina, senha: str = "", dias: int = 7) -> dict | None:
+    """Diagnóstico operacional da máquina, ou None se ela não respondeu."""
+    try:
+        resultado = _pedir(
+            maquina, "/api/diagnostico", senha,
+            f"?dias={urllib.parse.quote(str(dias))}",
+        )
+        return resultado if isinstance(resultado, dict) else None
+    except Exception:
+        return None
 
 
 @dataclass
@@ -531,6 +627,28 @@ def comandar_robo(maquina: Maquina, iniciar: bool, senha: str = "") -> dict:
     except urllib.error.HTTPError as erro:
         # O corpo traz o motivo em português — área de trabalho bloqueada,
         # senha não configurada. Perdê-lo deixaria só "HTTP 409".
+        with contextlib.suppress(Exception):
+            raise RuntimeError(json.loads(erro.read())["detail"]) from erro
+        raise
+
+
+def atualizar(maquina: Maquina, senha: str, origem: str,
+              sha256: str = "") -> dict:
+    """Pede para a maquina baixar e aplicar o pacote publicado pelo console."""
+    corpo = urllib.parse.urlencode({
+        "origem": origem,
+        **({"sha256": sha256} if sha256 else {}),
+    }).encode()
+    pedido = urllib.request.Request(
+        f"{maquina.base}/api/atualizar", data=corpo, method="POST"
+    )
+    pedido.add_header("Content-Type", "application/x-www-form-urlencoded")
+    if senha:
+        pedido.add_header("X-CND-Senha", senha)
+    try:
+        with urllib.request.urlopen(pedido, timeout=30) as resposta:
+            return json.loads(resposta.read())
+    except urllib.error.HTTPError as erro:
         with contextlib.suppress(Exception):
             raise RuntimeError(json.loads(erro.read())["detail"]) from erro
         raise

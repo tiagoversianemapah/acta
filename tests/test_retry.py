@@ -14,6 +14,7 @@ P = ParametrosRetry(
     backoff_erro_s=(120, 600, 2700),
     backoff_captcha_s=(3600, 14400, 43200),
     backoff_bloqueio_s=(300, 900, 1800),
+    backoff_resultado_pendente_s=(3600, 3600, 3600),
 )
 
 
@@ -30,13 +31,19 @@ class TestBackoff:
         assert P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1) == 300
         assert P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 2) == 900
 
+    def test_resultado_pendente_recua_uma_hora(self):
+        """Portal indisponivel volta para a fila sem abrir pausa do orgao."""
+        assert P.espera(Desfecho.RESULTADO_PENDENTE, 1) == 3600
+        assert P.espera(Desfecho.RESULTADO_PENDENTE, 2) == 3600
+
     def test_bloqueio_e_captcha_tem_esperas_diferentes(self):
         assert (P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1)
                 < P.espera(Desfecho.CAPTCHA, 1))
 
     def test_espera_cresce(self):
         for desfecho in (Desfecho.ERRO_TECNICO, Desfecho.CAPTCHA,
-                         Desfecho.BLOQUEIO_TEMPORARIO):
+                         Desfecho.BLOQUEIO_TEMPORARIO,
+                         Desfecho.RESULTADO_PENDENTE):
             esperas = [P.espera(desfecho, n) for n in (1, 2, 3)]
             assert esperas == sorted(esperas)
 
@@ -62,3 +69,4 @@ class TestVocabulario:
         """Falha nossa ou instabilidade é diferente do portal nos barrando:
         só o segundo caso deve desacelerar o ritmo."""
         assert Desfecho.ERRO_TECNICO not in BLOQUEIOS
+        assert Desfecho.RESULTADO_PENDENTE not in BLOQUEIOS

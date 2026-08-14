@@ -1,8 +1,8 @@
-﻿"""Consultar itens busca em todas as máquinas por padrão.
+"""A operação nasce em uma máquina, mas preserva a busca em todas.
 
-Quem liga perguntando "o que houve com a Fulana Ltda" não sabe em qual
-máquina ela está — obrigar a escolher a máquina antes de procurar é pedir
-a resposta como pergunta.
+No dia a dia a fila pertence ao computador que emite. Quando alguém liga
+perguntando "o que houve com a Fulana Ltda", a busca agregada continua
+existindo para não obrigar a adivinhar onde ela caiu.
 """
 from __future__ import annotations
 
@@ -48,14 +48,15 @@ def _com_rede(janela, monkeypatch, maquinas, papel="console"):
 def duas_maquinas(janela, monkeypatch):
     """Console sem robô próprio, olhando duas máquinas."""
     _com_rede(janela, monkeypatch, [FEDERAL, ESTADUAL])
+    janela._maquina_selecionada = ""
     janela.filtro_maquina.configure(values=[TODAS_AS_MAQUINAS])
     janela.filtro_maquina.set(TODAS_AS_MAQUINAS)
     return janela
 
 
-def test_todas_as_maquinas_e_o_padrao(duas_maquinas):
+def test_primeira_maquina_e_o_padrao(duas_maquinas):
     duas_maquinas._atualizar_filtros_de_itens()
-    assert duas_maquinas.filtro_maquina.get() == TODAS_AS_MAQUINAS
+    assert duas_maquinas.filtro_maquina.get() == "RECEITA FEDERAL"
 
 
 def test_busca_junta_as_duas_e_diz_de_onde_veio(duas_maquinas, monkeypatch):

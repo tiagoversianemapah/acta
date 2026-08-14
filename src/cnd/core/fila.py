@@ -223,28 +223,31 @@ def recuperar_orfaos(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
-def reenfileirar_falhados(conn: sqlite3.Connection, orgao: str | None = None) -> int:
+def reenfileirar_falhados(
+    conn: sqlite3.Connection, orgao: str | None = None,
+    lote_id: int | None = None,
+) -> int:
     """Devolve jobs FAILED para a fila, zerando o contador de tentativas.
     Usado pelo painel depois que a causa da falha foi corrigida."""
     agora = tempo.agora_iso()
+    condicoes = ["status = ?"]
+    args: list = [Status.FAILED]
     if orgao:
-        cursor = conn.execute(
-            """
-            UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
-                           proxima_execucao_em = ?, atualizado_em = ?
-             WHERE status = ? AND orgao = ?
-            """,
-            (Status.PENDING, agora, agora, Status.FAILED, orgao),
-        )
-    else:
-        cursor = conn.execute(
-            """
-            UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
-                           proxima_execucao_em = ?, atualizado_em = ?
-             WHERE status = ?
-            """,
-            (Status.PENDING, agora, agora, Status.FAILED),
-        )
+        condicoes.append("orgao = ?")
+        args.append(orgao)
+    if lote_id:
+        condicoes.append("lote_id = ?")
+        args.append(lote_id)
+
+    where = " AND ".join(condicoes)
+    cursor = conn.execute(
+        f"""
+        UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
+                       proxima_execucao_em = ?, atualizado_em = ?
+         WHERE {where}
+        """,
+        (Status.PENDING, agora, agora, *args),
+    )
     return cursor.rowcount
 
 

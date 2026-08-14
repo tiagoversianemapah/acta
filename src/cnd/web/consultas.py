@@ -7,18 +7,28 @@ dois divirjam.
 from __future__ import annotations
 
 import sqlite3
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+from math import ceil
 
 from cnd.core import breaker, tempo
+from cnd.core.documentos import limpar
 from cnd.core.modelos import Desfecho, Status
 
 ROTULOS = {
     Desfecho.NEGATIVA: "Negativas",
     Desfecho.CPEN: "Positivas c/ efeito de negativa",
     Desfecho.POSITIVA: "Positivas (com pendência)",
-    Desfecho.PENDENCIA_MANUAL: "Pendência manual",
+    Desfecho.PENDENCIA_MANUAL: "Informações insuficientes",
     Desfecho.APROVEITADA: "Aproveitadas (já vigentes)",
+    Desfecho.RESULTADO_PENDENTE: "Resultado pendente",
 }
+
+ERROS_DIAGNOSTICO = frozenset({
+    Desfecho.CAPTCHA,
+    Desfecho.BLOQUEIO_TEMPORARIO,
+    Desfecho.ERRO_TECNICO,
+})
 
 
 @dataclass
@@ -33,6 +43,7 @@ class ResumoOrgao:
     breaker_estado: str
     breaker_motivo: str | None
     breaker_ate: str | None
+    breaker_aberturas: int
     intervalo_s: float | None
     ritmo_por_hora: float | None
     taxa_captcha: float | None
@@ -135,6 +146,7 @@ def resumo(conn: sqlite3.Connection, orgao: str, lote_id: int | None = None) -> 
         breaker_estado=estado_breaker.estado,
         breaker_motivo=estado_breaker.motivo,
         breaker_ate=estado_breaker.aberto_ate,
+        breaker_aberturas=estado_breaker.aberturas,
         intervalo_s=intervalo,
         ritmo_por_hora=float(feitas) if feitas else None,
         taxa_captcha=(captchas / feitas) if feitas else None,
@@ -161,11 +173,19 @@ def meses_com_itens(conn: sqlite3.Connection) -> list[str]:
         "WHERE atualizado_em IS NOT NULL ORDER BY mes DESC")]
 
 
-def jobs(conn: sqlite3.Connection, lote_id: int | None = None, orgao: str | None = None,
-         status: str | None = None, desfecho: str | None = None,
-         busca: str | None = None, limite: int = 200,
-         mes: str | None = None) -> list[sqlite3.Row]:
+def _filtro_jobs(
+    lote_id: int | None = None,
+    orgao: str | None = None,
+    status: str | None = None,
+    desfecho: str | None = None,
+    busca: str | None = None,
+    mes: str | None = None,
+    job_id: int | None = None,
+) -> tuple[str, list]:
     condicoes, args = [], []
+    if job_id:
+        condicoes.append("j.id = ?")
+        args.append(job_id)
     if mes:
         condicoes.append("strftime('%Y-%m', j.atualizado_em) = ?")
         args.append(mes)
@@ -177,18 +197,51 @@ def jobs(conn: sqlite3.Connection, lote_id: int | None = None, orgao: str | None
             condicoes.append(f"{coluna} = ?")
             args.append(valor)
     if busca:
-        condicoes.append("(e.documento LIKE ? OR e.nome LIKE ?)")
-        args.extend([f"%{busca}%", f"%{busca}%"])
+        busca_limpa = limpar(busca)
+        condicoes.append("(e.documento LIKE ? OR e.documento LIKE ? OR e.nome LIKE ?)")
+        args.extend([f"%{busca}%", f"%{busca_limpa}%", f"%{busca}%"])
 
     onde = ("WHERE " + " AND ".join(condicoes)) if condicoes else ""
+    return onde, args
+
+
+def contar_jobs(
+    conn: sqlite3.Connection,
+    lote_id: int | None = None,
+    orgao: str | None = None,
+    status: str | None = None,
+    desfecho: str | None = None,
+    busca: str | None = None,
+    mes: str | None = None,
+    job_id: int | None = None,
+) -> int:
+    onde, args = _filtro_jobs(lote_id, orgao, status, desfecho, busca, mes, job_id)
+    return conn.execute(
+        f"""
+        SELECT COUNT(*) AS n
+          FROM job j
+          JOIN empresa e ON e.id = j.empresa_id
+          {onde}
+        """,
+        args,
+    ).fetchone()["n"]
+
+
+def jobs(conn: sqlite3.Connection, lote_id: int | None = None, orgao: str | None = None,
+         status: str | None = None, desfecho: str | None = None,
+         busca: str | None = None, limite: int = 200,
+         mes: str | None = None, job_id: int | None = None,
+         offset: int = 0) -> list[sqlite3.Row]:
+    onde, args = _filtro_jobs(lote_id, orgao, status, desfecho, busca, mes, job_id)
     args.append(limite)
+    args.append(offset)
 
     return conn.execute(
         f"""
-        SELECT j.id, j.orgao, j.status, j.desfecho, j.tentativas,
+        SELECT j.id, j.lote_id, j.orgao, j.status, j.desfecho, j.tentativas,
                j.proxima_execucao_em, j.atualizado_em,
                e.documento, e.nome,
-               c.caminho_pdf, c.valida_ate,
+               c.tipo, c.emitida_em, c.valida_ate, c.codigo_controle, c.caminho_pdf,
                (SELECT t.mensagem_portal FROM tentativa t
                  WHERE t.job_id = j.id ORDER BY t.id DESC LIMIT 1) AS ultima_mensagem
           FROM job j
@@ -196,7 +249,7 @@ def jobs(conn: sqlite3.Connection, lote_id: int | None = None, orgao: str | None
           LEFT JOIN certidao c ON c.job_id = j.id
           {onde}
          ORDER BY j.atualizado_em DESC
-         LIMIT ?
+         LIMIT ? OFFSET ?
         """,
         args,
     ).fetchall()
@@ -212,6 +265,28 @@ def tentativas_do_job(conn: sqlite3.Connection, job_id: int) -> list[sqlite3.Row
 # processo morreu no meio. O robô cego leva ~25s por consulta, então cinco
 # minutos é folga larga.
 MINUTOS_EM_CURSO = 5
+
+
+def _hora_local(valor: str | None) -> str:
+    if not valor:
+        return ""
+    try:
+        return tempo.de_iso(valor).astimezone().strftime("%H:%M:%S")
+    except Exception:
+        texto = str(valor)
+        return texto[11:19] if len(texto) >= 19 else texto
+
+
+def rotulo_duracao(segundos: int | float | None) -> str:
+    if segundos is None:
+        return ""
+    minutos = max(1, round(float(segundos) / 60))
+    if minutos < 60:
+        return f"{minutos} min"
+    horas, resto = divmod(minutos, 60)
+    if resto == 0:
+        return f"{horas} h"
+    return f"{horas} h {resto} min"
 
 
 def pendentes(conn: sqlite3.Connection) -> int:
@@ -260,18 +335,26 @@ def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8) -> list[dict]:
         """,
         (limiar, limite),
     ).fetchall()
-    return [{
+    eventos = []
+    for linha in linhas:
+        quando = linha["finalizada_em"] or linha["iniciada_em"]
+        eventos.append({
         "nome": linha["nome"],
         "documento": linha["documento"],
         "orgao": linha["orgao"],
         "desfecho": linha["desfecho"],
-        "quando": linha["finalizada_em"] or linha["iniciada_em"],
+        "mensagem_portal": linha["mensagem_portal"],
+        "quando": quando,
+        "hora": _hora_local(quando),
         "em_curso": bool(linha["em_curso"]),
         "interrompida": linha["finalizada_em"] is None and not linha["em_curso"],
-    } for linha in linhas]
+        })
+    return eventos
 
 
-def captcha_por_hora(conn: sqlite3.Connection, orgao: str, dias: int = 7) -> list[dict]:
+def _captcha_por_hora_sql_antigo(
+    conn: sqlite3.Connection, orgao: str, dias: int = 7
+) -> list[dict]:
     """Alimenta a decisão sobre janela ativa e sobre a hipótese de IP (risco R4)."""
     desde = tempo.daqui_a(-dias * 86400)
     linhas = conn.execute(
@@ -290,3 +373,192 @@ def captcha_por_hora(conn: sqlite3.Connection, orgao: str, dias: int = 7) -> lis
          "taxa": (linha["captchas"] / linha["total"]) if linha["total"] else 0.0}
         for linha in linhas
     ]
+
+
+def captcha_por_hora(conn: sqlite3.Connection, orgao: str, dias: int = 7) -> list[dict]:
+    """Alimenta a decisao sobre janela ativa e sobre a hipotese de IP.
+
+    A decisao de horario nao depende de "informacoes insuficientes": isso e
+    resposta de negocio da empresa. Para horario, o que importa e o portal
+    barrando a automacao, entao a taxa junta CAPTCHA e BLOQUEIO_TEMPORARIO.
+    """
+    desde = tempo.daqui_a(-dias * 86400)
+    linhas = conn.execute(
+        """
+        SELECT t.iniciada_em, t.desfecho
+          FROM tentativa t JOIN job j ON j.id = t.job_id
+         WHERE j.orgao = ? AND t.iniciada_em >= ?
+         ORDER BY t.iniciada_em
+        """,
+        (orgao, desde),
+    ).fetchall()
+
+    por_hora = defaultdict(lambda: {
+        "total": 0, "captchas": 0, "bloqueios": 0, "recusas": 0,
+        "insuficientes": 0, "erros": 0,
+    })
+    for linha in linhas:
+        try:
+            hora = tempo.de_iso(linha["iniciada_em"]).astimezone().strftime("%H")
+        except Exception:
+            hora = str(linha["iniciada_em"] or "")[11:13] or "??"
+
+        balde = por_hora[hora]
+        balde["total"] += 1
+        desfecho = linha["desfecho"]
+        if desfecho == Desfecho.CAPTCHA:
+            balde["captchas"] += 1
+            balde["recusas"] += 1
+        elif desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
+            balde["bloqueios"] += 1
+            balde["recusas"] += 1
+        elif desfecho == Desfecho.PENDENCIA_MANUAL:
+            balde["insuficientes"] += 1
+        elif desfecho == Desfecho.ERRO_TECNICO:
+            balde["erros"] += 1
+
+    return [
+        {
+            "hora": hora,
+            **valores,
+            "taxa": (
+                valores["recusas"] / valores["total"] if valores["total"] else 0.0
+            ),
+        }
+        for hora, valores in sorted(por_hora.items())
+    ]
+
+
+def _rotulo_erro(desfecho: str | None, mensagem: str | None) -> str:
+    texto = " ".join(str(mensagem or "").split())
+    minusculo = texto.lower()
+    if "não veio pdf" in minusculo or "nao veio pdf" in minusculo:
+        return "Não veio PDF / faixa de aviso"
+    if "faixa de aviso" in minusculo:
+        return "Não veio PDF / faixa de aviso"
+    if desfecho == Desfecho.CAPTCHA:
+        return "Captcha não resolvido"
+    if desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
+        return "Bloqueio temporário"
+    if desfecho == Desfecho.ERRO_TECNICO:
+        return texto[:80] if texto else "Erro técnico"
+    return texto[:80] if texto else "Sem mensagem"
+
+
+def principais_erros(
+    conn: sqlite3.Connection, orgao: str, dias: int = 7, limite: int = 5
+) -> list[dict]:
+    """Erros operacionais mais frequentes, sem contar resultado de negócio."""
+    desde = tempo.daqui_a(-dias * 86400)
+    linhas = conn.execute(
+        """
+        SELECT t.desfecho, t.mensagem_portal
+          FROM tentativa t JOIN job j ON j.id = t.job_id
+         WHERE j.orgao = ? AND t.iniciada_em >= ?
+           AND t.desfecho IN ('CAPTCHA', 'BLOQUEIO_TEMPORARIO', 'ERRO_TECNICO')
+        """,
+        (orgao, desde),
+    ).fetchall()
+
+    contagem = Counter(
+        _rotulo_erro(linha["desfecho"], linha["mensagem_portal"])
+        for linha in linhas
+    )
+    return [
+        {"erro": erro, "quantidade": quantidade}
+        for erro, quantidade in contagem.most_common(limite)
+    ]
+
+
+def _eixo_de_erros(maior_valor: int) -> tuple[int, list[int]]:
+    """Topo e marcações do eixo Y para o gráfico de erros por horário."""
+    passo = max(1, ceil(max(5, maior_valor) / 5))
+    topo = passo * 5
+    return topo, [topo - passo * indice for indice in range(6)]
+
+
+def diagnostico_orgao(
+    conn: sqlite3.Connection, orgao: str, dias: int = 7
+) -> dict:
+    """Pacote pronto para a aba Diagnóstico.
+
+    "Informações insuficientes" fica separado de erro: é uma resposta
+    conclusiva da empresa, não falha do robô nem bloqueio do portal.
+    """
+    horas = captcha_por_hora(conn, orgao, dias)
+    por_hora = {linha["hora"]: dict(linha) for linha in horas}
+    for linha in por_hora.values():
+        linha["erros_operacionais"] = (
+            int(linha.get("captchas") or 0)
+            + int(linha.get("bloqueios") or 0)
+            + int(linha.get("erros") or 0)
+        )
+        total_linha = int(linha.get("total") or 0)
+        linha["taxa_erro"] = (
+            linha["erros_operacionais"] / total_linha if total_linha else 0.0
+        )
+
+    total = sum(int(h.get("total") or 0) for h in por_hora.values())
+    erros = sum(int(h.get("erros_operacionais") or 0) for h in por_hora.values())
+    bloqueios = sum(int(h.get("bloqueios") or 0) for h in por_hora.values())
+    captchas = sum(int(h.get("captchas") or 0) for h in por_hora.values())
+    tecnicos = sum(int(h.get("erros") or 0) for h in por_hora.values())
+    insuficientes = sum(int(h.get("insuficientes") or 0) for h in por_hora.values())
+    taxa_erro = erros / total if total else 0.0
+
+    maior_barra = max(
+        [1, *(int(h.get("erros_operacionais") or 0) for h in por_hora.values())]
+    )
+    topo_eixo, eixo = _eixo_de_erros(maior_barra)
+    serie = []
+    for hora in range(24):
+        chave = f"{hora:02d}"
+        linha = por_hora.get(chave, {
+            "hora": chave, "total": 0, "captchas": 0, "bloqueios": 0,
+            "recusas": 0, "insuficientes": 0, "erros": 0,
+            "erros_operacionais": 0, "taxa_erro": 0.0,
+        })
+        erros_hora = int(linha.get("erros_operacionais") or 0)
+        serie.append({
+            **linha,
+            "altura": round(erros_hora / topo_eixo * 100, 1) if erros_hora else 0,
+            "marcar": hora % 2 == 0,
+        })
+
+    resumo_horario = sorted(
+        (h for h in por_hora.values() if int(h.get("total") or 0) > 0),
+        key=lambda h: h["hora"],
+    )
+    pior_hora = max(
+        resumo_horario,
+        key=lambda h: (h.get("taxa_erro", 0.0), h.get("erros_operacionais", 0)),
+        default=None,
+    )
+    melhores = [
+        {
+            "hora": h["hora"],
+            "total": h["total"],
+            "taxa": h.get("taxa_erro", 0.0),
+        }
+        for h in sorted(
+            [h for h in resumo_horario if int(h.get("total") or 0) >= 3],
+            key=lambda h: (h.get("taxa_erro", 1.0), -h.get("total", 0), h["hora"]),
+        )[:3]
+    ]
+
+    return {
+        "orgao": orgao,
+        "consultas": total,
+        "erros": erros,
+        "taxa_erro": taxa_erro,
+        "bloqueios": bloqueios,
+        "captchas": captchas,
+        "tecnicos": tecnicos,
+        "insuficientes": insuficientes,
+        "serie": serie,
+        "eixo": eixo,
+        "horas": resumo_horario,
+        "pior_hora": pior_hora,
+        "melhores": melhores,
+        "principais_erros": principais_erros(conn, orgao, dias),
+    }

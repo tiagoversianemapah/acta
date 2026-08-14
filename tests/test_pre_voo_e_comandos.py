@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
-from tests.conftest import criar_job
 
+from cnd.core.modelos import Status
+from cnd.infra import heartbeat
 from cnd.infra.config import ConfigRede, carregar
 from cnd.orquestrador.loop import _conferir_espaco
 from cnd.web import comandos
+from tests.conftest import criar_job
 
 fastapi_testclient = pytest.importorskip("fastapi.testclient")
 
@@ -114,6 +117,192 @@ class TestComandosPelaRede:
         assert resposta.status_code == 409
         assert "bloqueada" in resposta.json()["detail"]
 
+    def test_iniciar_pelo_painel_web_dispara_robo_visual(
+        self, monkeypatch, tmp_path
+    ):
+        visto = {}
+
+        def iniciar(raiz):
+            visto["raiz"] = raiz
+            return True, "iniciado"
+
+        monkeypatch.setattr(comandos.maquina, "area_de_trabalho_disponivel",
+                            lambda: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: False)
+        monkeypatch.setattr(comandos, "_iniciar_robo_visual", iniciar)
+        (tmp_path / "parar.txt").write_text("parar", encoding="utf-8")
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post("/api/robo/iniciar",
+                                    headers={"X-CND-Senha": "segredo"})
+
+        assert resposta.status_code == 200
+        assert resposta.json()["situacao"] == "iniciado"
+        assert resposta.json()["mensagem"] == "Robô iniciado."
+        assert visto["raiz"]
+        assert not (tmp_path / "parar.txt").exists()
+
+    def test_iniciar_pelo_painel_normaliza_ritmo_excessivo(
+        self, monkeypatch, tmp_path
+    ):
+        from cnd.infra.db import conectar
+
+        banco = tmp_path / "cnd.db"
+        monkeypatch.setattr(comandos.maquina, "area_de_trabalho_disponivel",
+                            lambda: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: False)
+        monkeypatch.setattr(
+            comandos, "_iniciar_robo_visual", lambda _raiz: (True, "iniciado")
+        )
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                conn.execute(
+                    "INSERT INTO ritmo "
+                    "(orgao, intervalo_s, consultas_limpas, atualizado_em) "
+                    "VALUES ('RFB_PJ', 120, 0, '2026-01-01T00:00:00Z')"
+                )
+            finally:
+                conn.close()
+
+            resposta = cliente.post("/api/robo/iniciar",
+                                    headers={"X-CND-Senha": "segredo"})
+
+            conn = conectar(banco)
+            try:
+                intervalo = conn.execute(
+                    "SELECT intervalo_s FROM ritmo WHERE orgao = 'RFB_PJ'"
+                ).fetchone()["intervalo_s"]
+            finally:
+                conn.close()
+
+        esperado = carregar().orgaos["RFB_PJ"].pacing.intervalo_inicial_s
+        assert resposta.status_code == 200
+        assert intervalo == esperado
+
+    def test_iniciar_se_ja_tem_robo_vivo_nao_duplica(
+        self, monkeypatch, tmp_path
+    ):
+        def nao_deveria_iniciar(*_args, **_kwargs):
+            raise AssertionError("nao deveria iniciar outro robo")
+
+        monkeypatch.setattr(comandos.maquina, "area_de_trabalho_disponivel",
+                            lambda: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: True)
+        monkeypatch.setattr(comandos, "_iniciar_robo_visual", nao_deveria_iniciar)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post("/api/robo/iniciar",
+                                    headers={"X-CND-Senha": "segredo"})
+
+        assert resposta.status_code == 200
+        assert resposta.json()["situacao"] == "Já está em execução."
+        assert resposta.json()["mensagem"] == "Robô já está em execução."
+
+    def test_iniciar_recupera_robo_ocioso_sem_sinal(
+        self, monkeypatch, tmp_path
+    ):
+        visto = {"encerrou": False, "iniciou": False}
+
+        def encerrar(_banco):
+            visto["encerrou"] = True
+            return True
+
+        def iniciar(_raiz):
+            visto["iniciou"] = True
+            return True, "iniciado"
+
+        monkeypatch.setattr(comandos.maquina, "area_de_trabalho_disponivel",
+                            lambda: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: True)
+        monkeypatch.setattr(comandos, "_robo_ocioso_sem_sinal",
+                            lambda _banco: True)
+        monkeypatch.setattr(comandos, "_encerrar_robo_ocioso", encerrar)
+        monkeypatch.setattr(comandos, "_iniciar_robo_visual", iniciar)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post("/api/robo/iniciar",
+                                    headers={"X-CND-Senha": "segredo"})
+
+        assert resposta.status_code == 200
+        assert resposta.json()["situacao"] == "iniciado"
+        assert visto == {"encerrou": True, "iniciou": True}
+
+    def test_retomada_automatica_respeita_parada_manual(self, monkeypatch, tmp_path):
+        cfg = replace(carregar(), banco=tmp_path / "cnd.db")
+        comandos._marcar_parada_manual(cfg.banco)
+        monkeypatch.setattr(comandos.maquina, "area_de_trabalho_disponivel",
+                            lambda: True)
+        monkeypatch.setattr(
+            comandos, "_iniciar_robo_visual",
+            lambda _raiz: (_ for _ in ()).throw(
+                AssertionError("nao deveria iniciar")
+            ),
+        )
+
+        ok, situacao = comandos.iniciar_robo_da_maquina(
+            cfg, tmp_path, automatico=True
+        )
+
+        assert ok is False
+        assert "Parada manual" in situacao
+
+    def test_api_reseta_pausa_do_orgao(self, monkeypatch, tmp_path):
+        from cnd.core import breaker
+        from cnd.infra.db import conectar
+
+        banco = tmp_path / "cnd.db"
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                breaker.abrir(conn, "RFB_PJ", "teste", breaker.ParametrosBreaker())
+                conn.execute("UPDATE breaker SET aberturas = 4 WHERE orgao = 'RFB_PJ'")
+            finally:
+                conn.close()
+
+            resposta = cliente.post(
+                "/api/breaker/RFB_PJ/retomar",
+                headers={"X-CND-Senha": "segredo"},
+            )
+
+            conn = conectar(banco)
+            try:
+                estado = breaker.consultar(conn, "RFB_PJ")
+            finally:
+                conn.close()
+
+        assert resposta.status_code == 200
+        assert estado.estado == breaker.FECHADO
+        assert estado.aberturas == 0
+
+    def test_iniciar_visual_sem_desktop_do_processo_usa_tarefa(
+        self, monkeypatch, tmp_path
+    ):
+        chamado = {}
+
+        def por_tarefa(raiz):
+            chamado["raiz"] = raiz
+            return True, "Iniciado na sessão visual."
+
+        def direto(_raiz):
+            raise AssertionError("nao deveria iniciar direto")
+
+        monkeypatch.setattr(comandos.sys, "platform", "win32")
+        monkeypatch.setattr(comandos.maquina, "processo_robo_rodando",
+                            lambda: False)
+        monkeypatch.setattr(comandos.maquina, "processo_tem_area_de_trabalho",
+                            lambda: False)
+        monkeypatch.setattr(comandos, "_processo_e_system", lambda: False)
+        monkeypatch.setattr(comandos, "_iniciar_robo_por_tarefa", por_tarefa)
+        monkeypatch.setattr(comandos, "_iniciar_robo_direto", direto)
+
+        ok, situacao = comandos._iniciar_robo_visual(tmp_path)
+
+        assert ok is True
+        assert situacao == "Iniciado na sessão visual."
+        assert chamado["raiz"] == tmp_path
+
     def test_parar_nao_exige_area_de_trabalho(self, monkeypatch, tmp_path):
         """Parar é seguro com a tela bloqueada — e é justamente aí que se
         quer parar."""
@@ -128,9 +317,210 @@ class TestComandosPelaRede:
         assert resposta.json()["ok"] is True
         assert (tmp_path / "parar.txt").exists()
 
-    def test_detecta_robo_rodando_no_banco_configurado(self, conn):
-        from cnd.infra import heartbeat
+    def test_parar_ocioso_encerra_processo_e_limpa_heartbeat(self, conn, monkeypatch):
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+        heartbeat.bater(conn, "orquestrador")
+        visto = {}
 
+        def fingir_run(comando, **kwargs):
+            visto["comando"] = comando
+            visto["kwargs"] = kwargs
+            return SimpleNamespace(returncode=0)
+
+        monkeypatch.setattr(comandos.sys, "platform", "win32")
+        monkeypatch.setattr(comandos.subprocess, "run", fingir_run)
+
+        assert comandos._encerrar_robo_ocioso(banco)
+        assert "powershell" in visto["comando"][0].lower()
+        assert heartbeat.ultimo(conn, "orquestrador") is None
+
+    def test_parar_nao_mata_processo_com_item_em_execucao(self, conn, lote, monkeypatch):
+        job = criar_job(conn, lote, documento="11222333000181", orgao="RFB_PJ")
+        conn.execute("UPDATE job SET status = ? WHERE id = ?", (Status.RUNNING, job))
+
+        def nao_deveria_rodar(*_args, **_kwargs):
+            raise AssertionError("nao deveria chamar o PowerShell")
+
+        monkeypatch.setattr(comandos.sys, "platform", "win32")
+        monkeypatch.setattr(comandos.subprocess, "run", nao_deveria_rodar)
+
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+        assert not comandos._encerrar_robo_ocioso(banco)
+
+    def test_parar_robo_inativo_devolve_job_orfao(self, monkeypatch, tmp_path):
+        from cnd.infra.db import conectar
+
+        banco = tmp_path / "cnd.db"
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                lote_id = conn.execute(
+                    "INSERT INTO lote (descricao, arquivo_origem) VALUES ('t', 't.xlsx')"
+                ).lastrowid
+                job = criar_job(conn, lote_id, orgao="RFB_PJ")
+                conn.execute("UPDATE job SET status = ? WHERE id = ?",
+                             (Status.RUNNING, job))
+            finally:
+                conn.close()
+
+            monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: False)
+            resposta = cliente.post("/api/robo/parar",
+                                    headers={"X-CND-Senha": "segredo"})
+
+            conn = conectar(banco)
+            try:
+                status = conn.execute(
+                    "SELECT status FROM job WHERE id = ?", (job,)
+                ).fetchone()["status"]
+            finally:
+                conn.close()
+
+        assert resposta.status_code == 200
+        assert "devolvido" in resposta.json()["situacao"]
+        assert status == Status.PENDING
+
+    def test_atualizar_exige_origem_http(self, monkeypatch, tmp_path):
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "file:///C:/ACTA"},
+            )
+
+        assert resposta.status_code == 400
+        assert "HTTP" in resposta.json()["detail"]
+
+    def test_atualizar_recusa_sem_pacote_publicado(self, monkeypatch, tmp_path):
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: False)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899"},
+            )
+
+        assert resposta.status_code == 400
+        assert "acta.zip" in resposta.json()["detail"]
+
+    def test_atualizar_recusa_item_em_execucao(self, monkeypatch, tmp_path):
+        from cnd.infra.db import conectar
+
+        banco = tmp_path / "cnd.db"
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: True)
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                lote_id = conn.execute(
+                    "INSERT INTO lote (descricao, arquivo_origem) VALUES ('t', 't.xlsx')"
+                ).lastrowid
+                job = criar_job(conn, lote_id, orgao="RFB_PJ")
+                conn.execute("UPDATE job SET status = ? WHERE id = ?",
+                             (Status.RUNNING, job))
+            finally:
+                conn.close()
+
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899"},
+            )
+
+        assert resposta.status_code == 409
+        assert "execução" in resposta.json()["detail"]
+
+    def test_atualizar_devolve_orfao_antes_de_validar_execucao(
+        self, monkeypatch, tmp_path
+    ):
+        from cnd.infra.db import conectar
+
+        visto = {}
+        banco = tmp_path / "cnd.db"
+
+        def fingir_popen(comando, **kwargs):
+            visto["comando"] = comando
+            visto["kwargs"] = kwargs
+            return SimpleNamespace(pid=123)
+
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _banco: False)
+        monkeypatch.setattr(comandos, "_escrever_atualizador",
+                            lambda: tmp_path / "a.ps1")
+        monkeypatch.setattr(comandos.subprocess, "Popen", fingir_popen)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                lote_id = conn.execute(
+                    "INSERT INTO lote (descricao, arquivo_origem) VALUES ('t', 't.xlsx')"
+                ).lastrowid
+                job = criar_job(conn, lote_id, orgao="RFB_PJ")
+                conn.execute("UPDATE job SET status = ? WHERE id = ?",
+                             (Status.RUNNING, job))
+            finally:
+                conn.close()
+
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899"},
+            )
+
+            conn = conectar(banco)
+            try:
+                status = conn.execute(
+                    "SELECT status FROM job WHERE id = ?", (job,)
+                ).fetchone()["status"]
+            finally:
+                conn.close()
+
+        assert resposta.status_code == 200
+        assert status == Status.PENDING
+        assert "powershell" in visto["comando"][0].lower()
+
+    def test_atualizar_dispara_script_em_segundo_plano(self, monkeypatch, tmp_path):
+        visto = {}
+
+        def fingir_popen(comando, **kwargs):
+            visto["comando"] = comando
+            visto["kwargs"] = kwargs
+            return SimpleNamespace(pid=123)
+
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda banco: False)
+        monkeypatch.setattr(comandos, "_escrever_atualizador",
+                            lambda: tmp_path / "a.ps1")
+        monkeypatch.setattr(comandos.subprocess, "Popen", fingir_popen)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899"},
+            )
+
+        assert resposta.status_code == 200
+        assert resposta.json()["situacao"] == "Atualização iniciada."
+        assert resposta.json()["mensagem"] == "Atualização iniciada."
+        assert "powershell" in visto["comando"][0].lower()
+        assert "-Origem" in visto["comando"]
+        assert "http://10.1.11.86:8899" in visto["comando"]
+
+    def test_flash_polida_na_tela(self, monkeypatch, tmp_path):
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.get(
+                "/?erro=nao+consegui+baixar+o+pacote+em+"
+                "http%3A%2F%2F100.125.207.8%3A8899%2Facta.zip",
+                headers={"X-CND-Senha": "segredo"},
+            )
+
+        assert resposta.status_code == 200
+        assert (
+            "Não consegui baixar o pacote em "
+            "http://100.125.207.8:8899/acta.zip."
+        ) in resposta.text
+        assert "history.replaceState" in resposta.text
+        assert "searchParams.delete('erro')" in resposta.text
+        assert "searchParams.delete('mensagem')" in resposta.text
+
+    def test_detecta_robo_rodando_no_banco_configurado(self, conn, monkeypatch):
+        monkeypatch.setattr(comandos.maquina, "processo_robo_rodando",
+                            lambda: None)
         heartbeat.bater(conn, "orquestrador")
         banco = conn.execute("PRAGMA database_list").fetchone()[2]
 

@@ -27,6 +27,19 @@ def test_ordem_alfabetica_e_ordem_cronologica():
     assert cedo < tarde < outro_dia
 
 
+def test_agora_iso_sempre_avanca(monkeypatch):
+    momento = datetime(2026, 8, 7, 14, 3, 22, 481000, tzinfo=UTC)
+    monkeypatch.setattr(tempo, "_ULTIMO_AGORA", None)
+    monkeypatch.setattr(tempo, "agora", lambda: momento)
+
+    primeiro = tempo.agora_iso()
+    segundo = tempo.agora_iso()
+
+    assert primeiro == "2026-08-07T14:03:22.481Z"
+    assert segundo == "2026-08-07T14:03:22.482Z"
+    assert primeiro < segundo
+
+
 def test_daqui_a_esta_no_futuro():
     futuro = tempo.de_iso(tempo.daqui_a(3600))
 

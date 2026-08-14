@@ -1,11 +1,12 @@
 """A lista de "o que o robô acabou de fazer", da tela de máquinas."""
 from __future__ import annotations
 
-from tests.conftest import criar_job
+from datetime import UTC, datetime
 
 from cnd.core import fila, tempo
 from cnd.core.modelos import Desfecho, ResultadoTentativa
 from cnd.web import consultas
+from tests.conftest import criar_job
 
 
 def _consultar(conn, lote_id: int, nome: str, documento: str,
@@ -52,6 +53,19 @@ def test_traz_a_empresa_e_o_desfecho(conn, lote):
     assert evento["quando"]
     assert not evento["em_curso"]
     assert not evento["interrompida"]
+
+
+def test_hora_vem_no_fuso_local(conn, lote):
+    tentativa_id = _consultar(conn, lote, "FUSO", DOCUMENTOS[0])
+    conn.execute(
+        "UPDATE tentativa SET finalizada_em = ? WHERE id = ?",
+        (tempo.para_iso(datetime(2026, 8, 13, 19, 25, 36, tzinfo=UTC)),
+         tentativa_id),
+    )
+
+    evento = consultas.ultimas_tentativas(conn)[0]
+
+    assert evento["hora"] == "16:25:36"
 
 
 def test_tentativa_aberta_agora_aparece_em_curso(conn, lote):

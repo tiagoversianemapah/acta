@@ -46,12 +46,13 @@ KEYEVENTF_KEYUP = 0x0002
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
 
-VK_CONTROL, VK_DELETE, VK_A = 0x11, 0x2E, 0x41
+VK_CONTROL, VK_DELETE, VK_A, VK_C = 0x11, 0x2E, 0x41, 0x43
 VK_RETURN, VK_TAB, VK_ESCAPE, VK_L, VK_F5 = 0x0D, 0x09, 0x1B, 0x4C, 0x74
-VK_HOME, VK_END, VK_SHIFT = 0x24, 0x23, 0x10
+VK_HOME, VK_END, VK_SHIFT, VK_RIGHT = 0x24, 0x23, 0x10, 0x27
 
 SW_MAXIMIZE = 3
 SW_RESTORE = 9
+CF_UNICODETEXT = 13
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -93,6 +94,20 @@ user32.MoveWindow.argtypes = [
     wintypes.BOOL,
 ]
 user32.MoveWindow.restype = wintypes.BOOL
+user32.OpenClipboard.argtypes = [wintypes.HWND]
+user32.OpenClipboard.restype = wintypes.BOOL
+user32.CloseClipboard.argtypes = []
+user32.CloseClipboard.restype = wintypes.BOOL
+user32.EmptyClipboard.argtypes = []
+user32.EmptyClipboard.restype = wintypes.BOOL
+user32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+user32.IsClipboardFormatAvailable.restype = wintypes.BOOL
+user32.GetClipboardData.argtypes = [wintypes.UINT]
+user32.GetClipboardData.restype = wintypes.HANDLE
+kernel32.GlobalLock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalLock.restype = ctypes.c_void_p
+kernel32.GlobalUnlock.argtypes = [wintypes.HANDLE]
+kernel32.GlobalUnlock.restype = wintypes.BOOL
 
 
 def _enviar(*entradas: INPUT) -> None:
@@ -231,6 +246,37 @@ def limpar_campo() -> None:
     """Ctrl+A e Delete, com teclas reais."""
     atalho(VK_CONTROL, VK_A)
     tecla(VK_DELETE)
+
+
+def limpar_area_transferencia() -> None:
+    """Esvazia o clipboard para a leitura seguinte não reaproveitar texto velho."""
+    if not user32.OpenClipboard(None):
+        return
+    try:
+        user32.EmptyClipboard()
+    finally:
+        user32.CloseClipboard()
+
+
+def texto_area_transferencia() -> str:
+    """Texto Unicode copiado pelo Windows, ou vazio se não houver texto."""
+    if not user32.OpenClipboard(None):
+        return ""
+    try:
+        if not user32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+            return ""
+        handle = user32.GetClipboardData(CF_UNICODETEXT)
+        if not handle:
+            return ""
+        ponteiro = kernel32.GlobalLock(handle)
+        if not ponteiro:
+            return ""
+        try:
+            return ctypes.wstring_at(ponteiro)
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
 
 
 def ir_para_url(url: str) -> None:

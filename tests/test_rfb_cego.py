@@ -10,12 +10,14 @@ import json
 from types import SimpleNamespace
 
 import pytest
+from PIL import Image, ImageDraw
 
 from cnd.adapters import rfb_cego
 from cnd.adapters.rfb_cego import (
     AdapterRFBCego,
     Calibragem,
     CalibragemAusente,
+    _classificar_texto_portal,
     _ponto_fracionario,
     _tem_veu_modal,
 )
@@ -269,6 +271,89 @@ class TestJanelaDoEdge:
 
 
 class TestFaixaDeAlertaDoPortal:
+    def test_texto_033_e_bloqueio_temporario(self):
+        texto = (
+            "Não foi possível emitir a certidão. Tente novamente em alguns "
+            "minutos. 033 - 13/08/2026 15:20:10"
+        )
+
+        assert _classificar_texto_portal(texto) == "bloqueio"
+
+    def test_texto_de_informacoes_insuficientes_continua_conclusivo(self):
+        texto = (
+            "As informações disponíveis na Receita Federal sobre o contribuinte "
+            "são insuficientes para emitir a certidão pela internet."
+        )
+
+        assert _classificar_texto_portal(texto) == "insuficiente"
+
+    def test_texto_de_resultado_pendente_vira_retentar(self):
+        texto = (
+            "Estamos analisando seu pedido de emissÃ£o de certidÃ£o. "
+            "Retorne em alguns minutos para o resultado."
+        )
+
+        assert _classificar_texto_portal(texto) == "retentar"
+
+    def test_servico_temporariamente_indisponivel_vira_retentar(self):
+        texto = (
+            "O servico de emissao de certidao esta temporariamente indisponivel. "
+            "Tente novamente em alguns minutos. 001 - 13/08/2026 22:23:04"
+        )
+
+        assert _classificar_texto_portal(texto) == "retentar"
+
+    def test_leitura_de_texto_limpa_selecao_antes_do_proximo_clique(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = AdapterRFBCego("RFB_PJ", object(), tmp_path, tmp_path / "cal.json")
+        chamadas = []
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "limpar_area_transferencia",
+            lambda: chamadas.append(("limpar_area_transferencia",)),
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "atalho",
+            lambda *codigos: chamadas.append(("atalho", codigos)),
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "tecla",
+            lambda codigo: chamadas.append(("tecla", codigo)),
+        )
+        monkeypatch.setattr(
+            rfb_cego.entrada_real,
+            "texto_area_transferencia",
+            lambda: "texto copiado",
+        )
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        texto = adapter._texto_da_pagina()
+
+        assert texto == "texto copiado"
+        assert ("tecla", rfb_cego.entrada_real.VK_ESCAPE) in chamadas
+        assert ("tecla", rfb_cego.entrada_real.VK_RIGHT) in chamadas
+
+    def test_varredura_detecta_faixa_vermelha_fora_do_ponto_calibrado(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        imagem = Image.new("RGB", (2560, 1600), BRANCO)
+        desenho = ImageDraw.Draw(imagem)
+        desenho.rectangle((1500, 330, 2300, 500), fill=VERMELHO_ERRO)
+
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+
+        tipo, _cor = adapter._alerta_na_imagem(imagem)
+
+        assert tipo == "erro"
+
     def test_diagnostico_varre_faixa_vermelha_mesmo_fora_do_ponto_calibrado(
         self, monkeypatch, tmp_path
     ):
@@ -280,6 +365,7 @@ class TestFaixaDeAlertaDoPortal:
         monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
         monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
         monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
         monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
         ponto_vermelho = adapter._pontos_da_faixa_alerta()[2]
 
@@ -291,3 +377,159 @@ class TestFaixaDeAlertaDoPortal:
         resultado = adapter._diagnosticar_falha(doc)
 
         assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
+
+    def test_diagnostico_volta_ao_topo_quando_erro_106_rola_a_pagina(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        chamadas = []
+        imagens = iter(["pagina_rolada", "topo"])
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: next(imagens))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+        monkeypatch.setattr(
+            rfb_cego.entrada_real, "atalho",
+            lambda *codigos: chamadas.append(codigos),
+        )
+        ponto_vermelho = adapter._pontos_da_faixa_alerta()[0]
+
+        def cor_media(imagem, x, y, raio=10):
+            if imagem == "topo" and (x, y) == ponto_vermelho:
+                return VERMELHO_ERRO
+            return BRANCO
+
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", cor_media)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
+        assert chamadas == [(rfb_cego.entrada_real.VK_CONTROL,
+                             rfb_cego.entrada_real.VK_HOME)]
+
+    def test_bloqueio_visto_na_espera_nao_vira_erro_tecnico(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc, bloqueio_ja_visto=True)
+
+        assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
+        assert "detectada durante a espera" in resultado.mensagem_portal
+
+    def test_texto_033_nao_vira_informacoes_insuficientes(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        adapter._ultimo_texto_portal = (
+            "Não foi possível emitir a certidão. Tente novamente em alguns "
+            "minutos. 033 - 13/08/2026 15:20:10"
+        )
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
+        assert "033" in resultado.mensagem_portal
+
+    def test_resultado_pendente_volta_para_fila_sem_virar_bloqueio(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        adapter._ultimo_texto_portal = (
+            "Estamos analisando seu pedido de emissÃ£o de certidÃ£o. "
+            "Retorne em alguns minutos para o resultado."
+        )
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
+        assert "Retorne em alguns minutos" in resultado.mensagem_portal
+
+    def test_servico_indisponivel_volta_para_fila_sem_virar_bloqueio(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        adapter._ultimo_texto_portal = (
+            "O servico de emissao de certidao esta temporariamente indisponivel. "
+            "Tente novamente em alguns minutos. 001 - 13/08/2026 22:23:04"
+        )
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
+        assert "001" in resultado.mensagem_portal
+
+    def test_sem_pdf_e_sem_faixa_vira_informacoes_insuficientes(
+        self, monkeypatch, tmp_path
+    ):
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert "informações insuficientes" in resultado.mensagem_portal

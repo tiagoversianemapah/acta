@@ -25,6 +25,33 @@ from cnd.web import consultas, relatorio
 # Quantas linhas de "o que o robô acabou de fazer" cada máquina devolve.
 # Suficiente para ver o ritmo sem transformar a resposta num relatório.
 ITENS_DE_ATIVIDADE = 6
+MAX_LINHAS_LOG = 300
+
+
+def _detalhes_do_breaker(cfg: Config, codigo: str, estado: breaker.EstadoBreaker) -> dict:
+    parametros = (
+        cfg.orgaos[codigo].breaker if codigo in cfg.orgaos
+        else breaker.ParametrosBreaker()
+    )
+    pausa_s = breaker.cooldown_atual_s(estado, parametros)
+    return {
+        "disjuntor_aberturas": estado.aberturas,
+        "disjuntor_pausa_s": pausa_s,
+        "disjuntor_pausa": consultas.rotulo_duracao(pausa_s),
+    }
+
+
+def _robo_ativo_por_sinal(idade: float | None, limite_s: int) -> bool:
+    ativo = idade is not None and idade <= limite_s
+    if ativo and maquina.processo_robo_rodando() is False:
+        return False
+    return ativo
+
+
+def _tail_log(arquivo, linhas: int) -> list[str]:
+    with contextlib.suppress(OSError):
+        return arquivo.read_text(encoding="utf-8", errors="replace").splitlines()[-linhas:]
+    return []
 
 
 def montar(obter_config: Callable[[], Config],
@@ -79,9 +106,13 @@ def montar(obter_config: Callable[[], Config],
                     "disjuntor": estado_breaker.estado,
                     "disjuntor_motivo": estado_breaker.motivo,
                     "disjuntor_ate": estado_breaker.aberto_ate,
+                    **_detalhes_do_breaker(cfg, codigo, estado_breaker),
                     "eta_horas": consultas.eta_horas(resumo),
                 })
 
+            robo_ativo = _robo_ativo_por_sinal(
+                idade, cfg.alertas.heartbeat_timeout_s
+            )
             return {
                 "maquina": cfg.rede.nome or platform.node(),
                 "agora": tempo.agora_iso(),
@@ -97,8 +128,7 @@ def montar(obter_config: Callable[[], Config],
                 # A própria máquina informa o AnyDesk dela — quem cadastrou
                 # foi quem estava na frente, na hora de instalar.
                 "anydesk": cfg.rede.anydesk,
-                "robo_ativo": (idade is not None
-                               and idade <= cfg.alertas.heartbeat_timeout_s),
+                "robo_ativo": robo_ativo,
                 "ultimo_sinal_ha_s": round(idade) if idade is not None else None,
                 "lote_id": lote_id,
                 "lote_nome": (lotes[0]["arquivo_origem"] or lotes[0]["descricao"])
@@ -121,13 +151,27 @@ def montar(obter_config: Callable[[], Config],
             }
 
     @roteador.get("/itens")
-    def itens(lote: int | None = None, orgao: str | None = None,
+    def itens(lote: int | None = None, lote_id: int | None = None,
+              orgao: str | None = None,
               status: str | None = None, desfecho: str | None = None,
-              busca: str | None = None, limite: int = 200):
+              busca: str | None = None, limite: int = 200,
+              job_id: int | None = None, offset: int = 0,
+              incluir_total: bool = False):
+        lote_escolhido = lote if lote is not None else lote_id
         with contextlib.closing(abrir_leitura()) as conn:
-            linhas = consultas.jobs(conn, lote, orgao, status, desfecho,
-                                    busca, min(limite, 1000))
-            return [dict(linha) for linha in linhas]
+            linhas = consultas.jobs(conn, lote_escolhido, orgao, status, desfecho,
+                                    busca, min(limite, 1000), job_id=job_id,
+                                    offset=max(offset, 0))
+            itens = [dict(linha) for linha in linhas]
+            if not incluir_total:
+                return itens
+            return {
+                "total": consultas.contar_jobs(
+                    conn, lote_escolhido, orgao, status, desfecho, busca,
+                    job_id=job_id
+                ),
+                "itens": itens,
+            }
 
     @roteador.get("/tentativas/{job_id}")
     def tentativas(job_id: int):
@@ -143,5 +187,39 @@ def montar(obter_config: Callable[[], Config],
         with contextlib.closing(abrir_leitura()) as conn:
             return {orgao: consultas.captcha_por_hora(conn, orgao, dias)
                     for orgao in consultas.orgaos_do_lote(conn, None)}
+
+    @roteador.get("/diagnostico")
+    def diagnostico(dias: int = 7):
+        """Diagnóstico operacional usado pela aba web e pelo console."""
+        with contextlib.closing(abrir_leitura()) as conn:
+            return {
+                "dias": dias,
+                "agora": tempo.agora_iso(),
+                "orgaos": [
+                    consultas.diagnostico_orgao(conn, orgao, dias)
+                    for orgao in consultas.orgaos_do_lote(conn, None)
+                ],
+            }
+
+    @roteador.get("/logs")
+    def logs(linhas: int = 80):
+        cfg = obter_config()
+        limite = min(max(int(linhas or 80), 1), MAX_LINHAS_LOG)
+        arquivos = []
+        candidatos = sorted(
+            cfg.pasta_logs.glob("*"),
+            key=lambda item: item.stat().st_mtime if item.exists() else 0,
+            reverse=True,
+        )
+        for arquivo in candidatos:
+            if arquivo.suffix not in {".jsonl", ".log"}:
+                continue
+            arquivos.append({
+                "arquivo": arquivo.name,
+                "linhas": _tail_log(arquivo, limite),
+            })
+            if len(arquivos) >= 5:
+                break
+        return {"linhas": limite, "arquivos": arquivos}
 
     return roteador

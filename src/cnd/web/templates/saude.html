@@ -1,68 +1,205 @@
 {% extends "base.html" %}
 {% set pagina = 'saude' %}
-{% block titulo %}Diagnóstico — CND{% endblock %}
-
-{% block ferramentas %}
-<div class="ferramentas">
-  {% if idade is none %}
-    <span class="estado">Robô nunca iniciado nesta máquina</span>
-  {% elif idade > timeout %}
-    <span class="estado erro">Robô parado há {{ (idade // 60) | int }} minuto(s)</span>
-  {% else %}
-    <span class="estado ok">Robô em execução — último sinal há {{ idade | int }}s</span>
-  {% endif %}
-</div>
-{% endblock %}
+{% import "_icons.html" as icons %}
+{% block titulo %}Diagnóstico - ACTA{% endblock %}
 
 {% block conteudo %}
-<div class="titulo-pagina">
-  <h1>Diagnóstico</h1>
-  <p class="sub">
-    Em que horários o portal costuma recusar as consultas. Serve para decidir
-    a janela de trabalho do robô.
-  </p>
-</div>
+{% set status_texto = selecionada.situacao[0] if selecionada else 'Sem máquina' %}
+{% set status_cor = selecionada.situacao[1] if selecionada else 'cinza' %}
 
-{% for orgao, horas in dados.items() %}
-<section class="painel">
-  <div class="painel-topo">
-    <h2>{{ orgao }}</h2>
-    <span class="dica" style="margin:0">últimos 7 dias · horário UTC</span>
-  </div>
-  {% if not horas %}
-    <div class="vazio">
-      <b>Sem dados ainda</b>
-      Nenhuma tentativa foi registrada nos últimos 7 dias.
+{% if erro_diagnostico %}
+<div class="aviso erro">{{ erro_diagnostico }}</div>
+{% endif %}
+
+<div class="workspace diagnostico-workspace">
+  <aside class="maquinas diagnostico-sidebar">
+    <div class="secao-topo">
+      <h2>Máquinas</h2>
+      <span class="contador-secao">{{ estados|length }}</span>
     </div>
-  {% else %}
-  <div class="rolagem">
-    <table>
-      <thead>
-        <tr><th>Hora</th><th class="num">Consultas</th><th class="num">Recusas</th>
-            <th class="num">Taxa</th><th style="width:50%"></th></tr>
-      </thead>
-      <tbody>
-      {% for h in horas %}
-        <tr>
-          <td class="mono">{{ h.hora }}:00</td>
-          <td class="num">{{ h.total }}</td>
-          <td class="num">{{ h.captchas }}</td>
-          <td class="num">
-            <span class="selo {{ 'erro' if h.taxa > 0.1 else ('alerta' if h.taxa > 0.02 else 'ok') }}">
-              {{ '%.1f' % (h.taxa * 100) }}%
-            </span>
-          </td>
-          <td>
-            <div class="progresso">
-              <i class="erro" style="width: {{ '%.1f' % (h.taxa * 100) }}%"></i>
-            </div>
-          </td>
-        </tr>
+    <div class="lista-maquinas">
+      {% for estado in estados %}
+      {% set situacao = estado.situacao %}
+      <a class="maquina-linha {{ 'selecionada' if loop.index0 == selecionada_idx }}"
+         href="/saude?maquina={{ loop.index0 }}&dias={{ dias }}">
+        <span class="ponto {{ situacao[1] }}"></span>
+        <span class="maquina-texto">
+          <strong>{{ estado.nome }}</strong>
+          <small>{{ estado.rotulo_do_orgao or estado.rotulo }}</small>
+        </span>
+        <span class="maquina-percentual">{{ '%.0f' % estado.percentual }}%</span>
+      </a>
+      {% else %}
+      <div class="vazio compacto">
+        <b>Nenhuma máquina</b>
+        Configure uma máquina robô para acompanhar o diagnóstico.
+      </div>
       {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% endif %}
-</section>
-{% endfor %}
+    </div>
+  </aside>
+
+  <section class="diagnostico-conteudo">
+    <div class="diagnostico-cabecalho">
+      <div class="diagnostico-titulo">
+        <div class="linha-identidade">
+          <h1>{{ selecionada.nome if selecionada else 'Diagnóstico' }}</h1>
+          <span class="pill-status {{ status_cor }}">
+            <span class="ponto {{ status_cor }}"></span>{{ status_texto }}
+          </span>
+        </div>
+        <p class="sub">Diagnóstico do robô e análise de falhas</p>
+      </div>
+      <div class="diagnostico-acoes">
+        <a class="botao botao-quieto" href="/saude?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&dias={{ dias }}">
+          {{ icons.icone('calendario') }} {{ periodo }}
+        </a>
+        <a class="botao botao-quieto" href="{{ exportar_url }}">
+          {{ icons.icone('download') }} Exportar relatório
+        </a>
+      </div>
+    </div>
+
+    <div class="diagnostico-kpis">
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone azul">{{ icons.icone('arquivo') }}</span>
+        <span>
+          <small>Consultas</small>
+          <strong>{{ diagnostico.consultas_fmt }}</strong>
+          <em>Total no período</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone vermelho">{{ icons.icone('alerta') }}</span>
+        <span>
+          <small>Erros</small>
+          <strong>{{ diagnostico.erros_fmt }}</strong>
+          <em>Total no período</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone azul">{{ icons.icone('percentual') }}</span>
+        <span>
+          <small>Taxa de erro</small>
+          <strong>{{ diagnostico.taxa_erro_fmt }}%</strong>
+          <em>Erros / Consultas</em>
+        </span>
+      </article>
+      <article class="diagnostico-kpi">
+        <span class="diagnostico-icone roxo">{{ icons.icone('cadeado') }}</span>
+        <span>
+          <small>Bloqueios</small>
+          <strong>{{ diagnostico.bloqueios_fmt }}</strong>
+          <em>Total no período</em>
+        </span>
+      </article>
+    </div>
+
+    <div class="diagnostico-grid">
+      <section class="diagnostico-painel diagnostico-grafico">
+        <div class="diagnostico-painel-topo">
+          <h2>Erros por horário</h2>
+        </div>
+        <div class="grafico-barras">
+          <div class="grafico-eixo">
+            {% for valor in diagnostico.eixo %}
+            <span>{{ valor }}</span>
+            {% endfor %}
+          </div>
+          <div class="grafico-area">
+            {% for h in diagnostico.serie %}
+            <div class="grafico-coluna" title="{{ h.hora }}:00 · {{ h.erros_operacionais }} erro(s)">
+              <i style="height: {{ h.altura }}%"></i>
+              {% if h.marcar %}<small>{{ h.hora }}:00</small>{% endif %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        <div class="grafico-legenda">Hora</div>
+      </section>
+
+      <section class="diagnostico-painel">
+        <div class="diagnostico-painel-topo">
+          <h2>Principais erros</h2>
+        </div>
+        {% if diagnostico.principais_erros %}
+        <table class="tabela-limpa">
+          <thead>
+            <tr><th>Erro</th><th class="num">Qtd.</th></tr>
+          </thead>
+          <tbody>
+            {% for item in diagnostico.principais_erros %}
+            <tr>
+              <td>{{ item.erro }}</td>
+              <td class="num">{{ item.quantidade }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="vazio compacto">
+          <b>Sem erros operacionais</b>
+          Nenhuma falha foi registrada no período.
+        </div>
+        {% endif %}
+        <p class="diagnostico-nota">
+          {{ diagnostico.insuficientes_fmt }} informações insuficientes no período. Não entram como erro do robô.
+        </p>
+      </section>
+    </div>
+
+    <div class="diagnostico-grid inferior">
+      <section class="diagnostico-painel">
+        <div class="diagnostico-painel-topo">
+          <h2>Resumo por horário</h2>
+        </div>
+        {% if diagnostico.horas %}
+        <table class="tabela-limpa">
+          <thead>
+            <tr>
+              <th>Hora</th>
+              <th class="num">Consultas</th>
+              <th class="num">Erros</th>
+              <th class="num">Taxa</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for h in diagnostico.horas %}
+            <tr class="{{ 'linha-erro' if h.erro_alto }}">
+              <td class="mono">{{ h.hora }}:00</td>
+              <td class="num">{{ h.total }}</td>
+              <td class="num">{{ h.erros_operacionais }}</td>
+              <td class="num">{{ h.taxa_erro_fmt }}%</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}
+        <div class="vazio compacto">
+          <b>Sem histórico</b>
+          O robô ainda não registrou consultas no período.
+        </div>
+        {% endif %}
+      </section>
+
+      <section class="diagnostico-painel insight-painel">
+        <div class="diagnostico-painel-topo">
+          <h2>Insight</h2>
+        </div>
+        <div class="insight-caixa">
+          <span class="diagnostico-icone azul pequeno">{{ icons.icone('info') }}</span>
+          <div>
+            {% for linha in insight %}
+            <p>{{ linha }}</p>
+            {% endfor %}
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <div class="diagnostico-rodape">
+      <span class="icone-linha">{{ icons.icone('calendario') }}</span>
+      Última atualização: {{ ultima_atualizacao }}
+    </div>
+  </section>
+</div>
 {% endblock %}

@@ -60,21 +60,6 @@ def _data_curta(iso: str | None) -> str:
     return texto
 
 
-def _linkar_pdfs(planilha, registros: list[sqlite3.Row], coluna: int) -> None:
-    """Transforma o nome do arquivo em link clicável para o PDF.
-
-    Sem isso, quem recebe a planilha lê o nome do arquivo e vai procurar a
-    pasta na mão. Com o link, clica na célula e o PDF abre.
-    """
-    for indice, registro in enumerate(registros, start=2):     # linha 1 = cabeçalho
-        caminho = registro["caminho_pdf"]
-        if not caminho:
-            continue
-        celula = planilha.cell(row=indice, column=coluna)
-        celula.hyperlink = Path(caminho).resolve().as_uri()
-        celula.font = Font(color="0563C1", underline="single")
-
-
 @dataclass(frozen=True)
 class Recorte:
     """O pedaço do trabalho que vai para a planilha.
@@ -139,11 +124,11 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
         _escrever(planilha,
                   ["Empresa", "Documento", "Órgão", "Emitida em", "Válida até",
                    "Código de controle", "Arquivo PDF"], linhas)
-        _linkar_pdfs(planilha, registros, coluna=7)
 
     # --- abas sem PDF ---
     for desfecho, titulo in ((Desfecho.POSITIVA, "Positivas"),
-                             (Desfecho.PENDENCIA_MANUAL, "Pendencia manual"),
+                             (Desfecho.PENDENCIA_MANUAL,
+                              "Informacoes insuficientes"),
                              (Desfecho.APROVEITADA, "Aproveitadas")):
         linhas = [
             [linha["nome"], formatar(linha["documento"]), linha["orgao"],

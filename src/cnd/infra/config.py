@@ -24,6 +24,8 @@ class ParametrosRetry:
     backoff_captcha_s: tuple[int, ...] = (3600, 14400, 43200)
     # O portal pede "alguns minutos" — esperar horas seria exagero.
     backoff_bloqueio_s: tuple[int, ...] = (300, 900, 1800)
+    # Tela 001 da Receita: servico temporariamente indisponivel.
+    backoff_resultado_pendente_s: tuple[int, ...] = (3600, 3600, 3600)
 
     def espera(self, desfecho: str, tentativa: int) -> float:
         """Quanto esperar antes da tentativa seguinte (1 = primeira falha)."""
@@ -31,6 +33,8 @@ class ParametrosRetry:
 
         if desfecho == Desfecho.CAPTCHA:
             tabela = self.backoff_captcha_s
+        elif desfecho == Desfecho.RESULTADO_PENDENTE:
+            tabela = self.backoff_resultado_pendente_s
         elif desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
             tabela = self.backoff_bloqueio_s
         else:
@@ -272,6 +276,9 @@ def carregar(caminho: Path | None = None) -> Config:
                 backoff_erro_s=tuple(retry_bruto.get("backoff_erro_s", (120, 600, 2700))),
                 backoff_captcha_s=tuple(retry_bruto.get("backoff_captcha_s", (3600, 14400, 43200))),
                 backoff_bloqueio_s=tuple(retry_bruto.get("backoff_bloqueio_s", (300, 900, 1800))),
+                backoff_resultado_pendente_s=tuple(
+                    retry_bruto.get("backoff_resultado_pendente_s", (3600, 3600, 3600))
+                ),
             ),
             extras={c: v for c, v in bruto.items()
                     if c not in ("ativo", "adapter", "workers", "nome",

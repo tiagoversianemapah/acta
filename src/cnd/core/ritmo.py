@@ -27,6 +27,7 @@ class ParametrosRitmo:
     acelera_apos: int = 25              # consultas limpas seguidas
     fator_aceleracao: float = 0.8       # < 1 => diminui o intervalo
     fator_punicao: float = 4.0          # > 1 => aumenta o intervalo
+    fator_punicao_bloqueio: float = 1.4 # bloqueio temporario nao e captcha
     jitter: float = 0.3                 # variação aleatória de cada espera
     janela_ativa: str = "00:00-24:00"
 
@@ -75,6 +76,11 @@ def registrar_sucesso(conn: sqlite3.Connection, orgao: str, p: ParametrosRitmo) 
     """Uma consulta terminou sem captcha. Acelera quando a sequência limpa
     atinge o limiar; caso contrário, só incrementa o contador."""
     atual = estado(conn, orgao, p)
+
+    if atual.intervalo_s > p.intervalo_inicial_s:
+        novo = max(p.intervalo_inicial_s, atual.intervalo_s * p.fator_aceleracao)
+        return _gravar(conn, orgao, novo, 0)
+
     limpas = atual.consultas_limpas + 1
 
     if limpas >= p.acelera_apos:
@@ -88,6 +94,15 @@ def registrar_captcha(conn: sqlite3.Connection, orgao: str, p: ParametrosRitmo) 
     """Bateu captcha: freia forte e zera a contagem de aceleração."""
     atual = estado(conn, orgao, p)
     novo = min(p.intervalo_teto_s, atual.intervalo_s * p.fator_punicao)
+    return _gravar(conn, orgao, novo, 0)
+
+
+def registrar_bloqueio_temporario(
+    conn: sqlite3.Connection, orgao: str, p: ParametrosRitmo
+) -> EstadoRitmo:
+    """Portal pediu alguns minutos: recua, mas menos que um captcha real."""
+    atual = estado(conn, orgao, p)
+    novo = min(p.intervalo_teto_s, atual.intervalo_s * p.fator_punicao_bloqueio)
     return _gravar(conn, orgao, novo, 0)
 
 
