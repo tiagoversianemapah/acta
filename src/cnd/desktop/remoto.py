@@ -234,17 +234,24 @@ def _postar(
         return json.loads(resposta.read())
 
 
-def consultar(maquina: Maquina, senha: str = "") -> EstadoRemoto:
+def consultar(maquina: Maquina, senha: str = "",
+              lote: int | None = None) -> EstadoRemoto:
     """Pergunta o panorama a uma máquina. Nunca levanta exceção.
 
     Máquina muda devolve o ÚLTIMO ESTADO CONHECIDO, marcado como antigo. A
     versão anterior devolvia um cartão vazio — justo quando se mais quer
     saber dela. Saber que às 17h22 ela estava em 1.204 de 2.849 orienta
     quem vai decidir se espera ou vai lá; nada nenhum não orienta.
+
+    `lote` pede os números de uma planilha específica. Uma leitura assim
+    NÃO vira memória: ela é um recorte pedido na tela, e guardá-la faria a
+    máquina fora do ar reaparecer depois mostrando só aquele pedaço.
     """
+    parametros = f"?lote={lote}" if lote is not None else ""
     try:
-        dados = _pedir(maquina, "/api/estado", senha)
-        _guardar(maquina, dados)
+        dados = _pedir(maquina, "/api/estado", senha, parametros)
+        if lote is None:
+            _guardar(maquina, dados)
         return EstadoRemoto(maquina, online=True, dados=dados)
     except urllib.error.HTTPError as erro:
         motivo = ("senha da rede recusada" if erro.code == 401
@@ -280,7 +287,7 @@ def _lembrar(maquina: Maquina) -> dict:
     return {}
 
 
-def consultar_local(cfg: Config) -> EstadoRemoto:
+def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
     """Lê o banco desta máquina direto, sem passar pela rede.
 
     Assim o aplicativo funciona numa instalação de máquina única sem exigir
@@ -297,12 +304,14 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
     from cnd.web import consultas
     from cnd.web.consultas import eta_horas, rotulo_duracao
 
-    panorama = ler_panorama(cfg)
+    panorama = ler_panorama(cfg, lote)
     try:
         with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
             lotes = consultas.lotes(conn)
+            em_execucao = consultas.lote_em_execucao(conn)
     except Exception:
         lotes = []
+        em_execucao = None
     # Sem AnyDesk no cartão local: é o computador em que a pessoa já está,
     # e oferecer acesso remoto a si mesmo só confundiria.
     esta = Maquina(cfg.rede.nome or platform.node(), "")
@@ -311,7 +320,8 @@ def consultar_local(cfg: Config) -> EstadoRemoto:
         "robo_ativo": panorama.robo_ativo,
         "lote_id": panorama.lote_id,
         "lote_nome": panorama.lote_nome,
-        "atividade": ler_atividade(cfg),
+        "lote_em_execucao": em_execucao,
+        "atividade": ler_atividade(cfg, lote_id=panorama.lote_id),
         "meses": ler_meses(cfg),
         "lotes": [{"id": lote["id"], "descricao": lote["descricao"],
                    "arquivo": lote["arquivo_origem"],

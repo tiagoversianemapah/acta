@@ -11,10 +11,12 @@ sem saber absolutamente nada sobre navegador ou sobre o site do órgão.
 from __future__ import annotations
 
 import contextlib
+import random
+import re
 import signal
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from cnd.adapters.base import AdapterOrgao
 from cnd.adapters.base import carregar as carregar_adapter
@@ -34,6 +36,46 @@ PAUSA_SEM_TRABALHO_S = 5.0
 PAUSA_BREAKER_ABERTO_S = 15.0
 PAUSA_FORA_DA_JANELA_S = 60.0
 INTERVALO_HEARTBEAT_S = 60.0
+RE_CODIGO_PORTAL = re.compile(r"\b(001|023|033|106)\b")
+
+
+def _codigo_portal(resultado: ResultadoTentativa) -> str | None:
+    texto = resultado.mensagem_portal or ""
+    achado = RE_CODIGO_PORTAL.search(texto)
+    return achado.group(1) if achado else None
+
+
+def _deve_retentativa_rapida(resultado: ResultadoTentativa) -> bool:
+    if resultado.desfecho != Desfecho.BLOQUEIO_TEMPORARIO:
+        return False
+    return _codigo_portal(resultado) in {"023", "106"}
+
+
+def _espera_retentativa_rapida(valores: tuple[float, ...]) -> float:
+    if not valores:
+        return 0.0
+    faixa = [max(0.0, float(valor)) for valor in valores]
+    if len(faixa) == 1:
+        return faixa[0]
+    inicio, fim = sorted((faixa[0], faixa[1]))
+    if fim <= inicio:
+        return inicio
+    return random.uniform(inicio, fim)
+
+
+def _mensagem_com_retentativa(
+    primeiro: ResultadoTentativa, segundo: ResultadoTentativa
+) -> str | None:
+    segunda = " ".join((segundo.mensagem_portal or "").split())
+    primeira = " ".join((primeiro.mensagem_portal or "").split())
+    codigo = _codigo_portal(primeiro)
+    detalhe = "micro-retentativa apos bloqueio temporario"
+    if codigo:
+        detalhe += f" {codigo}"
+    if primeira:
+        detalhe += f"; primeira resposta: {primeira[:250]}"
+    mensagem = "; ".join(parte for parte in (segunda, detalhe) if parte)
+    return mensagem[:500] if mensagem else None
 
 
 class PortaoDeRitmo:
@@ -172,9 +214,12 @@ class Worker(threading.Thread):
             self.ctx.parar.wait(PAUSA_SEM_TRABALHO_S)
             return
 
-        # Idempotência (RNF-04): certidão já emitida NESTE MÊS dispensa ir ao
-        # portal. Mês, e não validade — ver fila.certidao_do_mes.
-        vigente = fila.certidao_do_mes(self.conn, job.doc.empresa_id, self.orgao.codigo)
+        # Idempotência (RNF-04): certidão já emitida NESTE MÊS e NESTA
+        # PLANILHA dispensa ir ao portal. Mês e não validade; planilha
+        # porque duas remessas são trabalhos separados mesmo com os mesmos
+        # CNPJs — ver fila.certidao_do_mes.
+        vigente = fila.certidao_do_mes(self.conn, job.doc.empresa_id,
+                                       self.orgao.codigo, job.lote_id)
         if vigente is not None:
             tentativa_id = fila.abrir_tentativa(self.conn, job, self.numero)
             resultado = ResultadoTentativa(
@@ -206,15 +251,7 @@ class Worker(threading.Thread):
 
         tentativa_id = fila.abrir_tentativa(self.conn, job, self.numero)
         inicio = time.monotonic()
-        try:
-            resultado = self.adapter.emitir(job.doc)
-        except Exception as erro:
-            log.exception("adapter_estourou", extra={"job": job.job_id,
-                                                     "orgao": self.orgao.codigo})
-            resultado = ResultadoTentativa(
-                desfecho=Desfecho.ERRO_TECNICO,
-                mensagem_portal=f"exceção inesperada: {erro}",
-            )
+        resultado = self._emitir_com_retentativa_rapida(job)
         duracao = time.monotonic() - inicio
 
         fila.fechar_tentativa(self.conn, tentativa_id, resultado)
@@ -232,6 +269,54 @@ class Worker(threading.Thread):
         self._encerrar_job(job, resultado)
 
     # ------------------------------------------------------------------
+    def _emitir_no_adapter(self, job) -> ResultadoTentativa:
+        try:
+            return self.adapter.emitir(job.doc)
+        except Exception as erro:
+            log.exception("adapter_estourou", extra={"job": job.job_id,
+                                                     "orgao": self.orgao.codigo})
+            return ResultadoTentativa(
+                desfecho=Desfecho.ERRO_TECNICO,
+                mensagem_portal=f"exceção inesperada: {erro}",
+            )
+
+    def _emitir_com_retentativa_rapida(self, job) -> ResultadoTentativa:
+        primeiro = self._emitir_no_adapter(job)
+        if not _deve_retentativa_rapida(primeiro):
+            return primeiro
+
+        espera = _espera_retentativa_rapida(
+            tuple(self.orgao.retry.retentativa_bloqueio_s)
+        )
+        log.warning("micro_retentativa_bloqueio", extra={
+            "job": job.job_id,
+            "orgao": self.orgao.codigo,
+            "documento": job.doc.documento,
+            "codigo": _codigo_portal(primeiro),
+            "espera_s": round(espera, 1),
+        })
+        self._reiniciar_sessao(primeiro.desfecho)
+        self.portao.aguardar(espera, self.ctx.parar)
+        if self.ctx.parar.is_set():
+            return primeiro
+
+        segundo = self._emitir_no_adapter(job)
+        return replace(
+            segundo,
+            mensagem_portal=_mensagem_com_retentativa(primeiro, segundo),
+        )
+
+    def _reiniciar_sessao(self, desfecho: Desfecho) -> None:
+        try:
+            self.adapter.reiniciar_sessao()
+            log.info("sessao_reiniciada_apos_falha",
+                     extra={"orgao": self.orgao.codigo,
+                            "desfecho": str(desfecho)})
+        except Exception:
+            log.exception("falha_ao_reiniciar_sessao",
+                          extra={"orgao": self.orgao.codigo,
+                                 "desfecho": str(desfecho)})
+
     def _ajustar_ritmo(self, desfecho: Desfecho) -> None:
         if desfecho == Desfecho.CAPTCHA:
             novo = ritmo.registrar_captcha(self.conn, self.orgao.codigo, self.orgao.pacing)
@@ -250,18 +335,10 @@ class Worker(threading.Thread):
             novo = ritmo.registrar_sucesso(self.conn, self.orgao.codigo, self.orgao.pacing)
             if novo.intervalo_s < antes.intervalo_s:
                 log.info("ritmo_acelerado", extra={"orgao": self.orgao.codigo,
-                                                   "intervalo_s": round(novo.intervalo_s, 2)})
+                                                  "intervalo_s": round(novo.intervalo_s, 2)})
 
         if desfecho in RETENTAVEIS:
-            try:
-                self.adapter.reiniciar_sessao()
-                log.info("sessao_reiniciada_apos_falha",
-                         extra={"orgao": self.orgao.codigo,
-                                "desfecho": str(desfecho)})
-            except Exception:
-                log.exception("falha_ao_reiniciar_sessao",
-                              extra={"orgao": self.orgao.codigo,
-                                     "desfecho": str(desfecho)})
+            self._reiniciar_sessao(desfecho)
 
     def _avaliar_breaker(self, desfecho: Desfecho) -> None:
         antes = breaker.consultar(self.conn, self.orgao.codigo)

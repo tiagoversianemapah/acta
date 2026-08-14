@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% set pagina = 'saude' %}
+{% set body_class = 'tela-maquinas' %}
 {% import "_icons.html" as icons %}
 {% block titulo %}Diagnóstico - ACTA{% endblock %}
 
@@ -12,7 +13,18 @@
 {% endif %}
 
 <div class="workspace diagnostico-workspace">
-  <aside class="maquinas diagnostico-sidebar">
+  <aside class="maquinas diagnostico-sidebar painel-sidebar">
+    <a class="lateral-marca" href="/">
+      <span class="lateral-simbolo" aria-hidden="true">
+        <svg viewBox="0 0 64 64">
+          <path fill="#FCB817" d="M52.5 12.8Q51.2 37.1 42.2 51.2Q32 37.1 12.8 37.1Z"/>
+        </svg>
+      </span>
+      <span>
+        <span class="lateral-nome">ACTA</span>
+        <span class="lateral-org">Certidões · Mapah</span>
+      </span>
+    </a>
     <div class="secao-topo">
       <h2>Máquinas</h2>
       <span class="contador-secao">{{ estados|length }}</span>

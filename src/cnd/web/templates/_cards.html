@@ -88,7 +88,18 @@
 {% endmacro %}
 
 <div class="workspace">
-  <aside class="maquinas">
+  <aside class="maquinas painel-sidebar">
+    <a class="lateral-marca" href="/">
+      <span class="lateral-simbolo" aria-hidden="true">
+        <svg viewBox="0 0 64 64">
+          <path fill="#FCB817" d="M52.5 12.8Q51.2 37.1 42.2 51.2Q32 37.1 12.8 37.1Z"/>
+        </svg>
+      </span>
+      <span>
+        <span class="lateral-nome">ACTA</span>
+        <span class="lateral-org">Certidões · Mapah</span>
+      </span>
+    </a>
     <div class="secao-topo">
       <h2>Máquinas</h2>
       <span class="contador-secao">{{ estados | length }}</span>
@@ -133,6 +144,13 @@
   {% set robo_parado_com_fila = selecionada.pendentes and not selecionada.robo_ativo %}
 
   <section class="operacao">
+    {% if mensagem_operacao %}
+    <div class="aviso ok aviso-operacao">{{ mensagem_operacao }}</div>
+    {% endif %}
+    {% if erro_operacao %}
+    <div class="aviso erro aviso-operacao">{{ erro_operacao }}</div>
+    {% endif %}
+
     <header class="operacao-topo">
       <div class="identidade">
         <div class="linha-identidade">
@@ -213,9 +231,40 @@
       <div>
         {{ icone_metrica('planilha') }}
         <span class="metrica-corpo">
-          <span class="rotulo">Planilha atual</span>
-          <strong>{{ lote_nome }}</strong>
-          <small>fila de processamento</small>
+          <span class="rotulo">Planilha</span>
+          {% if lotes|length > 1 %}
+            {# Os números abaixo são TODOS desta planilha. Com mais de uma
+               na máquina, sem poder trocar não há como acompanhar a que
+               está rodando enquanto outra espera na fila. #}
+            <select class="seletor-planilha"
+                    onchange="location.href='/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo=' + this.value">
+              {% for lote in lotes %}
+                <option value="{{ lote.id }}" {{ 'selected' if lote.id == lote_id }}>
+                  {{ lote.nome }} · {{ lote.criado_fmt }} · {{ lote.itens }} itens
+                  {%- if lote.id == lote_em_execucao %} · em processamento{% endif %}
+                </option>
+              {% endfor %}
+            </select>
+          {% else %}
+            <strong>{{ lote_nome }}</strong>
+          {% endif %}
+          {% if lote_em_execucao and lote_em_execucao != lote_id %}
+            {# A queixa que originou isto: a tela mostrava uma planilha
+               zerada enquanto o robô emitia certidões de outra, e parecia
+               travada. Agora ela diz onde o trabalho está, e leva lá. #}
+            <small class="aviso-outra-planilha">
+              O robô está emitindo <strong>{{ lote_em_execucao_nome }}</strong> —
+              <a href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">acompanhar essa</a>
+            </small>
+          {% else %}
+            <small>
+              {% if lote_em_execucao and lote_em_execucao == lote_id %}
+                em processamento agora
+              {% else %}
+                fila de processamento
+              {% endif %}
+            </small>
+          {% endif %}
         </span>
       </div>
       <div>

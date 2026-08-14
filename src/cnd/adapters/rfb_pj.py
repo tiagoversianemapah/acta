@@ -12,7 +12,9 @@ Mapeado manualmente em 07/08/2026 navegando no portal. O fluxo real:
     5. Desfechos observados na tela:
          · "A certidão foi emitida com sucesso para o CNPJ ..."  -> baixa o PDF
          · "As informações disponíveis ... são insuficientes para emitir a
-            certidão pela Internet."                             -> PENDENCIA_MANUAL
+            certidão pela Internet."                             -> POSITIVA
+           (é assim que o portal recusa quem tem débito: não há certidão a
+            baixar, e a empresa não está regular)
 
 A tela NÃO diz se a certidão é negativa ou positiva com efeitos de negativa —
 isso só existe no título do PDF. Por isso a classificação final lê o PDF.
@@ -88,6 +90,7 @@ FRASES_BLOQUEIO = (
     "não foi possível emitir a certidão",
     "não foi possível concluir a ação para o contribuinte informado",
 )
+RE_CODIGO_033 = re.compile(r"\b033\b")
 
 # Títulos do PDF, na ORDEM em que devem ser testados. CPEN vem primeiro
 # porque o título dela contém a palavra "positiva" — testar positiva
@@ -118,6 +121,8 @@ def _normalizar_sem_acento(texto: str) -> str:
 
 
 def _tem_bloqueio(texto_normalizado: str) -> bool:
+    if RE_CODIGO_033.search(texto_normalizado):
+        return False
     return any(frase in texto_normalizado for frase in FRASES_BLOQUEIO)
 
 
@@ -657,7 +662,8 @@ class AdapterRFBPJ:
         normalizado = _normalizar(texto)
 
         if (FRASE_RETORNE_RESULTADO in normalizado
-                or FRASE_SERVICO_INDISPONIVEL in _normalizar_sem_acento(texto)):
+                or FRASE_SERVICO_INDISPONIVEL in _normalizar_sem_acento(texto)
+                or RE_CODIGO_033.search(normalizado)):
             return ResultadoTentativa(
                 Desfecho.RESULTADO_PENDENTE,
                 mensagem_portal=texto.strip()[:500],
@@ -671,9 +677,20 @@ class AdapterRFBPJ:
                 evidencia=self._evidencia(pagina, doc, "bloqueio-temporario"),
             )
 
-        if FRASE_INSUFICIENTE in normalizado:
+        if rfb_matriz.exige_matriz(texto):
+            # Faixa amarela pedindo o CNPJ da matriz. Não é bloqueio (o
+            # portal não nos barrou) nem erro do robô — é o número errado.
             return ResultadoTentativa(
                 Desfecho.PENDENCIA_MANUAL,
+                mensagem_portal=texto.strip()[:500],
+                evidencia=self._evidencia(pagina, doc, "exige-matriz"),
+            )
+
+        if FRASE_INSUFICIENTE in normalizado:
+            # Recusa por débito: não existe certidão a baixar. Ver o
+            # cabeçalho deste módulo.
+            return ResultadoTentativa(
+                Desfecho.POSITIVA,
                 mensagem_portal=texto.strip()[:500],
             )
 

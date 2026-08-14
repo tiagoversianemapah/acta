@@ -6,21 +6,10 @@
 <title>{% block titulo %}ACTA{% endblock %}</title>
 <link rel="stylesheet" href="/static/app.css">
 </head>
-<body>
+<body class="{{ body_class|default('') }}">
 <header class="topo">
   <div class="topo-1">
-    <a class="marca" href="/">
-      <span class="marca-simbolo" aria-hidden="true">
-        <svg viewBox="0 0 64 64">
-          <path fill="#FCB817" d="M52.5 12.8Q51.2 37.1 42.2 51.2Q32 37.1 12.8 37.1Z"/>
-        </svg>
-      </span>
-      <span class="marca-texto">
-        <span class="nome">ACTA</span>
-        <span class="org">Certidões · Mapah</span>
-      </span>
-    </a>
-    <nav class="abas">
+    <nav class="abas" aria-label="Navegação">
       <a href="/" class="{{ 'ativo' if pagina == 'painel' }}">Operação</a>
       <a href="/jobs" class="{{ 'ativo' if pagina == 'jobs' }}">Carteira</a>
       <a href="/saude" class="{{ 'ativo' if pagina == 'saude' }}">Diagnóstico</a>
@@ -34,4 +23,3 @@
 <main>{% block conteudo %}{% endblock %}</main>
 </body>
 </html>
-

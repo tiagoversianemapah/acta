@@ -69,6 +69,44 @@ def lotes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def lote_em_execucao(conn: sqlite3.Connection) -> int | None:
+    """De qual planilha é o item que o robô está emitindo agora."""
+    linha = conn.execute(
+        "SELECT lote_id FROM job WHERE status = ? "
+        "ORDER BY atualizado_em DESC LIMIT 1",
+        (Status.RUNNING,),
+    ).fetchone()
+    return linha["lote_id"] if linha is not None else None
+
+
+def lote_em_foco(conn: sqlite3.Connection,
+                 escolhido: int | None = None) -> sqlite3.Row | None:
+    """Qual planilha a tela de operação deve mostrar.
+
+    Sem escolha explícita vale a que está SENDO PROCESSADA, e não a última
+    enviada. A fila é única e ordenada por id: mandar uma planilha nova não
+    interrompe a anterior, então mostrar a nova — zerada — enquanto o robô
+    emite a antiga faz a tela parecer parada bem no momento em que ela está
+    trabalhando mais. Foi exatamente o que aconteceu em 14/08/2026.
+    """
+    todos = lotes(conn)
+    if not todos:
+        return None
+
+    if escolhido is not None:
+        for lote in todos:
+            if lote["id"] == escolhido:
+                return lote
+
+    rodando = lote_em_execucao(conn)
+    if rodando is not None:
+        for lote in todos:
+            if lote["id"] == rodando:
+                return lote
+
+    return todos[0]
+
+
 def orgaos_do_lote(conn: sqlite3.Connection, lote_id: int | None) -> list[str]:
     if lote_id is None:
         linhas = conn.execute("SELECT DISTINCT orgao FROM job ORDER BY orgao")
@@ -303,8 +341,13 @@ def pendentes(conn: sqlite3.Connection) -> int:
     ).fetchone()["n"]
 
 
-def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8) -> list[dict]:
+def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8,
+                       lote_id: int | None = None) -> list[dict]:
     """O que o robô fez por último, da mais recente para a mais antiga.
+
+    `lote_id` restringe à planilha exibida na tela. Sem isso, trocar de
+    planilha trocava os números mas deixava a lista de consultas de outra
+    logo abaixo — dois assuntos diferentes no mesmo quadro.
 
     É o "o que está acontecendo agora" da tela de máquinas. Ordena por id e
     não por data: `finalizada_em` é nulo enquanto a tentativa está em curso,
@@ -322,18 +365,22 @@ def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8) -> list[dict]:
     # comparação é de texto — o ponto vem antes do Z na tabela ASCII, então
     # tempos do mesmo segundo sairiam invertidos.
     limiar = tempo.daqui_a(-60 * MINUTOS_EM_CURSO)
+    filtro = "WHERE j.lote_id = ?" if lote_id is not None else ""
+    args: tuple = ((limiar, lote_id, limite) if lote_id is not None
+                   else (limiar, limite))
     linhas = conn.execute(
-        """
+        f"""
         SELECT t.id, t.desfecho, t.iniciada_em, t.finalizada_em,
                t.mensagem_portal, e.nome, e.documento, j.orgao,
                (t.finalizada_em IS NULL AND t.iniciada_em > ?) AS em_curso
           FROM tentativa t
           JOIN job j     ON j.id = t.job_id
           JOIN empresa e ON e.id = j.empresa_id
+         {filtro}
          ORDER BY t.id DESC
          LIMIT ?
         """,
-        (limiar, limite),
+        args,
     ).fetchall()
     eventos = []
     for linha in linhas:

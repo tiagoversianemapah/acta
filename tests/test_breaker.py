@@ -71,6 +71,16 @@ def test_bloqueio_temporario_tambem_abre(conn, lote):
     assert estado.estado == breaker.ABERTO
 
 
+def test_resultado_limpo_nao_reabre_pausa_por_bloqueios_antigos(conn, lote):
+    """Depois de resetar, um resultado limpo nao deve reacender pausa antiga."""
+    _registrar(conn, lote, "FAKE", Desfecho.BLOQUEIO_TEMPORARIO, 3)
+    breaker.fechar(conn, "FAKE")
+
+    estado = _registrar(conn, lote, "FAKE", Desfecho.CPEN)
+
+    assert estado.estado == breaker.FECHADO
+
+
 def test_bloqueios_de_tipos_diferentes_somam(conn, lote):
     _registrar(conn, lote, "FAKE", Desfecho.CAPTCHA, 2)
     estado = _registrar(conn, lote, "FAKE", Desfecho.BLOQUEIO_TEMPORARIO, 1)

@@ -18,6 +18,21 @@ $ErrorActionPreference = "Stop"
 $zip = Join-Path $env:TEMP "acta-atualizacao.zip"
 $tmp = Join-Path $env:TEMP "acta-atualizacao"
 
+function PainelRespondendo() {
+    try {
+        Invoke-WebRequest "http://127.0.0.1:8000/ping" `
+            -UseBasicParsing -TimeoutSec 5 | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+
+function IniciarPainelDireto() {
+    Start-Process -FilePath (Join-Path $Pasta "cnd.exe") `
+        -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
+}
+
 Write-Host "1/5  Baixando de $Origem ..."
 Invoke-WebRequest "$Origem/acta.zip" -OutFile $zip -UseBasicParsing
 
@@ -38,11 +53,16 @@ Copy-Item "$tmp\*" $Pasta -Recurse -Force
 Write-Host "5/5  Subindo o painel de novo ..."
 schtasks /Run /TN "ACTA Painel" | Out-Null
 if ($LASTEXITCODE -eq 0) {
-    Write-Host "     pelo agendador (sobe sozinho no boot)"
+    Write-Host "     agendador acionado"
 } else {
-    Start-Process -FilePath (Join-Path $Pasta "cnd.exe") `
-        -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
-    Write-Host "     em janela minimizada (sem tarefa de boot registrada)"
+    Write-Host "     agendador indisponivel; testando inicio direto"
+}
+Start-Sleep -Seconds 5
+if (-not (PainelRespondendo)) {
+    IniciarPainelDireto
+    Write-Host "     iniciado em janela minimizada por fallback direto"
+} else {
+    Write-Host "     painel respondendo"
 }
 
 Remove-Item $zip, $tmp -Recurse -Force -ErrorAction SilentlyContinue

@@ -21,7 +21,7 @@ from cnd.adapters.rfb_cego import (
     _ponto_fracionario,
     _tem_veu_modal,
 )
-from cnd.core.modelos import Desfecho, ResultadoTentativa
+from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import tela
 
 BRANCO = (255, 255, 255)
@@ -271,13 +271,13 @@ class TestJanelaDoEdge:
 
 
 class TestFaixaDeAlertaDoPortal:
-    def test_texto_033_e_bloqueio_temporario(self):
+    def test_texto_033_vira_retentar(self):
         texto = (
             "Não foi possível emitir a certidão. Tente novamente em alguns "
             "minutos. 033 - 13/08/2026 15:20:10"
         )
 
-        assert _classificar_texto_portal(texto) == "bloqueio"
+        assert _classificar_texto_portal(texto) == "retentar"
 
     def test_texto_de_informacoes_insuficientes_continua_conclusivo(self):
         texto = (
@@ -286,6 +286,17 @@ class TestFaixaDeAlertaDoPortal:
         )
 
         assert _classificar_texto_portal(texto) == "insuficiente"
+
+    def test_texto_que_pede_a_matriz_nao_se_confunde_com_bloqueio(self):
+        """A faixa que pede o CNPJ da matriz é amarela igual à do código 023.
+        Se virasse 'bloqueio', o robô desaceleraria e retentaria três vezes
+        uma consulta que só precisava de outro número."""
+        texto = (
+            "A certidão deve ser emitida para o CNPJ da matriz – "
+            "04.401.250/0001-94"
+        )
+
+        assert _classificar_texto_portal(texto) == "matriz"
 
     def test_texto_de_resultado_pendente_vira_retentar(self):
         texto = (
@@ -434,7 +445,7 @@ class TestFaixaDeAlertaDoPortal:
         assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
         assert "detectada durante a espera" in resultado.mensagem_portal
 
-    def test_texto_033_nao_vira_informacoes_insuficientes(
+    def test_texto_033_vira_resultado_pendente(
         self, monkeypatch, tmp_path
     ):
         cfg = SimpleNamespace(pasta_evidencias=tmp_path)
@@ -457,7 +468,7 @@ class TestFaixaDeAlertaDoPortal:
 
         resultado = adapter._diagnosticar_falha(doc)
 
-        assert resultado.desfecho == Desfecho.BLOQUEIO_TEMPORARIO
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
         assert "033" in resultado.mensagem_portal
 
     def test_resultado_pendente_volta_para_fila_sem_virar_bloqueio(
@@ -512,9 +523,40 @@ class TestFaixaDeAlertaDoPortal:
         assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
         assert "001" in resultado.mensagem_portal
 
-    def test_sem_pdf_e_sem_faixa_vira_informacoes_insuficientes(
+    def test_informacoes_insuficientes_vira_positiva(self, monkeypatch, tmp_path):
+        """A tela de 'informações insuficientes' é como o portal recusa quem
+        tem débito. Classificá-la como pendência manual mandaria a empresa
+        para a aba errada do relatório — e positiva é justamente o resultado
+        que impede a entrega ao cliente."""
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        adapter._ultimo_texto_portal = (
+            "As informações disponíveis na Receita Federal sobre o "
+            "contribuinte 32.874.104/0001-11 são insuficientes para emitir a "
+            "certidão pela internet."
+        )
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.POSITIVA
+        assert "insuficientes" in resultado.mensagem_portal
+
+    def test_sem_pdf_sem_faixa_e_sem_texto_vai_para_conferencia(
         self, monkeypatch, tmp_path
     ):
+        """Sem nada legível na tela, o robô não chuta POSITIVA: dizer que um
+        cliente tem débito sem ter lido a resposta é o erro mais caro."""
         cfg = SimpleNamespace(pasta_evidencias=tmp_path)
         doc = SimpleNamespace(documento="12345678000199")
         adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
@@ -532,4 +574,101 @@ class TestFaixaDeAlertaDoPortal:
         resultado = adapter._diagnosticar_falha(doc)
 
         assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
-        assert "informações insuficientes" in resultado.mensagem_portal
+        assert "não foi possível ler a tela" in resultado.mensagem_portal
+
+
+BANNER_MATRIZ = (
+    "A certidão deve ser emitida para o CNPJ da matriz – 04.401.250/0001-94"
+)
+
+
+class TestPortalPedeAMatriz:
+    """O portal recusa CNPJ de filial e diz na faixa qual é a matriz.
+
+    O robô já troca filial por matriz antes de digitar, derivando o sufixo
+    0001. Isto aqui é a rede de segurança para quando o portal discorda da
+    derivação: quem manda é ele, e o número certo está escrito na tela.
+    """
+
+    def _adapter(self, tmp_path) -> AdapterRFBCego:
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        return adapter
+
+    def test_faixa_amarela_com_pedido_de_matriz_nao_vira_bloqueio(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_pdf_pronto", lambda _doc: None)
+        monkeypatch.setattr(adapter, "_alerta_na_imagem",
+                            lambda _imagem: ("aviso", AMARELO_AVISO))
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: BANNER_MATRIZ)
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        reacao, caminho = adapter._aguardar_reacao("04401250000860", segundos=1)
+
+        assert reacao == "matriz"
+        assert caminho is None
+        assert adapter._ultimo_texto_portal == BANNER_MATRIZ
+
+    def test_emitir_refaz_a_consulta_com_o_cnpj_que_o_portal_indicou(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        doc = Documento(empresa_id=1, documento="00082253000232",
+                        tipo="CNPJ", nome="EMPRESA TESTE")
+        pdf = tmp_path / "Certidao.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        enviados = []
+
+        def submeter(documento):
+            enviados.append(documento)
+            if len(enviados) == 1:
+                adapter._ultimo_texto_portal = BANNER_MATRIZ
+                return "matriz", None
+            return "pdf", pdf
+
+        monkeypatch.setattr(adapter, "_submeter", submeter)
+        monkeypatch.setattr(
+            adapter, "_ler_pdf",
+            lambda _caminho, _doc: ResultadoTentativa(Desfecho.NEGATIVA,
+                                                      caminho_pdf=pdf),
+        )
+
+        resultado = adapter.emitir(doc)
+
+        # Primeiro vai a matriz derivada (0001 da própria base); depois, a
+        # que o portal escreveu na faixa.
+        assert enviados == ["00082253000151", "04401250000194"]
+        assert resultado.desfecho == Desfecho.NEGATIVA
+        assert "04.401.250/0001-94" in resultado.mensagem_portal
+
+    def test_emitir_nao_insiste_quando_o_portal_repete_o_pedido(
+        self, monkeypatch, tmp_path
+    ):
+        """Se o portal pedir de novo o mesmo número que acabamos de digitar,
+        repetir só gastaria tentativa. Vai para conferência manual."""
+        adapter = self._adapter(tmp_path)
+        doc = Documento(empresa_id=1, documento="04401250000860",
+                        tipo="CNPJ", nome="EMPRESA TESTE")
+        enviados = []
+
+        def submeter(documento):
+            enviados.append(documento)
+            adapter._ultimo_texto_portal = BANNER_MATRIZ
+            return "matriz", None
+
+        monkeypatch.setattr(adapter, "_submeter", submeter)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "p.png")
+
+        resultado = adapter.emitir(doc)
+
+        assert enviados == ["04401250000194"]
+        assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert "matriz" in resultado.mensagem_portal

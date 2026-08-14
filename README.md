@@ -36,9 +36,11 @@ emissões saindo com zero falhas, PDFs conferidos contra certidão real.
    lá e quem erra é o critério de detecção. A espera já caiu de 24s para
    8s; o aviso agora registra as cores medidas, e uma rodada curta fecha o
    critério de vez.
-2. **A tela "informações insuficientes"** (ex.: CNPJ 15.388.203/0001-74)
-   cai em `ERRO_TECNICO` e é retentada 3 vezes. É resposta definitiva do
-   portal, não falha: deve virar `PENDENCIA_MANUAL` na primeira vez.
+2. **A tela "informações insuficientes"** (ex.: CNPJ 15.388.203/0001-74) é
+   resposta definitiva do portal, não falha: fecha o item na primeira vez,
+   como `POSITIVA` — é assim que a Receita recusa quem tem débito, e não
+   há certidão a baixar. Falta rodar um lote com essa classificação para
+   conferir o total de positivas contra a conferência manual.
 
 Para rodar um lote de teste, na máquina:
 

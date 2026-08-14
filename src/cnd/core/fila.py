@@ -251,7 +251,8 @@ def reenfileirar_falhados(
     return cursor.rowcount
 
 
-def certidao_do_mes(conn: sqlite3.Connection, empresa_id: int, orgao: str) -> sqlite3.Row | None:
+def certidao_do_mes(conn: sqlite3.Connection, empresa_id: int, orgao: str,
+                    lote_id: int | None = None) -> sqlite3.Row | None:
     """Certidão desta empresa/órgão emitida no MÊS CORRENTE (RNF-04).
 
     O critério é a data de emissão, não a validade — e a diferença importa.
@@ -262,17 +263,27 @@ def certidao_do_mes(conn: sqlite3.Connection, empresa_id: int, orgao: str) -> sq
 
     Vale, portanto, só dentro do mesmo mês: em 03/09 aproveita a de 01/09,
     mas não a de 31/08.
+
+    E só DENTRO DA MESMA PLANILHA. Duas planilhas são trabalhos separados,
+    ainda que tragam os mesmos CNPJs: quem manda a mesma lista de novo está
+    pedindo certidões novas, não um relatório de que já existem. Sem esse
+    filtro, a segunda remessa fechava inteira como APROVEITADA, sem PDF
+    novo — regra definida pela operação em 14/08/2026.
     """
+    filtro = "AND j.lote_id = ?" if lote_id is not None else ""
+    args: tuple = ((empresa_id, orgao, lote_id) if lote_id is not None
+                   else (empresa_id, orgao))
     return conn.execute(
-        """
+        f"""
         SELECT c.*
           FROM certidao c
           JOIN job j ON j.id = c.job_id
          WHERE j.empresa_id = ?
            AND j.orgao = ?
+           {filtro}
            AND strftime('%Y-%m', c.emitida_em) = strftime('%Y-%m', 'now')
          ORDER BY c.emitida_em DESC
          LIMIT 1
         """,
-        (empresa_id, orgao),
+        args,
     ).fetchone()

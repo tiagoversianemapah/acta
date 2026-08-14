@@ -158,6 +158,20 @@ class TestReconhecimentoDeTela:
         assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
         assert "001" in resultado.mensagem_portal
 
+    def test_033_vira_resultado_pendente(self, monkeypatch, tmp_path):
+        adapter = AdapterRFBPJ("RFB_PJ", SimpleNamespace(), tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        monkeypatch.setattr(
+            adapter,
+            "_evidencia",
+            lambda *_args: tmp_path / "resultado-pendente.png",
+        )
+
+        resultado = adapter._classificar(None, doc, RESULTADO_033)
+
+        assert resultado.desfecho == Desfecho.RESULTADO_PENDENTE
+        assert "033" in resultado.mensagem_portal
+
     def test_bloqueio_temporario(self):
         """O portal pedindo para voltar depois não é erro nosso nem resposta
         sobre a empresa: é ele nos barrando. Confundir com erro técnico faria
@@ -168,10 +182,10 @@ class TestReconhecimentoDeTela:
         assert FRASE_SUCESSO not in normalizado
         assert FRASE_INSUFICIENTE not in normalizado
 
-    def test_resultado_033_e_bloqueio_temporario(self):
+    def test_resultado_033_e_resultado_pendente(self):
         normalizado = _normalizar(RESULTADO_033)
 
-        assert _tem_bloqueio(normalizado)
+        assert not _tem_bloqueio(normalizado)
         assert FRASES_BLOQUEIO[1] in normalizado
         assert FRASE_INSUFICIENTE not in normalizado
 

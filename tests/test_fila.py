@@ -207,6 +207,24 @@ def test_certidao_do_mes_passado_nao_serve(conn, lote):
     assert fila.certidao_do_mes(conn, empresa_id, "FAKE") is None
 
 
+def test_certidao_de_outra_planilha_nao_serve(conn, lote):
+    """Duas remessas são trabalhos separados, ainda que tragam os mesmos
+    CNPJs. Sem o filtro por lote, reenviar a planilha fechava a segunda
+    inteira como APROVEITADA e não gerava um PDF novo — enquanto quem
+    mandou de novo queria exatamente certidões novas."""
+    job_id = criar_job(conn, lote)
+    empresa_id = conn.execute(
+        "SELECT empresa_id FROM job WHERE id = ?", (job_id,)
+    ).fetchone()["empresa_id"]
+    _guardar_certidao(conn, job_id, tempo.agora_iso(), "2099-12-31")
+    outro_lote = conn.execute(
+        "INSERT INTO lote (descricao, arquivo_origem) VALUES ('2a', 'igual.xlsx')"
+    ).lastrowid
+
+    assert fila.certidao_do_mes(conn, empresa_id, "FAKE", lote) is not None
+    assert fila.certidao_do_mes(conn, empresa_id, "FAKE", outro_lote) is None
+
+
 def test_certidao_de_outro_orgao_nao_serve(conn, lote):
     job_id = criar_job(conn, lote, orgao="FAKE")
     empresa_id = conn.execute(

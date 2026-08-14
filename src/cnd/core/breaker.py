@@ -201,6 +201,9 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
         fechar(conn, orgao)
         return consultar(conn, orgao)
 
+    if desfecho not in BLOQUEIOS and desfecho != Desfecho.ERRO_TECNICO:
+        return atual
+
     recentes = [
         linha["desfecho"]
         for linha in conn.execute(
@@ -216,20 +219,27 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
         )
     ]
 
-    bloqueios = sum(1 for d in recentes if d in BLOQUEIOS)
-    if bloqueios >= p.captchas_para_abrir:
-        return abrir(conn, orgao,
-                     f"{bloqueios} bloqueios nas últimas {len(recentes)} tentativas",
-                     p, desfecho)
+    if desfecho in BLOQUEIOS:
+        bloqueios = sum(1 for d in recentes if d in BLOQUEIOS)
+        if bloqueios >= p.captchas_para_abrir:
+            return abrir(
+                conn, orgao,
+                f"{bloqueios} bloqueios nas últimas {len(recentes)} tentativas",
+                p, desfecho,
+            )
 
-    erros_seguidos = 0
-    for d in recentes:
-        if d == Desfecho.ERRO_TECNICO:
-            erros_seguidos += 1
-        else:
-            break
-    if erros_seguidos >= p.erros_para_abrir:
-        return abrir(conn, orgao, f"{erros_seguidos} erros técnicos seguidos",
-                     p, desfecho)
+    if desfecho == Desfecho.ERRO_TECNICO:
+        erros_seguidos = 0
+        for d in recentes:
+            if d == Desfecho.ERRO_TECNICO:
+                erros_seguidos += 1
+            else:
+                break
+        if erros_seguidos >= p.erros_para_abrir:
+            return abrir(
+                conn, orgao,
+                f"{erros_seguidos} erros técnicos seguidos",
+                p, desfecho,
+            )
 
     return atual

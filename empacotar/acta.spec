@@ -1,4 +1,3 @@
-# -*- mode: python ; coding: utf-8 -*-
 """Receita de empacotamento do ACTA.
 
 Gera DOIS executáveis que dividem a mesma pasta de bibliotecas:
@@ -28,13 +27,15 @@ FONTE = RAIZ / "src" / "cnd"
 # arrastar os dados junto, a janela abre sem cor nenhuma.
 ctk_datas, ctk_binarios, ctk_ocultos = collect_all("customtkinter")
 
-dados = ctk_datas + [
+dados = [
+    *ctk_datas,
     (str(FONTE / "infra" / "schema.sql"), "cnd/infra"),
     (str(FONTE / "web" / "templates"), "cnd/web/templates"),
     (str(FONTE / "web" / "static"), "cnd/web/static"),
 ]
 
-ocultos = ctk_ocultos + [
+ocultos = [
+    *ctk_ocultos,
     # Escolhidos pelo config.toml e importados por nome — o PyInstaller não
     # tem como enxergar isso lendo o código.
     "cnd.adapters.rfb_cego",
@@ -45,8 +46,7 @@ ocultos = ctk_ocultos + [
     # O uvicorn monta o servidor por nome de módulo, pelo mesmo motivo.
     "uvicorn.logging",
     "uvicorn.loops.auto",
-    "uvicorn.protocols.http.auto",
-    "uvicorn.protocols.websockets.auto",
+    "uvicorn.protocols.http.h11_impl",
     "uvicorn.lifespan.on",
 ]
 

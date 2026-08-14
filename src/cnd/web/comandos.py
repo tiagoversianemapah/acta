@@ -45,6 +45,9 @@ ARQUIVO_ENVIADO = File(...)
 ORIGEM_ATUALIZACAO = Form(...)
 ROBO_SEM_SINAL_RECUPERAVEL_S = 180.0
 
+# Digitada por extenso para zerar a máquina. Ninguém envia isto por engano.
+CONFIRMACAO_DE_ZERAGEM = "APAGAR TUDO"
+
 ATUALIZADOR_PS1 = r"""
 param(
     [Parameter(Mandatory = $true)][string]$Origem,
@@ -62,6 +65,19 @@ $origemLog = Join-Path $Pasta "data\ultima_origem_atualizacao.txt"
 function Registrar([string]$Mensagem) {
     $linha = (Get-Date -Format "yyyy-MM-dd HH:mm:ss") + "  " + $Mensagem
     Add-Content -Path $log -Value $linha
+}
+function PainelRespondendo() {
+    try {
+        Invoke-WebRequest "http://127.0.0.1:8000/ping" `
+            -UseBasicParsing -TimeoutSec 5 | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
+}
+function IniciarPainelDireto() {
+    Start-Process -FilePath (Join-Path $Pasta "cnd.exe") `
+        -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
 }
 
 $zip = Join-Path $env:TEMP "acta-atualizacao.zip"
@@ -92,13 +108,20 @@ try {
     Copy-Item "$tmp\*" $Pasta -Recurse -Force
 
     Registrar "subindo painel"
+    $agendadorOk = $false
     schtasks /Run /TN "ACTA Painel" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        Start-Process -FilePath (Join-Path $Pasta "cnd.exe") `
-            -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
-        Registrar "painel iniciado sem tarefa agendada"
+    $agendadorOk = ($LASTEXITCODE -eq 0)
+    if ($agendadorOk) {
+        Registrar "painel acionado pelo agendador"
     } else {
-        Registrar "painel iniciado pelo agendador"
+        Registrar "agendador indisponivel; usando inicio direto"
+    }
+    Start-Sleep -Seconds 5
+    if (-not (PainelRespondendo)) {
+        IniciarPainelDireto
+        Registrar "painel iniciado por fallback direto"
+    } else {
+        Registrar "painel respondendo apos atualizacao"
     }
 
     Registrar "concluido"
@@ -180,6 +203,48 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
             }
         finally:
             shutil.rmtree(destino.parent, ignore_errors=True)
+
+    @roteador.post("/zerar")
+    def zerar_maquina(confirmar: str = Form(default="")):
+        """Apaga TUDO nesta máquina: planilhas, itens, tentativas e PDFs.
+
+        Não tem desfazer, então não basta alcançar a rota: é preciso
+        escrever a confirmação por extenso. A senha da rede sozinha
+        protegeria contra estranhos, não contra um clique errado de quem
+        tem a senha — que é o risco real aqui.
+
+        Calibragem, config.toml e logs ficam: ver infra/limpeza.py.
+        """
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+
+        if confirmar.strip().upper() != CONFIRMACAO_DE_ZERAGEM:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Para zerar a máquina, envie confirmar="
+                       f"{CONFIRMACAO_DE_ZERAGEM}.",
+            )
+        if _robo_rodando(cfg.banco) and not _encerrar_robo_ocioso(cfg.banco):
+            raise HTTPException(
+                status_code=409,
+                detail="O robô está em execução. Pare o robô antes de zerar.",
+            )
+
+        from cnd.infra import limpeza
+        from cnd.infra.db import conectar, criar_schema
+
+        conn = conectar(cfg.banco)
+        try:
+            criar_schema(conn)
+            resultado = limpeza.zerar(
+                conn, (cfg.pasta_certidoes, cfg.pasta_evidencias))
+        finally:
+            conn.close()
+
+        return _resposta(
+            f"Máquina zerada: {resultado.como_texto()}.",
+            f"Máquina zerada: {resultado.como_texto()}.",
+        )
 
     @roteador.post("/robo/iniciar")
     def iniciar_robo():

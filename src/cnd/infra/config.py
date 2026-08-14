@@ -24,6 +24,8 @@ class ParametrosRetry:
     backoff_captcha_s: tuple[int, ...] = (3600, 14400, 43200)
     # O portal pede "alguns minutos" — esperar horas seria exagero.
     backoff_bloqueio_s: tuple[int, ...] = (300, 900, 1800)
+    # Uma chance curta para 106/023 antes de devolver o item para a fila.
+    retentativa_bloqueio_s: tuple[float, ...] = (30.0, 90.0)
     # Tela 001 da Receita: servico temporariamente indisponivel.
     backoff_resultado_pendente_s: tuple[int, ...] = (3600, 3600, 3600)
 
@@ -276,6 +278,9 @@ def carregar(caminho: Path | None = None) -> Config:
                 backoff_erro_s=tuple(retry_bruto.get("backoff_erro_s", (120, 600, 2700))),
                 backoff_captcha_s=tuple(retry_bruto.get("backoff_captcha_s", (3600, 14400, 43200))),
                 backoff_bloqueio_s=tuple(retry_bruto.get("backoff_bloqueio_s", (300, 900, 1800))),
+                retentativa_bloqueio_s=tuple(
+                    retry_bruto.get("retentativa_bloqueio_s", (30.0, 90.0))
+                ),
                 backoff_resultado_pendente_s=tuple(
                     retry_bruto.get("backoff_resultado_pendente_s", (3600, 3600, 3600))
                 ),

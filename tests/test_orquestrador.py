@@ -11,12 +11,34 @@ import threading
 from cnd.adapters import fake
 from cnd.core import breaker, ritmo
 from cnd.core.breaker import ParametrosBreaker
-from cnd.core.modelos import CONCLUSIVOS, Status
+from cnd.core.modelos import CONCLUSIVOS, Desfecho, ResultadoTentativa, Status
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 from cnd.infra.db import caminho_pedido_parada
 from cnd.orquestrador.loop import Contexto, _consumir_pedido_de_parada, executar
 from tests.conftest import criar_job
+
+
+class AdapterSequencial:
+    def __init__(self, resultados: list[ResultadoTentativa]) -> None:
+        self.resultados = list(resultados)
+        self.chamadas: list[str] = []
+        self.reinicios = 0
+
+    def preparar(self) -> None:
+        pass
+
+    def emitir(self, doc) -> ResultadoTentativa:
+        self.chamadas.append(doc.documento)
+        if not self.resultados:
+            raise AssertionError("adapter chamado mais vezes que o esperado")
+        return self.resultados.pop(0)
+
+    def reiniciar_sessao(self) -> None:
+        self.reinicios += 1
+
+    def encerrar(self) -> None:
+        pass
 
 
 def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
@@ -33,7 +55,13 @@ def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
             captchas_para_abrir=3, janela_jobs=10, erros_para_abrir=5,
             cooldown_inicial_s=0, cooldown_maximo_s=0,
         ),
-        retry=ParametrosRetry(max_tentativas=3, backoff_erro_s=(0,), backoff_captcha_s=(0,)),
+        retry=ParametrosRetry(
+            max_tentativas=3,
+            backoff_erro_s=(0,),
+            backoff_captcha_s=(0,),
+            backoff_bloqueio_s=(0,),
+            retentativa_bloqueio_s=(0,),
+        ),
         extras={"simulacao": simulacao},
     )
     return Config(
@@ -157,3 +185,83 @@ def test_erro_tecnico_reinicia_sessao_do_adapter(conn, lote, tmp_path, monkeypat
     executar(cfg, ate_esvaziar=True)
 
     assert reinicios == ["FAKE", "FAKE", "FAKE"]
+
+
+def test_bloqueio_106_faz_retentativa_rapida_e_recupera(
+    conn, lote, tmp_path, monkeypatch
+):
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal="Nao foi possivel concluir a acao. 106 - 14/08/2026",
+        ),
+        ResultadoTentativa(
+            Desfecho.NEGATIVA,
+            mensagem_portal="PDF baixado",
+        ),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
+
+    executar(cfg, ate_esvaziar=True)
+
+    assert adapter.chamadas == ["00000000000001", "00000000000001"]
+    assert adapter.reinicios == 1
+    job = conn.execute("SELECT status, desfecho, tentativas FROM job").fetchone()
+    assert job["status"] == Status.DONE
+    assert job["desfecho"] == Desfecho.NEGATIVA
+    assert job["tentativas"] == 1
+    tentativas = conn.execute("SELECT desfecho, mensagem_portal FROM tentativa").fetchall()
+    assert len(tentativas) == 1
+    assert tentativas[0]["desfecho"] == Desfecho.NEGATIVA
+    assert "micro-retentativa" in tentativas[0]["mensagem_portal"]
+    assert breaker.consultar(conn, "FAKE").estado == breaker.FECHADO
+
+
+def test_bloqueio_106_persistente_reagenda_sem_consumir_duas_tentativas(
+    conn, lote, tmp_path, monkeypatch
+):
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal="Nao foi possivel concluir a acao. 106 - 14/08/2026",
+        ),
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal="Nao foi possivel concluir a acao. 106 - 14/08/2026",
+        ),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
+
+    executar(cfg, limite=1)
+
+    assert adapter.chamadas == ["00000000000001", "00000000000001"]
+    job = conn.execute("SELECT status, tentativas FROM job").fetchone()
+    assert job["status"] == Status.RETRY_WAIT
+    assert job["tentativas"] == 1
+    tentativas = conn.execute("SELECT desfecho FROM tentativa").fetchall()
+    assert len(tentativas) == 1
+    assert tentativas[0]["desfecho"] == Desfecho.BLOQUEIO_TEMPORARIO
+    assert breaker.consultar(conn, "FAKE").estado == breaker.FECHADO
+
+
+def test_bloqueio_033_nao_usa_retentativa_rapida(conn, lote, tmp_path, monkeypatch):
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal="Nao foi possivel emitir a certidao. 033 - 14/08/2026",
+        ),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
+
+    executar(cfg, limite=1)
+
+    assert adapter.chamadas == ["00000000000001"]
+    job = conn.execute("SELECT status, tentativas FROM job").fetchone()
+    assert job["status"] == Status.RETRY_WAIT
+    assert job["tentativas"] == 1

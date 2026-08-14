@@ -361,19 +361,45 @@ def _origem_atualizacao_salva() -> str:
     return ""
 
 
+def _reler_com_lote(
+    estados: list[remoto.EstadoRemoto], indice: int | None, arquivo: int | None
+) -> None:
+    """Refaz a leitura da máquina escolhida pedindo os números de uma planilha.
+
+    Só a selecionada, e só quando alguém escolheu de fato: o id do lote é
+    numerado por máquina, então repassá-lo às outras traria os números da
+    planilha errada — e o custo seria uma ida à rede por máquina, à toa.
+    """
+    if arquivo is None or indice is None or not estados:
+        return
+    estado = estados[indice]
+    if not estado.online:
+        return
+    estados[indice] = (
+        remoto.consultar_local(cfg, arquivo) if estado.local
+        else remoto.consultar(estado.maquina, cfg.rede.senha, arquivo)
+    )
+
+
 def _contexto_painel(
     maquina: int | None,
     mensagem: str | None = None,
     erro: str | None = None,
     request: Request | None = None,
+    arquivo: int | None = None,
 ) -> dict:
     estados = _maquinas_operacao()
     indice = _indice_da_maquina(estados, maquina)
+    _reler_com_lote(estados, indice, arquivo)
     selecionada = estados[indice] if indice is not None else None
     dados = selecionada.dados if selecionada else {}
     orgaos = selecionada.orgaos if selecionada else []
     totais = _totais(orgaos)
-    lotes = dados.get("lotes", [])
+    # Com a mesma planilha enviada mais de uma vez, o nome não distingue
+    # nada: os arquivos vêm formatados com a data de envio junto.
+    lotes = carteira.arquivos_do_estado(selecionada)
+    em_execucao = dados.get("lote_em_execucao")
+    rodando = next((lote for lote in lotes if lote["id"] == em_execucao), None)
     meses = dados.get("meses", [])
     mes_atual = meses[0] if meses else relatorio.mes_corrente()
     base_download = (
@@ -393,6 +419,14 @@ def _contexto_painel(
         "lotes": lotes,
         "lote_id": dados.get("lote_id"),
         "lote_nome": dados.get("lote_nome") or "sem planilha ativa",
+        # O que veio na URL, para o seletor não "voltar sozinho" quando o
+        # robô mudar de planilha no meio de uma conferência.
+        "arquivo_escolhido": arquivo,
+        # E, junto, qual planilha está de fato rodando: olhar números
+        # parados sem saber que o trabalho corre em OUTRO arquivo foi
+        # exatamente o que fez a tela parecer travada.
+        "lote_em_execucao": em_execucao,
+        "lote_em_execucao_nome": rodando["nome"] if rodando else "",
         "mes": mes_atual,
         "base_download": base_download,
         "usa_rede": bool(cfg.rede.maquinas),
@@ -411,15 +445,17 @@ def _contexto_painel(
 def painel(
     request: Request, maquina: int | None = None,
     mensagem: str | None = None, erro: str | None = None,
+    arquivo: int | None = None,
 ):
-    ctx = _contexto_painel(maquina, mensagem, erro, request)
+    ctx = _contexto_painel(maquina, mensagem, erro, request, arquivo)
     return templates.TemplateResponse(request, "painel.html", ctx)
 
 
 @app.get("/fragmento/resumo", response_class=HTMLResponse)
-def fragmento_resumo(request: Request, maquina: int | None = None):
+def fragmento_resumo(request: Request, maquina: int | None = None,
+                     arquivo: int | None = None):
     """Pedaço recarregado pelo JavaScript: estado operacional da máquina."""
-    ctx = _contexto_painel(maquina, request=request)
+    ctx = _contexto_painel(maquina, request=request, arquivo=arquivo)
     return templates.TemplateResponse(request, "_cards.html", ctx)
 
 

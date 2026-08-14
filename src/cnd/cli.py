@@ -49,6 +49,35 @@ def _importar(args) -> int:
     return 0
 
 
+def _zerar(args) -> int:
+    """Apaga o trabalho inteiro desta máquina. Não tem desfazer."""
+    from cnd.infra import limpeza
+    from cnd.infra.config import carregar
+    from cnd.infra.db import conectar, criar_schema, garantir
+
+    cfg = carregar(args.config)
+    garantir(cfg.banco)
+
+    if not args.sim:
+        print("\n  Isto apaga TUDO desta máquina: planilhas, itens,")
+        print("  tentativas e os PDFs já emitidos. Não tem desfazer.")
+        print("  Calibragem, config.toml e logs ficam.\n")
+        print("  Se é isso mesmo, repita com --sim:\n")
+        print("    cnd zerar --sim\n")
+        return 1
+
+    conn = conectar(cfg.banco)
+    try:
+        criar_schema(conn)
+        resultado = limpeza.zerar(conn, (cfg.pasta_certidoes,
+                                         cfg.pasta_evidencias))
+    finally:
+        conn.close()
+
+    print(f"\nMáquina zerada: {resultado.como_texto()}\n")
+    return 0
+
+
 def _rodar(args) -> int:
     from cnd.core import breaker
     from cnd.infra.config import carregar
@@ -93,7 +122,7 @@ def _painel(args) -> int:
     from cnd.web.app import app as aplicacao
 
     uvicorn.run(aplicacao, host=args.host, port=args.porta,
-                log_level="warning")
+                log_level="warning", http="h11", ws="none")
     return 0
 
 
@@ -302,6 +331,13 @@ def main(argv: list[str] | None = None) -> int:
                    help="esquece o ritmo e o disjuntor aprendidos "
                         "(usar ao trocar de adapter)")
     p.set_defaults(func=_rodar)
+
+    p = sub.add_parser("zerar",
+                       help="apaga TUDO desta máquina (planilhas, itens e PDFs)")
+    p.add_argument("--sim", action="store_true",
+                   help="confirma: sem isto o comando só explica o que faria")
+    p.add_argument("--config", type=Path, default=None)
+    p.set_defaults(func=_zerar)
 
     p = sub.add_parser("painel", help="sobe o painel web")
     p.add_argument("--host", default="127.0.0.1")

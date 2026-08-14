@@ -22,6 +22,10 @@
     --cinza:#64748B;
     --cinza-fundo:#F1F5F9;
     --mono:"Cascadia Mono",Consolas,"SF Mono",monospace;
+    /* Largura da barra azul. Num só lugar porque três regras dependem dela
+       (a barra, a margem do topo e a coluna do workspace) e mudar uma sem
+       as outras desalinha a tela inteira. */
+    --lateral:216px;
   }
 
   *{box-sizing:border-box}
@@ -35,11 +39,12 @@
   a:hover{color:var(--azul)}
 
   .topo{
-    position:sticky;top:0;z-index:30;background:rgba(255,255,255,.97);
+    position:sticky;top:0;z-index:30;background:rgba(255,255,255,.98);
     border-bottom:1px solid var(--linha);backdrop-filter:saturate(140%) blur(12px);
+    box-shadow:0 1px 10px rgba(15,23,42,.04);
   }
   .topo-1{
-    max-width:none;margin:0 auto;padding:0 1.45rem;min-height:68px;
+    max-width:none;margin:0 auto;padding:0 1.15rem;min-height:54px;
     display:flex;align-items:center;gap:1.35rem;
   }
   .marca{
@@ -67,9 +72,11 @@
   .ambiente .versao{
     padding:.2rem .46rem;color:var(--texto-3);font:800 11px var(--mono);
   }
-  .abas-wrap{display:contents}
+  /* Única navegação entre as três telas: a barra lateral guarda as
+     máquinas, não as páginas. Some daqui e não há como chegar na
+     Carteira nem no Diagnóstico. */
   .abas{
-    max-width:none;margin:0 auto 0 1.4rem;padding:.26rem;
+    margin:0;padding:.26rem;
     display:flex;align-items:center;gap:.12rem;overflow-x:auto;
     border:1px solid var(--linha);border-radius:999px;background:#F7FAFE;
     box-shadow:inset 0 1px 0 rgba(255,255,255,.85);
@@ -78,6 +85,7 @@
     min-height:34px;padding:.45rem .95rem;color:#31415E;
     text-decoration:none;border-radius:999px;border:1px solid transparent;
     font-weight:800;font-size:13px;white-space:nowrap;
+    display:flex;align-items:center;
   }
   .abas a:hover{color:var(--azul);background:#fff}
   .abas a.ativo{
@@ -160,6 +168,100 @@
   .ponto.vermelho,.estado.vermelho::before,.estado.erro::before{background:var(--vermelho)}
   .ponto.cinza,.estado.cinza::before{background:var(--cinza)}
 
+  .tela-maquinas{background:#F5F7FB}
+  .tela-maquinas .topo{
+    margin-left:var(--lateral);width:calc(100% - var(--lateral));
+  }
+  .tela-maquinas main{padding:0;margin-top:-55px}
+  .tela-maquinas .workspace{
+    min-height:100vh;grid-template-columns:var(--lateral) minmax(0,1fr);
+    gap:0;align-items:stretch;
+  }
+  .tela-maquinas .operacao{
+    min-height:100vh;border:0;border-radius:0;box-shadow:none;
+    padding-top:55px;
+  }
+  .tela-maquinas .carteira-conteudo,
+  .tela-maquinas .diagnostico-conteudo{
+    padding:75px 1.35rem 1.6rem;
+  }
+  .tela-maquinas .aviso-operacao{
+    margin:1.35rem 1.35rem .8rem;
+  }
+  .painel-sidebar{
+    position:sticky;top:0;z-index:35;height:100vh;padding:1.25rem .62rem;
+    display:flex;flex-direction:column;
+    border-radius:0;background:linear-gradient(160deg,#0A2A67 0%,#061D4C 48%,#031238 100%);
+    color:#EAF2FF;overflow-y:auto;box-shadow:inset -1px 0 0 rgba(255,255,255,.08);
+  }
+  .lateral-marca{
+    display:flex;align-items:center;gap:.55rem;padding:.25rem .5rem .95rem;
+    margin:0;border-bottom:1px solid rgba(255,255,255,.10);
+    color:#fff;text-decoration:none;min-width:0;
+  }
+  .lateral-marca:hover{color:#fff}
+  .lateral-marca > span{min-width:0}
+  .lateral-simbolo{
+    width:32px;height:32px;display:grid;place-items:center;flex:0 0 32px;
+  }
+  .lateral-simbolo svg{width:30px;height:30px;display:block}
+  .lateral-nome{
+    display:block;font-size:21px;line-height:1;font-weight:850;color:#fff;
+  }
+  /* Reticências, e não quebra de linha: com a barra mais estreita,
+     "Certidões · Mapah" passa a ser o texto mais largo do cabeçalho. */
+  .lateral-org{
+    display:block;margin-top:.16rem;font-size:11.5px;font-weight:700;
+    color:rgba(234,242,255,.78);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;
+  }
+  .painel-sidebar .arquivos-topo,
+  .painel-sidebar .lista-arquivos{
+    display:none;
+  }
+  .painel-sidebar .secao-topo{
+    min-height:auto;margin:0;padding:1.05rem .5rem .7rem;
+    border:0;background:transparent;color:rgba(234,242,255,.7);
+  }
+  .painel-sidebar .secao-topo h2{
+    font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:rgba(234,242,255,.72);
+  }
+  .painel-sidebar .contador-secao{display:none}
+  .painel-sidebar .lista-maquinas{gap:.78rem}
+  .painel-sidebar .maquina-linha{
+    min-height:92px;padding:.9rem .75rem .82rem;
+    border:1px solid rgba(255,255,255,.08);border-radius:8px;
+    background:rgba(255,255,255,.075);color:#fff;
+    box-shadow:0 18px 34px rgba(0,0,0,.13);
+  }
+  .painel-sidebar .maquina-linha + .maquina-linha{margin-top:.78rem}
+  .painel-sidebar .maquina-linha:hover{
+    background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.16);
+  }
+  .painel-sidebar .maquina-linha.selecionada{
+    background:rgba(255,255,255,.12);
+    box-shadow:inset 5px 0 0 #fff,0 18px 34px rgba(0,0,0,.16);
+  }
+  .painel-sidebar .maquina-texto strong{
+    color:#fff;font-size:14px;font-weight:850;
+  }
+  .painel-sidebar .maquina-texto small,
+  .painel-sidebar .maquina-planilha{
+    color:rgba(234,242,255,.76);font-size:12px;
+  }
+  .painel-sidebar .maquina-percentual{
+    color:#fff;font:850 14px "Segoe UI Variable Text","Segoe UI",Inter,system-ui,sans-serif;
+  }
+  .painel-sidebar .vazio{
+    color:rgba(234,242,255,.76);border:1px solid rgba(255,255,255,.08);
+    border-radius:8px;background:rgba(255,255,255,.06);
+  }
+  .painel-sidebar .vazio b{color:#fff}
+  .tela-maquinas .painel-sidebar .maquina-linha{
+    min-height:92px;padding:.9rem .75rem .82rem;
+    box-shadow:0 18px 34px rgba(0,0,0,.13);
+  }
+
   .operacao-topo{
     display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;
     padding:1.2rem 1.35rem 1rem;border-bottom:1px solid transparent;
@@ -199,6 +301,29 @@
     overflow:hidden;text-overflow:ellipsis;
   }
   .faixa-operacao small{display:block;color:var(--texto-3);font-size:12px}
+  /* Parece o nome da planilha, e não um formulário: no lugar de um campo
+     cinza no meio dos números, um texto forte que abre a lista ao clicar. */
+  .seletor-planilha{
+    display:block;width:100%;max-width:100%;margin:.12rem 0;padding:.1rem 1.3rem .1rem 0;
+    border:0;background:transparent;color:inherit;cursor:pointer;
+    font:800 15px inherit;font-family:inherit;
+    text-overflow:ellipsis;white-space:nowrap;overflow:hidden;
+    appearance:none;
+    background-image:linear-gradient(45deg,transparent 50%,var(--texto-3) 50%),
+                     linear-gradient(135deg,var(--texto-3) 50%,transparent 50%);
+    background-position:calc(100% - 9px) center,calc(100% - 4px) center;
+    background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+  }
+  .seletor-planilha:hover{color:var(--azul-acao)}
+  .aviso-outra-planilha{
+    display:block;color:var(--ambar);font-size:12px;line-height:1.35;
+  }
+  .aviso-outra-planilha strong{
+    display:inline;margin:0;font-size:12px;font-weight:800;color:inherit;
+    white-space:normal;
+  }
+  .aviso-outra-planilha a{font-weight:800;white-space:nowrap}
+  .seletor-planilha:focus-visible{outline:2px solid var(--azul-acao);outline-offset:2px}
   .resultado-geral{
     display:flex;align-items:baseline;gap:.7rem;min-width:0;flex-wrap:wrap;
     margin:.1rem 0 .08rem;
@@ -729,5 +854,25 @@
     .grafico-barras{grid-template-columns:28px minmax(0,1fr);padding:.8rem .7rem .2rem}
     .grafico-area{grid-template-columns:repeat(24,minmax(4px,1fr));gap:.12rem}
     .grafico-coluna i{max-width:12px}
+  }
+
+  @media (max-width:1100px){
+    .tela-maquinas .topo{margin-left:0;width:100%}
+    .tela-maquinas main{margin-top:0}
+    .tela-maquinas .workspace{grid-template-columns:1fr}
+    .tela-maquinas .operacao{min-height:auto;padding-top:0}
+    .tela-maquinas .carteira-conteudo,
+    .tela-maquinas .diagnostico-conteudo{padding:1rem}
+    .painel-sidebar{
+      position:relative;height:auto;min-height:auto;padding:1.35rem 1rem;
+    }
+  }
+
+  @media (max-width:520px){
+    .lateral-marca{padding:.25rem .65rem 1rem}
+    .lateral-simbolo{width:38px;height:38px;flex-basis:38px}
+    .lateral-simbolo svg{width:36px;height:36px}
+    .lateral-nome{font-size:24px}
+    .painel-sidebar .maquina-linha{min-height:96px;padding:1rem .95rem}
   }
 

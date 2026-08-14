@@ -1,21 +1,17 @@
 {% extends "base.html" %}
 {% set pagina = 'painel' %}
-{% block titulo %}Operação - ACTA{% endblock %}
+{% set body_class = 'tela-maquinas' %}
+{% block titulo %}Máquinas - ACTA{% endblock %}
 
 {% block conteudo %}
-{% if mensagem_operacao %}
-<div class="aviso ok">{{ mensagem_operacao }}</div>
-{% endif %}
-{% if erro_operacao %}
-<div class="aviso erro">{{ erro_operacao }}</div>
-{% endif %}
-
-<div id="resumo" data-maquina="{{ selecionada_idx if selecionada_idx is not none else '' }}">
+<div id="resumo" data-maquina="{{ selecionada_idx if selecionada_idx is not none else '' }}"
+     data-arquivo="{{ arquivo_escolhido if arquivo_escolhido is not none else '' }}">
   {% include "_cards.html" %}
 </div>
 
 <script>
   const indiceMaquina = document.getElementById('resumo').dataset.maquina;
+  const arquivoEscolhido = document.getElementById('resumo').dataset.arquivo;
 
   function fixarLinkDoPainel() {
     const atual = new URL(window.location.href);
@@ -28,7 +24,14 @@
   }
 
   function rotaFragmento() {
-    return '/fragmento/resumo' + (indiceMaquina !== '' ? '?maquina=' + indiceMaquina : '');
+    // A planilha escolhida acompanha a recarga automática. Sem isso, a cada
+    // 5 segundos a tela voltaria sozinha para a que o robô está fazendo,
+    // no meio de uma conferência de outra.
+    const params = new URLSearchParams();
+    if (indiceMaquina !== '') params.set('maquina', indiceMaquina);
+    if (arquivoEscolhido !== '') params.set('arquivo', arquivoEscolhido);
+    const consulta = params.toString();
+    return '/fragmento/resumo' + (consulta ? '?' + consulta : '');
   }
 
   function formatarTempo(ms) {

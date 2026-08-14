@@ -70,9 +70,11 @@ class Panorama:
         return sum(r.por_desfecho.get(desfecho, 0) for r in self.resumos)
 
 
-def ler_panorama(cfg: Config) -> Panorama:
+def ler_panorama(cfg: Config, lote: int | None = None) -> Panorama:
     """Uma foto do estado atual. Nunca levanta exceção: banco ausente ou
-    ocupado devolve panorama vazio, e a tela mostra 'sem dados'."""
+    ocupado devolve panorama vazio, e a tela mostra 'sem dados'.
+
+    `lote` escolhe a planilha; sem ele vale a que está sendo processada."""
     try:
         conn = conectar_leitura(cfg.banco)
     except Exception:
@@ -81,9 +83,10 @@ def ler_panorama(cfg: Config) -> Panorama:
 
     try:
         idade = heartbeat.segundos_desde(conn, "orquestrador")
-        lotes = consultas.lotes(conn)
-        lote_id = lotes[0]["id"] if lotes else None
-        nome = (lotes[0]["arquivo_origem"] or lotes[0]["descricao"]) if lotes else "—"
+        em_foco = consultas.lote_em_foco(conn, lote)
+        lote_id = em_foco["id"] if em_foco is not None else None
+        nome = ((em_foco["arquivo_origem"] or em_foco["descricao"])
+                if em_foco is not None else "—")
         resumos = [consultas.resumo(conn, orgao, lote_id)
                    for orgao in consultas.orgaos_do_lote(conn, lote_id)]
         robo_ativo = idade is not None and idade <= cfg.alertas.heartbeat_timeout_s
@@ -113,14 +116,15 @@ def listar_itens(cfg: Config, **filtros) -> list:
         conn.close()
 
 
-def ler_atividade(cfg: Config, limite: int = 6) -> list[dict]:
+def ler_atividade(cfg: Config, limite: int = 6,
+                  lote_id: int | None = None) -> list[dict]:
     """As últimas consultas desta máquina. Nunca levanta exceção."""
     try:
         conn = conectar_leitura(cfg.banco)
     except Exception:
         return []
     try:
-        return consultas.ultimas_tentativas(conn, limite)
+        return consultas.ultimas_tentativas(conn, limite, lote_id)
     except Exception:
         return []
     finally:

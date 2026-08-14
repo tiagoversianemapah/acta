@@ -74,13 +74,18 @@ def montar(obter_config: Callable[[], Config],
     roteador = APIRouter(prefix="/api")
 
     @roteador.get("/estado")
-    def estado():
-        """Panorama da máquina: robô, lote atual e situação de cada órgão."""
+    def estado(lote: int | None = None):
+        """Panorama da máquina: robô, lote atual e situação de cada órgão.
+
+        `lote` escolhe de qual planilha são os números. Sem ele, vale a que
+        está sendo processada — ver consultas.lote_em_foco.
+        """
         cfg = obter_config()
         with contextlib.closing(abrir_leitura()) as conn:
             idade = heartbeat.segundos_desde(conn, "orquestrador")
             lotes = consultas.lotes(conn)
-            lote_id = lotes[0]["id"] if lotes else None
+            em_foco = consultas.lote_em_foco(conn, lote)
+            lote_id = em_foco["id"] if em_foco is not None else None
 
             orgaos = []
             for codigo in consultas.orgaos_do_lote(conn, lote_id):
@@ -131,12 +136,17 @@ def montar(obter_config: Callable[[], Config],
                 "robo_ativo": robo_ativo,
                 "ultimo_sinal_ha_s": round(idade) if idade is not None else None,
                 "lote_id": lote_id,
-                "lote_nome": (lotes[0]["arquivo_origem"] or lotes[0]["descricao"])
-                             if lotes else None,
+                "lote_nome": (em_foco["arquivo_origem"] or em_foco["descricao"])
+                             if em_foco is not None else None,
+                # Qual planilha o robô está emitindo AGORA, independente da
+                # que a tela mostra: é o que permite avisar quem está
+                # olhando um recorte parado que o trabalho corre em outro.
+                "lote_em_execucao": consultas.lote_em_execucao(conn),
                 # Vai junto do panorama, e não numa rota própria: a tela de
                 # máquinas mostra os dois lado a lado, e uma segunda ida à
                 # rede dobraria a espera de cada máquina consultada.
-                "atividade": consultas.ultimas_tentativas(conn, ITENS_DE_ATIVIDADE),
+                "atividade": consultas.ultimas_tentativas(
+                    conn, ITENS_DE_ATIVIDADE, lote_id),
                 # Os meses com certidão guardada. O pacote é entregue por
                 # mês, não por lote — cada máquina numera os lotes por conta,
                 # e "lote 7" não quer dizer nada fora dela.

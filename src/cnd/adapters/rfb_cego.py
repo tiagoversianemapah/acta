@@ -26,6 +26,7 @@ from __future__ import annotations
 import contextlib
 import json
 import random
+import re
 import shutil
 import subprocess
 import time
@@ -87,6 +88,7 @@ FRASES_BLOQUEIO_TEXTO = (
     "nao foi possivel emitir a certidao",
     "nao foi possivel concluir a acao para o contribuinte informado",
 )
+RE_CODIGO_033 = re.compile(r"\b033\b")
 
 # Pontos fora do centro da tela. O modal branco costuma cobrir o centro; o
 # veu escuro aparece melhor nas laterais.
@@ -154,12 +156,18 @@ def _mensagem_curta(texto: str) -> str:
 
 def _classificar_texto_portal(texto: str) -> str | None:
     normalizado = _normalizar_texto(texto)
-    if any(frase in normalizado for frase in FRASES_RETENTAR_TEXTO):
+    # Testada antes das outras: a faixa que pede a matriz é amarela igual à
+    # do bloqueio, e confundi-las faria o robô recuar e retentar quando o
+    # portal só estava dizendo qual CNPJ digitar.
+    if rfb_matriz.exige_matriz(normalizado):
+        return "matriz"
+    if (any(frase in normalizado for frase in FRASES_RETENTAR_TEXTO)
+            or RE_CODIGO_033.search(normalizado)):
         return "retentar"
-    if any(frase in normalizado for frase in FRASES_BLOQUEIO_TEXTO):
-        return "bloqueio"
     if FRASE_INSUFICIENTE in normalizado:
         return "insuficiente"
+    if any(frase in normalizado for frase in FRASES_BLOQUEIO_TEXTO):
+        return "bloqueio"
     return None
 
 
@@ -361,40 +369,39 @@ class AdapterRFBCego:
         self._ultimo_texto_portal = None
         try:
             doc_consulta, aviso_matriz = rfb_matriz.documento_para_consulta(doc)
-            self._focar()
-            entrada_real.ir_para_url(URL_FORMULARIO)
-            self._esperar_formulario()
+            documento = doc_consulta.documento
 
-            self._limpar_downloads_antigos(doc_consulta.documento)
+            reacao, caminho_baixado = self._submeter(documento)
 
-            # Digitar o CNPJ
-            self._exigir_foco()
-            entrada_real.clicar(*self._ponto("campo_cnpj"))
-            time.sleep(random.uniform(0.2, 0.5))
-            entrada_real.limpar_campo()
-            entrada_real.digitar(doc_consulta.documento)
-            time.sleep(random.uniform(0.7, 1.8))     # confere o que digitou
+            # O portal pediu a matriz. Não é bloqueio nem pendência: é ele
+            # dizendo qual CNPJ digitar, e o número vem escrito na faixa.
+            # Refazemos a consulta com o número dele — uma vez só.
+            if reacao == "matriz":
+                matriz = rfb_matriz.matriz_exigida_no_texto(
+                    self._ultimo_texto_portal or ""
+                )
+                if matriz and matriz != documento:
+                    log.info("portal_pediu_o_cnpj_da_matriz",
+                             extra={"orgao": self.orgao, "digitado": documento,
+                                    "matriz": matriz})
+                    aviso_matriz = rfb_matriz.mensagem_de_matriz(
+                        doc.documento, matriz)
+                    documento = matriz
+                    reacao, caminho_baixado = self._submeter(documento)
 
-            # Enviar
-            self._exigir_foco()
-            entrada_real.clicar(*self._ponto("botao_emitir"))
-
-            reacao, caminho_baixado = self._aguardar_reacao(doc_consulta.documento)
-
-            if reacao == "modal":
-                # Regra de negócio: sempre emitir nova. A certidão vale 180
-                # dias, mas quem recebe exige emissão do mês corrente.
-                log.info("modal_certidao_vigente", extra={"orgao": self.orgao})
-                time.sleep(random.uniform(*PAUSA_ANTES_EMITIR_NOVA_S))
-                self._exigir_foco()
-                entrada_real.clicar(*self._ponto("botao_emitir_nova"))
-                # Depois da janelinha já sabemos que a emissão está em curso:
-                # vale esperar mais, porque o processamento é assíncrono e o
-                # download vem só no fim.
-                reacao, caminho_baixado = self._aguardar_reacao(
-                    doc_consulta.documento,
-                    aceitar_modal=False,
-                    segundos=TEMPO_PDF_S,
+            # Insistiu, ou não deu para ler qual é a matriz: repetir de novo
+            # só gastaria tentativa com a mesma resposta.
+            if reacao == "matriz":
+                return rfb_matriz.anotar_matriz(
+                    ResultadoTentativa(
+                        Desfecho.PENDENCIA_MANUAL,
+                        mensagem_portal=(
+                            _mensagem_curta(self._ultimo_texto_portal or "")
+                            or "o portal exige emitir pelo CNPJ da matriz"
+                        ),
+                        evidencia=self._print(doc, "exige-matriz"),
+                    ),
+                    aviso_matriz,
                 )
 
             if caminho_baixado is not None:
@@ -416,6 +423,51 @@ class AdapterRFBCego:
                 mensagem_portal=f"{type(erro).__name__}: {erro}"[:400],
                 evidencia=self._print(doc, "erro"),
             )
+
+    # ------------------------------------------------------------------
+    def _submeter(self, documento: str) -> tuple[str, Path | None]:
+        """Um ciclo completo do formulário: digita o CNPJ, emite e espera.
+
+        Separado do `emitir` porque o portal pode mandar refazer a consulta
+        com outro número — o da matriz —, e refazer significa voltar ao
+        formulário do zero, não reaproveitar a tela de resultado.
+        """
+        self._ultimo_texto_portal = None
+        self._focar()
+        entrada_real.ir_para_url(URL_FORMULARIO)
+        self._esperar_formulario()
+
+        self._limpar_downloads_antigos(documento)
+
+        # Digitar o CNPJ
+        self._exigir_foco()
+        entrada_real.clicar(*self._ponto("campo_cnpj"))
+        time.sleep(random.uniform(0.2, 0.5))
+        entrada_real.limpar_campo()
+        entrada_real.digitar(documento)
+        time.sleep(random.uniform(0.7, 1.8))     # confere o que digitou
+
+        # Enviar
+        self._exigir_foco()
+        entrada_real.clicar(*self._ponto("botao_emitir"))
+
+        reacao, caminho_baixado = self._aguardar_reacao(documento)
+
+        if reacao == "modal":
+            # Regra de negócio: sempre emitir nova. A certidão vale 180
+            # dias, mas quem recebe exige emissão do mês corrente.
+            log.info("modal_certidao_vigente", extra={"orgao": self.orgao})
+            time.sleep(random.uniform(*PAUSA_ANTES_EMITIR_NOVA_S))
+            self._exigir_foco()
+            entrada_real.clicar(*self._ponto("botao_emitir_nova"))
+            # Depois da janelinha já sabemos que a emissão está em curso:
+            # vale esperar mais, porque o processamento é assíncrono e o
+            # download vem só no fim.
+            reacao, caminho_baixado = self._aguardar_reacao(
+                documento, aceitar_modal=False, segundos=TEMPO_PDF_S,
+            )
+
+        return reacao, caminho_baixado
 
     # ------------------------------------------------------------------
     def _focar(self) -> None:
@@ -508,7 +560,7 @@ class AdapterRFBCego:
         Olhar as três ao mesmo tempo também evita o desperdício oposto:
         empresas sem certidão vigente não pagam a espera da janelinha.
 
-        Devolve ('modal' | 'pdf' | 'bloqueio' | 'texto' | 'nada',
+        Devolve ('modal' | 'pdf' | 'bloqueio' | 'matriz' | 'texto' | 'nada',
         caminho_do_pdf).
         """
         inicio = time.monotonic()
@@ -542,9 +594,20 @@ class AdapterRFBCego:
                                     "em_s": round(agora - inicio, 1)})
                     return "modal", None
 
-            # 3. Faixa de aviso no topo: o portal nos barrou.
+            # 3. Faixa de aviso no topo: o portal nos barrou — ou está
+            #    pedindo o CNPJ da matriz. As duas faixas são amarelas e a
+            #    cor não as separa; só o texto separa. Ler antes de concluir
+            #    evita punir o ritmo por uma instrução de negócio.
             tipo, cor_faixa = self._alerta_na_imagem(imagem)
             if tipo:
+                texto = self._texto_da_pagina()
+                if _classificar_texto_portal(texto) == "matriz":
+                    self._ultimo_texto_portal = texto
+                    log.info("faixa_pede_o_cnpj_da_matriz",
+                             extra={"orgao": self.orgao,
+                                    "em_s": round(agora - inicio, 1),
+                                    "texto": _mensagem_curta(texto)})
+                    return "matriz", None
                 log.warning("faixa_de_alerta_detectada",
                             extra={"orgao": self.orgao, "cor": cor_faixa,
                                    "tipo": tipo,
@@ -561,7 +624,7 @@ class AdapterRFBCego:
                                        "tipo": tipo_texto,
                                        "em_s": round(agora - inicio, 1),
                                        "texto": _mensagem_curta(texto)})
-                    return "texto", None
+                    return ("matriz" if tipo_texto == "matriz" else "texto"), None
                 proxima_leitura_texto = agora + INTERVALO_LEITURA_TEXTO_S
 
             time.sleep(INTERVALO_MODAL_S)
@@ -675,9 +738,22 @@ class AdapterRFBCego:
                 mensagem_portal=mensagem,
                 evidencia=evidencia,
             )
-        if tipo == "insuficiente":
+        if tipo == "matriz":
             return ResultadoTentativa(
                 Desfecho.PENDENCIA_MANUAL,
+                mensagem_portal=_mensagem_curta(texto) or (
+                    "o portal exige emitir pelo CNPJ da matriz"
+                ),
+                evidencia=evidencia,
+            )
+        if tipo == "insuficiente":
+            # "As informações disponíveis ... são insuficientes para emitir a
+            # certidão pela Internet" é como o portal recusa quem tem débito:
+            # é POSITIVA, e não pendência de cadastro. A diferença importa na
+            # entrega — positiva é o resultado que IMPEDE mandar ao cliente,
+            # enquanto pendência manual só pede que alguém vá ao e-CAC.
+            return ResultadoTentativa(
+                Desfecho.POSITIVA,
                 mensagem_portal=_mensagem_curta(texto) or (
                     "informações insuficientes para emitir a certidão pela internet"
                 ),
@@ -753,13 +829,16 @@ class AdapterRFBCego:
             return self._resultado_bloqueio(
                 doc, tipo, cor, evidencia, presumido=True)
 
-        # Sem faixa de bloqueio e sem PDF é o padrão da tela de informações
-        # insuficientes no fluxo cego. É conclusivo: insistir gastaria
-        # tentativas repetindo uma resposta de negócio.
+        # Sem PDF, sem faixa e sem texto legível: o robô não sabe o que a
+        # tela mostrava. Vai para conferência manual, e não para POSITIVA —
+        # dizer que um cliente tem débito com base em chute é o erro mais
+        # caro que este programa pode cometer. Ainda assim é conclusivo:
+        # insistir repetiria a mesma tela sem aprender nada.
         return ResultadoTentativa(
             Desfecho.PENDENCIA_MANUAL,
             mensagem_portal=(
-                "informações insuficientes para emitir a certidão pela internet"
+                "sem PDF e sem faixa de alerta; não foi possível ler a tela "
+                "do portal para classificar"
             ),
             evidencia=evidencia,
         )

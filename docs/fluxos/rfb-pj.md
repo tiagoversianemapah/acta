@@ -28,7 +28,8 @@ flowchart TD
     F --> G[/'Estamos analisando<br/>seu pedido. Aguarde.'/]
     G --> H{texto do resultado}
     H -->|'emitida com sucesso'| I[PDF baixa sozinho]
-    H -->|'informações insuficientes'| J[PENDENCIA_MANUAL]
+    H -->|'informações insuficientes'| J[POSITIVA]
+    H -->|'emitir para o CNPJ da matriz'| P[repete com o CNPJ indicado]
     H -->|desconhecido| K[ERRO_TECNICO + evidência]
     I --> L{título do PDF}
     L -->|'certidão negativa de débitos'| M[NEGATIVA]
@@ -59,7 +60,14 @@ site quebra linha no meio das frases.
 |---|---|
 | Processando (tela intermediária) | `estamos analisando seu pedido` |
 | Emitida | `certidão foi emitida com sucesso` |
-| Sem condição de emitir online | `são insuficientes para emitir a certidão pela internet` |
+| Recusa por débito (vira `POSITIVA`) | `são insuficientes para emitir a certidão pela internet` |
+| CNPJ de filial (faixa amarela) | `a certidão deve ser emitida para o CNPJ da matriz` |
+
+A faixa que pede a matriz é **amarela igual à do bloqueio 023**: a cor não as
+separa, só o texto. O robô lê a faixa antes de concluir; se for pedido de
+matriz, refaz a consulta com o CNPJ que o portal escreveu, em vez de
+desacelerar o ritmo e retentar. Uma repetição só — se o portal pedir de novo
+o mesmo número, o item vai para conferência manual.
 
 A tela de "aguarde" é a armadilha do fluxo: lê-la como resultado classificaria
 o job errado **sem quebrar nada** — falha silenciosa. Por isso o adapter fica
