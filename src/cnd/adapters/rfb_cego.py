@@ -37,7 +37,7 @@ from pathlib import Path
 from cnd.adapters import rfb_matriz
 from cnd.adapters.rfb_pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
-from cnd.infra import entrada_real, tela
+from cnd.infra import cookies, entrada_real, tela
 from cnd.infra.arquivos import caminho_certidao
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.log import obter
@@ -45,6 +45,7 @@ from cnd.infra.log import obter
 log = obter("adapter.rfb_cego")
 
 URL_FORMULARIO = "https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj"
+DOMINIO_PORTAL = "receitafederal.gov.br"
 
 # A janela é localizada pelo PROGRAMA, não pelo título: o título de um
 # navegador muda a cada página ("Serviços da Receita Federal" na home,
@@ -87,6 +88,14 @@ FRASES_BLOQUEIO_TEXTO = (
     "tente novamente em alguns minutos",
     "nao foi possivel emitir a certidao",
     "nao foi possivel concluir a acao para o contribuinte informado",
+)
+# Página do nginx, servida antes de a aplicação do portal rodar. Não é
+# recado da Receita sobre a empresa: é o cabeçalho de cookies da NOSSA
+# sessão passando do limite do servidor. Some ao apagar os cookies do
+# domínio — ver infra/cookies.py.
+FRASES_COOKIE_GRANDE = (
+    "request header or cookie too large",
+    "400 bad request",
 )
 RE_CODIGO_033 = re.compile(r"\b033\b")
 
@@ -156,6 +165,11 @@ def _mensagem_curta(texto: str) -> str:
 
 def _classificar_texto_portal(texto: str) -> str | None:
     normalizado = _normalizar_texto(texto)
+    # Testada primeiro: nesta tela o portal nem chegou a rodar, então nada
+    # do que vem depois pode estar escrito nela. É falha nossa de sessão, e
+    # tem conserto — não é resposta sobre a empresa.
+    if any(frase in normalizado for frase in FRASES_COOKIE_GRANDE):
+        return "cookies"
     # Testada antes das outras: a faixa que pede a matriz é amarela igual à
     # do bloqueio, e confundi-las faria o robô recuar e retentar quando o
     # portal só estava dizendo qual CNPJ digitar.
@@ -271,6 +285,10 @@ class AdapterRFBCego:
     caminho_calibragem: Path
     _calibragem: Calibragem | None = field(default=None, repr=False)
     _ultimo_texto_portal: str | None = field(default=None, repr=False)
+    # Ligado quando o portal recusou por cabeçalho grande: a próxima
+    # reabertura de sessão precisa apagar os cookies do domínio, senão o
+    # navegador volta com o mesmo cabeçalho e toma o mesmo 400.
+    _cookies_estourados: bool = field(default=False, repr=False)
 
     # ------------------------------------------------------------------
     # Ciclo de vida
@@ -350,7 +368,32 @@ class AdapterRFBCego:
         """Fecha e reabre o navegador (Alt+F4 na janela, depois abre de novo)."""
         log.info("reiniciando_sessao", extra={"orgao": self.orgao})
         self.encerrar()
+        if self._cookies_estourados:
+            self._limpar_cookies_do_portal()
         time.sleep(2)
+        self._abrir_navegador()
+
+    def _limpar_cookies_do_portal(self) -> None:
+        """Apaga do disco os cookies da Receita. Exige o Edge já fechado."""
+        self._cookies_estourados = False
+        try:
+            removidos = cookies.limpar_dominio(DOMINIO_PORTAL)
+        except Exception:
+            log.exception("falha_ao_apagar_cookies", extra={"orgao": self.orgao})
+            return
+        log.warning("cookies_do_portal_apagados",
+                    extra={"orgao": self.orgao, "dominio": DOMINIO_PORTAL,
+                           "removidos": removidos})
+
+    def _recomecar_sem_cookies(self) -> None:
+        """Sessão nova e limpa, no meio da tentativa.
+
+        Vale interromper o item para fazer isto: enquanto o cabeçalho
+        estiver grande, o portal responde 400 a TODAS as consultas — e cada
+        uma gastaria 65 segundos para terminar sem resposta.
+        """
+        self.encerrar()
+        self._limpar_cookies_do_portal()
         self._abrir_navegador()
 
     def encerrar(self) -> None:
@@ -372,6 +415,18 @@ class AdapterRFBCego:
             documento = doc_consulta.documento
 
             reacao, caminho_baixado = self._submeter(documento)
+
+            # 400 do nginx por cabeçalho grande. Cookie acumulado é problema
+            # nosso e tem conserto imediato: limpa, reabre e refaz a consulta
+            # na hora, em vez de devolver o item para a fila e esperar.
+            if reacao == "cookies":
+                log.warning("portal_recusou_por_cookie_grande",
+                            extra={"orgao": self.orgao,
+                                   "documento": documento,
+                                   "texto": _mensagem_curta(
+                                       self._ultimo_texto_portal or "")})
+                self._recomecar_sem_cookies()
+                reacao, caminho_baixado = self._submeter(documento)
 
             # O portal pediu a matriz. Não é bloqueio nem pendência: é ele
             # dizendo qual CNPJ digitar, e o número vem escrito na faixa.
@@ -400,6 +455,25 @@ class AdapterRFBCego:
                             or "o portal exige emitir pelo CNPJ da matriz"
                         ),
                         evidencia=self._print(doc, "exige-matriz"),
+                    ),
+                    aviso_matriz,
+                )
+
+            # Limpar os cookies não resolveu. Vira erro técnico — que é
+            # retentável — em vez de resposta sobre a empresa: o portal não
+            # chegou a olhar o CNPJ.
+            if reacao == "cookies":
+                self._cookies_estourados = True
+                return rfb_matriz.anotar_matriz(
+                    ResultadoTentativa(
+                        Desfecho.ERRO_TECNICO,
+                        mensagem_portal=(
+                            "o portal recusou a requisição por cabeçalho de "
+                            "cookies grande, mesmo com a sessão limpa: "
+                            + (_mensagem_curta(self._ultimo_texto_portal or "")
+                               or "400 Bad Request")
+                        )[:400],
+                        evidencia=self._print(doc, "cookie-grande"),
                     ),
                     aviso_matriz,
                 )
@@ -435,7 +509,11 @@ class AdapterRFBCego:
         self._ultimo_texto_portal = None
         self._focar()
         entrada_real.ir_para_url(URL_FORMULARIO)
-        self._esperar_formulario()
+        if not self._esperar_formulario() and self._recusado_por_cookies():
+            # Sem esta saída, o robô digitaria o CNPJ na página de erro do
+            # nginx e esperaria 45 segundos por um PDF impossível — foi o que
+            # transformou um lote inteiro em "não consegui ler a tela".
+            return "cookies", None
 
         self._limpar_downloads_antigos(documento)
 
@@ -624,7 +702,9 @@ class AdapterRFBCego:
                                        "tipo": tipo_texto,
                                        "em_s": round(agora - inicio, 1),
                                        "texto": _mensagem_curta(texto)})
-                    return ("matriz" if tipo_texto == "matriz" else "texto"), None
+                    if tipo_texto in ("matriz", "cookies"):
+                        return tipo_texto, None
+                    return "texto", None
                 proxima_leitura_texto = agora + INTERVALO_LEITURA_TEXTO_S
 
             time.sleep(INTERVALO_MODAL_S)
@@ -698,6 +778,19 @@ class AdapterRFBCego:
                 return tipo, primeira_cor[tipo]
         return None, None
 
+    def _recusado_por_cookies(self) -> bool:
+        """A tela é a página de erro do nginx, e não o formulário?
+
+        Só é chamada quando o formulário não apareceu, porque ler a página
+        custa um Ctrl+A/Ctrl+C — e o formulário aparecendo é o caso comum.
+        """
+        texto = self._texto_da_pagina()
+        if _classificar_texto_portal(texto) != "cookies":
+            return False
+        self._ultimo_texto_portal = texto
+        self._cookies_estourados = True
+        return True
+
     def _texto_da_pagina(self) -> str:
         """Seleciona/copia a pagina para ler mensagens sem automacao do browser."""
         try:
@@ -726,6 +819,22 @@ class AdapterRFBCego:
         self, doc: Documento, texto: str, evidencia: Path | None
     ) -> ResultadoTentativa | None:
         tipo = _classificar_texto_portal(texto)
+        if tipo == "cookies":
+            # Erro técnico, não resposta do órgão: o portal recusou a
+            # requisição antes de olhar o CNPJ. A sessão seguinte já nasce
+            # sem os cookies que estouraram o cabeçalho.
+            self._cookies_estourados = True
+            log.warning("cookie_grande_detectado_no_diagnostico",
+                        extra={"documento": doc.documento,
+                               "texto": _mensagem_curta(texto)})
+            return ResultadoTentativa(
+                Desfecho.ERRO_TECNICO,
+                mensagem_portal=(
+                    "o portal recusou a requisição por cabeçalho de cookies "
+                    "grande; a sessão será limpa antes da próxima tentativa"
+                ),
+                evidencia=evidencia,
+            )
         if tipo == "bloqueio":
             mensagem = _mensagem_curta(texto) or (
                 "portal pediu para tentar novamente em alguns minutos"
@@ -830,12 +939,19 @@ class AdapterRFBCego:
                 doc, tipo, cor, evidencia, presumido=True)
 
         # Sem PDF, sem faixa e sem texto legível: o robô não sabe o que a
-        # tela mostrava. Vai para conferência manual, e não para POSITIVA —
-        # dizer que um cliente tem débito com base em chute é o erro mais
-        # caro que este programa pode cometer. Ainda assim é conclusivo:
-        # insistir repetiria a mesma tela sem aprender nada.
+        # tela mostrava. Não vira POSITIVA — dizer que um cliente tem débito
+        # com base em chute é o erro mais caro que este programa pode
+        # cometer — nem conclui como pendência manual.
+        #
+        # Era PENDENCIA_MANUAL até 15/08/2026, sob o argumento de que
+        # insistir repetiria a mesma tela. O lote daquele dia mostrou o
+        # contrário: dezenas de itens seguidos caíram aqui porque o portal
+        # devolvia 400 do nginx, e uma tentativa com sessão nova resolvia
+        # todos. Como erro técnico, o item volta para a fila (5s, 30s, 120s)
+        # e a sessão é reiniciada entre as tentativas; se as três falharem,
+        # aí sim ele aparece no painel para alguém olhar.
         return ResultadoTentativa(
-            Desfecho.PENDENCIA_MANUAL,
+            Desfecho.ERRO_TECNICO,
             mensagem_portal=(
                 "sem PDF e sem faixa de alerta; não foi possível ler a tela "
                 "do portal para classificar"

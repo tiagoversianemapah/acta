@@ -165,6 +165,50 @@ def test_reenfileirar_falhados_respeita_lote(conn, lote):
     assert status_outro == Status.FAILED
 
 
+def test_reenfileirar_recupera_quem_ficou_com_a_tela_ilegivel(conn, lote):
+    """Item encerrado porque o robô não leu a tela não é resposta do órgão.
+    Antes ficava para sempre como pendência manual — pendência que ninguém
+    tinha como tratar, porque no e-CAC não havia nada."""
+    criar_job(conn, lote)
+    job = fila.reivindicar(conn, "FAKE")
+    tentativa = fila.abrir_tentativa(conn, job, worker=0)
+    fila.fechar_tentativa(conn, tentativa, ResultadoTentativa(
+        Desfecho.PENDENCIA_MANUAL,
+        mensagem_portal=("sem PDF e sem faixa de alerta; não foi possível "
+                         "ler a tela do portal para classificar"),
+    ))
+    fila.concluir(conn, job, ResultadoTentativa(Desfecho.PENDENCIA_MANUAL))
+
+    quantidade = fila.reenfileirar_falhados(conn, "FAKE")
+
+    linha = conn.execute(
+        "SELECT status, tentativas, desfecho FROM job WHERE id = ?",
+        (job.job_id,),
+    ).fetchone()
+    assert quantidade == 1
+    assert linha["status"] == Status.PENDING
+    assert linha["tentativas"] == 0
+    assert linha["desfecho"] is None
+
+
+def test_reenfileirar_nao_mexe_em_pendencia_manual_de_verdade(conn, lote):
+    """Quem exige atendimento no e-CAC continua encerrado: reenviar só
+    gastaria consulta para receber a mesma resposta."""
+    criar_job(conn, lote)
+    job = fila.reivindicar(conn, "FAKE")
+    tentativa = fila.abrir_tentativa(conn, job, worker=0)
+    fila.fechar_tentativa(conn, tentativa, ResultadoTentativa(
+        Desfecho.PENDENCIA_MANUAL,
+        mensagem_portal="o portal exige emitir pelo CNPJ da matriz",
+    ))
+    fila.concluir(conn, job, ResultadoTentativa(Desfecho.PENDENCIA_MANUAL))
+
+    assert fila.reenfileirar_falhados(conn, "FAKE") == 0
+    assert conn.execute(
+        "SELECT status FROM job WHERE id = ?", (job.job_id,)
+    ).fetchone()["status"] == Status.DONE
+
+
 def test_ha_trabalho(conn, lote):
     assert fila.ha_trabalho(conn, "FAKE") is False
 

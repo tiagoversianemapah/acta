@@ -18,6 +18,14 @@ negócio** e **falha de processo** (RF-04) nasce aqui:
 > órgão sobre aquela empresa naquele momento. Reprocessá-las automaticamente não
 > muda o resultado — elas vão direto para o relatório.
 
+Só entra em `PENDENCIA_MANUAL` o que o robô **leu** na tela. Tela que ele não
+conseguiu ler é `ERRO_TECNICO`, mesmo sem exceção nenhuma: em 15/08/2026 o
+portal passou a responder `400 Bad Request — Request Header Or Cookie Too
+Large` (nginx recusando por cookie acumulado no perfil do Edge), e uma
+sequência inteira de empresas foi encerrada como pendência que não existia.
+Nesse caso específico o adapter cego limpa os cookies do domínio, reabre o
+navegador e refaz a consulta na hora — ver `infra/cookies.py`.
+
 ## 2. Máquina de estados do job
 
 ```mermaid
@@ -37,7 +45,9 @@ stateDiagram-v2
     end note
     note right of FAILED
         Reenfileirável manualmente
-        pelo dashboard
+        pelo dashboard, junto com os
+        DONE que ficaram sem leitura
+        da tela
     end note
 ```
 

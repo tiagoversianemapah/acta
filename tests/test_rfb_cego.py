@@ -21,7 +21,12 @@ from cnd.adapters.rfb_cego import (
     _ponto_fracionario,
     _tem_veu_modal,
 )
-from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
+from cnd.core.modelos import (
+    RETENTAVEIS,
+    Desfecho,
+    Documento,
+    ResultadoTentativa,
+)
 from cnd.infra import tela
 
 BRANCO = (255, 255, 255)
@@ -552,11 +557,12 @@ class TestFaixaDeAlertaDoPortal:
         assert resultado.desfecho == Desfecho.POSITIVA
         assert "insuficientes" in resultado.mensagem_portal
 
-    def test_sem_pdf_sem_faixa_e_sem_texto_vai_para_conferencia(
+    def test_sem_pdf_sem_faixa_e_sem_texto_volta_para_a_fila(
         self, monkeypatch, tmp_path
     ):
-        """Sem nada legível na tela, o robô não chuta POSITIVA: dizer que um
-        cliente tem débito sem ter lido a resposta é o erro mais caro."""
+        """Sem nada legível na tela, o robô não chuta POSITIVA — mas também
+        não encerra o item: tela ilegível quase sempre foi sessão ruim, e
+        uma tentativa nova costuma resolver (lote de 15/08/2026)."""
         cfg = SimpleNamespace(pasta_evidencias=tmp_path)
         doc = SimpleNamespace(documento="12345678000199")
         adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
@@ -573,8 +579,182 @@ class TestFaixaDeAlertaDoPortal:
 
         resultado = adapter._diagnosticar_falha(doc)
 
-        assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert resultado.desfecho == Desfecho.ERRO_TECNICO
+        assert resultado.desfecho in RETENTAVEIS
         assert "não foi possível ler a tela" in resultado.mensagem_portal
+
+
+PAGINA_400 = "400 Bad Request\nRequest Header Or Cookie Too Large\nnginx/1.28.3"
+
+
+class TestCabecalhoDeCookiesGrande:
+    """O portal devolve 400 do nginx quando os cookies acumulados passam do
+    limite dele. Não é resposta sobre a empresa: é sessão nossa a limpar.
+
+    Em 15/08/2026 isso derrubou uma sequência inteira de itens, todos
+    encerrados como "não consegui ler a tela" — sem nenhuma nova tentativa.
+    """
+
+    def _adapter(self, tmp_path) -> AdapterRFBCego:
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        return adapter
+
+    def test_pagina_do_nginx_e_reconhecida(self):
+        assert _classificar_texto_portal(PAGINA_400) == "cookies"
+
+    def test_texto_do_portal_continua_valendo_mais_que_o_400(self):
+        """A classificação de cookies vem primeiro; não pode engolir uma
+        resposta de verdade que por acaso cite outro assunto."""
+        texto = (
+            "As informações disponíveis na Receita Federal sobre o "
+            "contribuinte são insuficientes para emitir a certidão pela "
+            "internet."
+        )
+
+        assert _classificar_texto_portal(texto) == "insuficiente"
+
+    def test_formulario_que_nao_abre_por_400_nao_digita_o_cnpj(
+        self, monkeypatch, tmp_path
+    ):
+        """Digitar na página de erro custava 45s de espera por um PDF que
+        nunca viria — e terminava sem saber o que houve."""
+        adapter = self._adapter(tmp_path)
+        digitou = []
+
+        monkeypatch.setattr(adapter, "_focar", lambda: None)
+        monkeypatch.setattr(adapter, "_esperar_formulario", lambda: False)
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: PAGINA_400)
+        monkeypatch.setattr(rfb_cego.entrada_real, "ir_para_url",
+                            lambda _url: None)
+        monkeypatch.setattr(rfb_cego.entrada_real, "digitar",
+                            lambda texto, **_kw: digitou.append(texto))
+
+        reacao, caminho = adapter._submeter("12345678000199")
+
+        assert (reacao, caminho) == ("cookies", None)
+        assert digitou == []
+        assert adapter._cookies_estourados
+
+    def test_emitir_limpa_os_cookies_e_tenta_de_novo(self, monkeypatch, tmp_path):
+        adapter = self._adapter(tmp_path)
+        doc = Documento(empresa_id=1, documento="04401250000194",
+                        tipo="CNPJ", nome="EMPRESA TESTE")
+        pdf = tmp_path / "Certidao.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+        passos = []
+
+        def submeter(documento):
+            passos.append(("submeter", documento))
+            return ("cookies", None) if len(passos) == 1 else ("pdf", pdf)
+
+        monkeypatch.setattr(adapter, "_submeter", submeter)
+        monkeypatch.setattr(adapter, "encerrar",
+                            lambda: passos.append(("encerrar",)))
+        monkeypatch.setattr(adapter, "_abrir_navegador",
+                            lambda: passos.append(("abrir",)))
+        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+                            lambda dominio: passos.append(("limpar", dominio)) or 42)
+        monkeypatch.setattr(
+            adapter, "_ler_pdf",
+            lambda _caminho, _doc: ResultadoTentativa(Desfecho.NEGATIVA,
+                                                     caminho_pdf=pdf),
+        )
+
+        resultado = adapter.emitir(doc)
+
+        assert resultado.desfecho == Desfecho.NEGATIVA
+        # Fechar o Edge ANTES de apagar: o banco de cookies fica travado
+        # enquanto ele roda, e a limpeza sairia sem efeito.
+        assert passos == [
+            ("submeter", "04401250000194"),
+            ("encerrar",),
+            ("limpar", rfb_cego.DOMINIO_PORTAL),
+            ("abrir",),
+            ("submeter", "04401250000194"),
+        ]
+        assert not adapter._cookies_estourados
+
+    def test_400_que_insiste_vira_erro_tecnico_e_nao_resposta_do_orgao(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        doc = Documento(empresa_id=1, documento="04401250000194",
+                        tipo="CNPJ", nome="EMPRESA TESTE")
+
+        monkeypatch.setattr(adapter, "_submeter",
+                            lambda _documento: ("cookies", None))
+        monkeypatch.setattr(adapter, "_recomecar_sem_cookies", lambda: None)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "p.png")
+
+        resultado = adapter.emitir(doc)
+
+        assert resultado.desfecho == Desfecho.ERRO_TECNICO
+        assert resultado.desfecho in RETENTAVEIS
+        assert "cookies" in resultado.mensagem_portal
+        # A próxima sessão precisa nascer limpa, senão repete o mesmo 400.
+        assert adapter._cookies_estourados
+
+    def test_reiniciar_sessao_apaga_cookies_quando_o_cabecalho_estourou(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        adapter._cookies_estourados = True
+        passos = []
+
+        monkeypatch.setattr(adapter, "encerrar",
+                            lambda: passos.append("encerrar"))
+        monkeypatch.setattr(adapter, "_abrir_navegador",
+                            lambda: passos.append("abrir"))
+        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+                            lambda _dominio: passos.append("limpar") or 7)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        adapter.reiniciar_sessao()
+
+        assert passos == ["encerrar", "limpar", "abrir"]
+
+    def test_reiniciar_sessao_normal_nao_mexe_nos_cookies(
+        self, monkeypatch, tmp_path
+    ):
+        """Bloqueio 106 ou captcha não são problema de cookie — apagar a cada
+        reinício jogaria fora a sessão que faz o robô parecer recorrente."""
+        adapter = self._adapter(tmp_path)
+        passos = []
+
+        monkeypatch.setattr(adapter, "encerrar",
+                            lambda: passos.append("encerrar"))
+        monkeypatch.setattr(adapter, "_abrir_navegador",
+                            lambda: passos.append("abrir"))
+        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+                            lambda _dominio: passos.append("limpar") or 0)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        adapter.reiniciar_sessao()
+
+        assert passos == ["encerrar", "abrir"]
+
+    def test_400_lido_no_diagnostico_tambem_volta_para_a_fila(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        doc = SimpleNamespace(documento="12345678000199")
+        adapter._ultimo_texto_portal = PAGINA_400
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "p.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.ERRO_TECNICO
+        assert adapter._cookies_estourados
 
 
 BANNER_MATRIZ = (

@@ -2470,17 +2470,20 @@ class Aplicativo(ctk.CTk):
         self._recarregar_itens()
 
     def _reenfileirar(self) -> None:
-        """Devolve à fila o que esgotou as tentativas.
+        """Devolve à fila o que ficou sem resposta do órgão.
 
         Zera o contador: são itens que falharam por motivo já resolvido —
         portal fora do ar, máquina reiniciada — e merecem as três tentativas
-        de novo, não a última que sobrou.
+        de novo, não a última que sobrou. Entram aqui também os itens que o
+        robô encerrou sem conseguir ler a tela, que nunca foram resposta
+        sobre a empresa.
         """
         if not messagebox.askyesno(
             "Tentar de novo",
-            "Devolver à fila os itens que esgotaram as tentativas?\n\n"
-            "Eles voltam a ser consultados na próxima execução do robô, "
-            "com o contador de tentativas zerado."
+            "Devolver à fila os itens que ficaram sem resposta do órgão?\n\n"
+            "Entram os que esgotaram as tentativas e os que o robô encerrou "
+            "sem conseguir ler a tela do portal. Eles voltam a ser "
+            "consultados na próxima execução, com o contador zerado."
         ):
             return
 

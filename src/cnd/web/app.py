@@ -961,7 +961,7 @@ def acao_reenfileirar(
             "/jobs",
             maquina=maquina or None,
             arquivo=arquivo or None,
-            mensagem=f"{quantidade} falha(s) reenviada(s).",
+            mensagem=f"{quantidade} item(ns) de volta na fila.",
         ),
         status_code=303,
     )

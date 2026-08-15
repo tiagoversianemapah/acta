@@ -223,32 +223,65 @@ def recuperar_orfaos(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
+# Como o adapter descreve a tela que não conseguiu ler. Itens encerrados
+# com esta mensagem não são resposta do órgão sobre a empresa: são consulta
+# perdida, e voltam para a fila junto com os que falharam.
+MENSAGEM_TELA_ILEGIVEL = "não foi possível ler a tela"
+
+
 def reenfileirar_falhados(
     conn: sqlite3.Connection, orgao: str | None = None,
     lote_id: int | None = None,
 ) -> int:
-    """Devolve jobs FAILED para a fila, zerando o contador de tentativas.
-    Usado pelo painel depois que a causa da falha foi corrigida."""
-    agora = tempo.agora_iso()
-    condicoes = ["status = ?"]
-    args: list = [Status.FAILED]
-    if orgao:
-        condicoes.append("orgao = ?")
-        args.append(orgao)
-    if lote_id:
-        condicoes.append("lote_id = ?")
-        args.append(lote_id)
+    """Devolve para a fila o que não teve resposta, zerando as tentativas.
 
-    where = " AND ".join(condicoes)
+    São dois grupos, e os dois são a mesma coisa para quem opera: consulta
+    que não produziu certidão nem recado do órgão.
+
+      · jobs FAILED — esgotaram as três tentativas;
+      · jobs encerrados como pendência manual só porque o robô não
+        conseguiu ler a tela. Até 15/08/2026 esse caso era conclusivo, e um
+        lote inteiro parou lá quando o portal passou a devolver 400 do
+        nginx (ver adapters/rfb_cego.py). Eles ficariam para sempre no
+        relatório como pendência que ninguém tem como tratar — o e-CAC não
+        mostra nada, porque nunca houve pendência.
+
+    Usado pelo painel depois que a causa da falha foi corrigida.
+    """
+    agora = tempo.agora_iso()
+    filtros: list[str] = []
+    filtros_args: list = []
+    if orgao:
+        filtros.append("orgao = ?")
+        filtros_args.append(orgao)
+    if lote_id:
+        filtros.append("lote_id = ?")
+        filtros_args.append(lote_id)
+    recorte = "".join(f" AND {condicao}" for condicao in filtros)
+
     cursor = conn.execute(
         f"""
         UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
                        proxima_execucao_em = ?, atualizado_em = ?
-         WHERE {where}
+         WHERE status = ?{recorte}
         """,
-        (Status.PENDING, agora, agora, *args),
+        (Status.PENDING, agora, agora, Status.FAILED, *filtros_args),
     )
-    return cursor.rowcount
+    total = cursor.rowcount
+
+    cursor = conn.execute(
+        f"""
+        UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
+                       proxima_execucao_em = ?, atualizado_em = ?
+         WHERE status = ? AND desfecho = ?{recorte}
+           AND id IN (SELECT job_id FROM tentativa
+                       WHERE mensagem_portal LIKE ?)
+        """,
+        (Status.PENDING, agora, agora, Status.DONE,
+         str(Desfecho.PENDENCIA_MANUAL), *filtros_args,
+         f"%{MENSAGEM_TELA_ILEGIVEL}%"),
+    )
+    return total + cursor.rowcount
 
 
 def certidao_do_mes(conn: sqlite3.Connection, empresa_id: int, orgao: str,
