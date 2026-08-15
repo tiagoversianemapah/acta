@@ -656,8 +656,6 @@ class TestCabecalhoDeCookiesGrande:
                             lambda: passos.append(("abrir",)))
         monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
                             lambda dominio: passos.append(("limpar", dominio)) or 42)
-        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
-                            lambda: passos.append(("saida_limpa",)) or 1)
         monkeypatch.setattr(
             adapter, "_ler_pdf",
             lambda _caminho, _doc: ResultadoTentativa(Desfecho.NEGATIVA,
@@ -674,7 +672,6 @@ class TestCabecalhoDeCookiesGrande:
             ("submeter", "04401250000194"),
             ("matar",),
             ("limpar", rfb_cego.DOMINIO_PORTAL),
-            ("saida_limpa",),
             ("abrir",),
             ("submeter", "04401250000194"),
         ]
@@ -707,21 +704,17 @@ class TestCabecalhoDeCookiesGrande:
         adapter._cookies_estourados = True
         passos = []
 
-        monkeypatch.setattr(adapter, "encerrar",
-                            lambda: passos.append("encerrar"))
         monkeypatch.setattr(adapter, "_matar_edge",
                             lambda: passos.append("matar") or True)
         monkeypatch.setattr(adapter, "_abrir_navegador",
                             lambda: passos.append("abrir"))
         monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
                             lambda _dominio: passos.append("limpar") or 7)
-        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
-                            lambda: 1)
         monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
 
         adapter.reiniciar_sessao()
 
-        assert passos == ["encerrar", "matar", "limpar", "abrir"]
+        assert passos == ["matar", "limpar", "abrir"]
 
     def test_reiniciar_sessao_normal_nao_mexe_nos_cookies(
         self, monkeypatch, tmp_path
@@ -731,8 +724,6 @@ class TestCabecalhoDeCookiesGrande:
         adapter = self._adapter(tmp_path)
         passos = []
 
-        monkeypatch.setattr(adapter, "encerrar",
-                            lambda: passos.append("encerrar"))
         monkeypatch.setattr(adapter, "_matar_edge",
                             lambda: passos.append("matar") or True)
         monkeypatch.setattr(adapter, "_abrir_navegador",
@@ -743,44 +734,9 @@ class TestCabecalhoDeCookiesGrande:
 
         adapter.reiniciar_sessao()
 
-        assert passos == ["encerrar", "abrir"]
-
-    def test_espera_o_edge_sumir_da_lista_de_processos(
-        self, monkeypatch, tmp_path
-    ):
-        """Fechar a janela não basta: o processo de rede do Edge sobrevive
-        a ela e é ele quem segura o banco de cookies. Enquanto estiver vivo,
-        o arquivo nem abre — o erro nem é 'travado', é 'unable to open'."""
-        adapter = self._adapter(tmp_path)
-        vidas = [True, True, False]
-        comandos = []
-
-        monkeypatch.setattr(rfb_cego.subprocess, "run",
-                            lambda args, **_kw: comandos.append(args))
-        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
-                            lambda _exe: 1)
-        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: vidas.pop(0))
-        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
-
-        assert adapter._matar_edge() is True
-        assert vidas == []            # esperou as três checagens
-        assert comandos[0][:4] == ["taskkill", "/F", "/T", "/IM"]
-
-    def test_desiste_de_esperar_e_avisa_quando_o_edge_nao_morre(
-        self, monkeypatch, tmp_path
-    ):
-        adapter = self._adapter(tmp_path)
-        relogio = iter([0.0, 1.0, 99.0])
-
-        monkeypatch.setattr(rfb_cego.subprocess, "run",
-                            lambda _args, **_kw: None)
-        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
-                            lambda _exe: 1)
-        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: True)
-        monkeypatch.setattr(rfb_cego.time, "monotonic", lambda: next(relogio))
-        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
-
-        assert adapter._matar_edge() is False
+        # Sem "limpar": bloqueio e captcha não são problema de cookie, e
+        # apagar a cada reinício jogaria fora a sessão de usuário recorrente.
+        assert passos == ["abrir"]
 
     def test_limpeza_sem_nenhum_cookie_removido_vira_erro_no_log(
         self, monkeypatch, tmp_path
@@ -822,6 +778,152 @@ class TestCabecalhoDeCookiesGrande:
 
         assert resultado.desfecho == Desfecho.ERRO_TECNICO
         assert adapter._cookies_estourados
+
+
+class TestEncerrarDeVerdade:
+    """Fechar a janela não basta em dois pontos, e os dois custaram caro:
+    o processo de rede segura o banco de cookies, e enquanto ele vive uma
+    "nova" janela do Edge é só mais uma aba da mesma sessão."""
+
+    def _adapter(self, tmp_path) -> AdapterRFBCego:
+        adapter = AdapterRFBCego("RFB_PJ", object(), tmp_path,
+                                 tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        return adapter
+
+    def test_espera_o_processo_sumir_da_lista(self, monkeypatch, tmp_path):
+        adapter = self._adapter(tmp_path)
+        vidas = [True, True, False]
+        comandos = []
+
+        monkeypatch.setattr(rfb_cego.subprocess, "run",
+                            lambda args, **_kw: comandos.append(args))
+        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
+                            lambda _exe: 1)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: 1)
+        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: vidas.pop(0))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        assert adapter._matar_edge() is True
+        assert vidas == []                     # esperou as três checagens
+        assert comandos[0][:4] == ["taskkill", "/F", "/T", "/IM"]
+
+    def test_desfaz_a_bolha_de_restaurar_paginas(self, monkeypatch, tmp_path):
+        """Matar à força é o motivo de a bolha existir; deixá-la aparecer
+        cobriria a tela que o robô cego mede por coordenada."""
+        adapter = self._adapter(tmp_path)
+        chamadas = []
+
+        monkeypatch.setattr(rfb_cego.subprocess, "run", lambda *_a, **_k: None)
+        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
+                            lambda _exe: 1)
+        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: False)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: chamadas.append("saida_limpa") or 1)
+
+        adapter.encerrar()
+
+        assert chamadas == ["saida_limpa"]
+
+    def test_desiste_de_esperar_e_avisa_quando_nao_morre(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        relogio = iter([0.0, 1.0, 99.0])
+
+        monkeypatch.setattr(rfb_cego.subprocess, "run", lambda *_a, **_k: None)
+        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
+                            lambda _exe: 1)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: 1)
+        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: True)
+        monkeypatch.setattr(rfb_cego.time, "monotonic", lambda: next(relogio))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        assert adapter._matar_edge() is False
+
+
+class TestSessaoPorEmissao:
+    """O portal conta as emissões da sessão: a 3ª sempre tomou 023 no log de
+    15/08/2026. Reabrir antes é mais barato do que apanhar e reabrir depois."""
+
+    def _adapter(self, tmp_path, limite=1) -> AdapterRFBCego:
+        adapter = AdapterRFBCego("RFB_PJ", object(), tmp_path,
+                                 tmp_path / "cal.json",
+                                 emissoes_por_sessao=limite)
+        adapter._calibragem = _calibragem()
+        return adapter
+
+    def test_primeira_consulta_da_sessao_nao_reabre_nada(self, monkeypatch,
+                                                          tmp_path):
+        adapter = self._adapter(tmp_path)
+        reinicios = []
+
+        monkeypatch.setattr(adapter, "reiniciar_sessao",
+                            lambda: reinicios.append(1))
+
+        adapter._renovar_sessao_se_gasta()
+
+        assert reinicios == []
+
+    def test_reabre_quando_a_sessao_ja_emitiu_o_que_aguenta(self, monkeypatch,
+                                                            tmp_path):
+        adapter = self._adapter(tmp_path)
+        adapter._emissoes_na_sessao = 1
+        reinicios = []
+
+        monkeypatch.setattr(adapter, "reiniciar_sessao",
+                            lambda: reinicios.append(1))
+
+        adapter._renovar_sessao_se_gasta()
+
+        assert reinicios == [1]
+
+    def test_limite_maior_deixa_a_sessao_trabalhar_mais(self, monkeypatch,
+                                                        tmp_path):
+        adapter = self._adapter(tmp_path, limite=2)
+        adapter._emissoes_na_sessao = 1
+        reinicios = []
+
+        monkeypatch.setattr(adapter, "reiniciar_sessao",
+                            lambda: reinicios.append(1))
+
+        adapter._renovar_sessao_se_gasta()
+
+        assert reinicios == []
+
+    def test_janela_nova_zera_a_conta(self, monkeypatch, tmp_path):
+        adapter = self._adapter(tmp_path)
+        adapter._emissoes_na_sessao = 3
+
+        monkeypatch.setattr(adapter, "encerrar", lambda: None)
+        monkeypatch.setattr(adapter, "_esperar_janela", lambda: True)
+        monkeypatch.setattr(adapter, "_posicionar_janela_calibrada", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(rfb_cego, "_achar_edge", lambda: "msedge.exe")
+        monkeypatch.setattr(rfb_cego.subprocess, "Popen", lambda _args: None)
+        monkeypatch.setattr(rfb_cego.entrada_real, "maximizar",
+                            lambda _t, _e: True)
+
+        adapter._abrir_navegador()
+
+        assert adapter._emissoes_na_sessao == 0
+
+    def test_abertura_espera_a_janela_em_vez_de_dormir(self, monkeypatch,
+                                                       tmp_path):
+        """Eram 9 segundos fixos por abertura. Com uma abertura por item,
+        isso sozinho valia horas no lote."""
+        adapter = self._adapter(tmp_path)
+        caixas = [None, None, (0, 0, 300, 200), JANELA]
+
+        monkeypatch.setattr(rfb_cego.entrada_real, "retangulo_janela",
+                            lambda _t, _e: caixas.pop(0))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        assert adapter._esperar_janela() is True
+        # A janelinha auxiliar de 300px não conta como "a janela".
+        assert caixas == []
 
 
 BANNER_MATRIZ = (

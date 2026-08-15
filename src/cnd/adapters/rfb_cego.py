@@ -74,6 +74,22 @@ PAUSA_ANTES_EMITIR_NOVA_S = (0.20, 0.35)
 TEMPO_PDF_S = 70.0
 # Quanto esperar o Edge sumir da lista de processos depois do taskkill /F.
 TEMPO_EDGE_MORRER_S = 15.0
+# Quanto esperar a janela do Edge existir depois de mandar abrir.
+TEMPO_JANELA_ABRIR_S = 25.0
+
+# Quantas emissões uma janela do Edge aguenta antes de o portal recusar.
+#
+# Medido no log de 15/08/2026, com 30 itens: a 1ª consulta de cada sessão
+# passou 17 vezes em 17; a 2ª falhou 4 vezes em 16; e a 3ª tomou o código
+# 023 ("não foi possível concluir a ação para o contribuinte informado")
+# 12 vezes em 12. Não é acaso — é o portal contando quantas emissões saíram
+# daquela sessão.
+#
+# O robô pagava caro por descobrir isso item a item: ~13s numa consulta já
+# condenada, mais 30 a 90 segundos de espera do micro-retry, e só então
+# reabria o navegador e acertava. Reabrir ANTES troca tudo isso pelos ~10
+# segundos de uma janela nova.
+EMISSOES_POR_SESSAO = 1
 TEMPO_PRIMEIRA_LEITURA_TEXTO_S = 5.0
 INTERVALO_LEITURA_TEXTO_S = 2.0
 
@@ -285,7 +301,10 @@ class AdapterRFBCego:
     cfg: Config
     pasta_downloads: Path
     caminho_calibragem: Path
+    # 5ª posição continua sendo a calibragem: os testes a passam sem nome.
     _calibragem: Calibragem | None = field(default=None, repr=False)
+    emissoes_por_sessao: int = EMISSOES_POR_SESSAO
+    _emissoes_na_sessao: int = field(default=0, repr=False)
     _ultimo_texto_portal: str | None = field(default=None, repr=False)
     # Ligado quando o portal recusou por cabeçalho grande: a próxima
     # reabertura de sessão precisa apagar os cookies do domínio, senão o
@@ -310,13 +329,38 @@ class AdapterRFBCego:
         cliques calibrados caírem no lugar errado.
         """
         self.encerrar()
+        self._emissoes_na_sessao = 0
         subprocess.Popen([_achar_edge(), "--new-window", "--start-maximized",
                           URL_FORMULARIO])
-        time.sleep(TEMPO_CARREGAR_S + 3)
+        # Espera a janela existir, em vez de dormir um tempo fixo. Eram 9
+        # segundos por abertura, e com uma abertura por item isso sozinho
+        # respondia por quase 3 horas num lote de 2.800.
+        if not self._esperar_janela():
+            log.warning("janela_do_edge_nao_apareceu",
+                        extra={"orgao": self.orgao,
+                               "esperou_s": TEMPO_JANELA_ABRIR_S})
         self._posicionar_janela_calibrada()
         entrada_real.maximizar(TITULO_JANELA, EXECUTAVEL_NAVEGADOR)
         log.info("navegador_aberto_sem_automacao",
                  extra={"orgao": self.orgao, "janela": self._janela()})
+
+    def _esperar_janela(self, segundos: float = TEMPO_JANELA_ABRIR_S) -> bool:
+        """Espera a janela DE VERDADE do Edge aparecer.
+
+        O Edge cria janelinhas auxiliares em segundo plano (uma delas mede
+        516x249). Exigir largura próxima da calibrada evita seguir em frente
+        com o handle de uma delas e posicionar a janela errada.
+        """
+        largura_minima = self._calibragem.janela[2] * 0.6 if self._calibragem else 0
+        limite = time.monotonic() + segundos
+        while time.monotonic() < limite:
+            caixa = entrada_real.retangulo_janela(TITULO_JANELA,
+                                                  EXECUTAVEL_NAVEGADOR)
+            if caixa is not None and caixa[2] >= largura_minima:
+                time.sleep(0.6)          # deixa ele terminar de desenhar
+                return True
+            time.sleep(0.3)
+        return False
 
     def _posicionar_janela_calibrada(self) -> None:
         """Leva o Edge para o monitor/tamanho usados na calibragem."""
@@ -367,13 +411,17 @@ class AdapterRFBCego:
         return self._calibragem.ponto(nome, self._janela())
 
     def reiniciar_sessao(self) -> None:
-        """Fecha e reabre o navegador (Alt+F4 na janela, depois abre de novo)."""
+        """Sessão nova: mata o Edge e abre outra janela.
+
+        Acontece a cada item, e não só depois de falha — ver
+        `EMISSOES_POR_SESSAO`. Por isso não há espera fixa nenhuma aqui: o
+        que precisa ser esperado (o processo morrer, a janela aparecer) é
+        esperado pelo que aconteceu, não pelo relógio.
+        """
         log.info("reiniciando_sessao", extra={"orgao": self.orgao})
-        self.encerrar()
         if self._cookies_estourados:
-            self._limpar_cookies_do_portal()
-        time.sleep(2)
-        self._abrir_navegador()
+            self._limpar_cookies_do_portal()   # já mata o Edge
+        self._abrir_navegador()                # mata de novo, se preciso
 
     def _limpar_cookies_do_portal(self) -> None:
         """Apaga do disco os cookies da Receita.
@@ -386,7 +434,6 @@ class AdapterRFBCego:
         self._matar_edge()
         try:
             removidos = perfil_edge.limpar_cookies(DOMINIO_PORTAL)
-            perfil_edge.marcar_saida_limpa()
         except Exception:
             log.exception("falha_ao_apagar_cookies", extra={"orgao": self.orgao})
             return
@@ -402,31 +449,6 @@ class AdapterRFBCego:
                              "dica": "conferir se o msedge.exe morreu e se o "
                                      "perfil é o do usuário que roda o robô"})
 
-    def _matar_edge(self) -> bool:
-        """Encerra o Edge à força e espera ele sumir da lista de processos.
-
-        `encerrar()` fecha com educação de propósito — matar à força faz o
-        Edge voltar com a bolha "Restaurar páginas", que rouba o foco e
-        cobre a tela. Só que o processo de rede sobrevive alguns segundos ao
-        fechamento da janela e é ele quem segura o banco de cookies. Para
-        mexer no arquivo, morto é a única garantia; a bolha é desfeita em
-        `perfil_edge.marcar_saida_limpa`.
-        """
-        entrada_real.fechar_janelas(EXECUTAVEL_NAVEGADOR)
-        subprocess.run(["taskkill", "/F", "/T", "/IM", EXECUTAVEL_NAVEGADOR],
-                       capture_output=True, check=False)
-
-        limite = time.monotonic() + TEMPO_EDGE_MORRER_S
-        while time.monotonic() < limite:
-            if not _edge_rodando():
-                return True
-            time.sleep(0.5)
-
-        log.warning("edge_nao_encerrou",
-                    extra={"orgao": self.orgao,
-                           "esperou_s": TEMPO_EDGE_MORRER_S})
-        return False
-
     def _recomecar_sem_cookies(self) -> None:
         """Sessão nova e limpa, no meio da tentativa.
 
@@ -438,13 +460,46 @@ class AdapterRFBCego:
         self._abrir_navegador()
 
     def encerrar(self) -> None:
-        # Fecha com educação (WM_CLOSE), não com taskkill /F: matar à força
-        # marca o perfil como travado e o Edge volta com a bolha "Restaurar
-        # páginas", que rouba o foco e cobre a tela.
+        self._matar_edge()
+
+    def _matar_edge(self) -> bool:
+        """Encerra o Edge e CONFERE que ele morreu.
+
+        Esta função já fechou com educação (WM_CLOSE, sem `/F`), porque
+        matar à força faz o Edge voltar com a bolha "Restaurar páginas" —
+        que rouba o foco e cobre a tela do robô cego. Duas coisas mostraram
+        que educação não bastava, e as duas custaram caro:
+
+        - **Cookies.** O processo de rede sobrevive alguns segundos ao
+          fechamento da janela e segura o banco; a limpeza saía com
+          "unable to open database file" e removidos: 0 (15/08/2026).
+        - **Sessão.** Com o processo vivo, abrir "outra" janela do Edge só
+          cria uma aba na mesma instância — mesma sessão, mesmo 023. A
+          renovação de sessão a cada item, que é o que evita o bloqueio,
+          seria um teatro.
+
+        A bolha volta a ser problema nosso, e é desfeita marcando a saída
+        como limpa no perfil.
+        """
         entrada_real.fechar_janelas(EXECUTAVEL_NAVEGADOR)
-        subprocess.run(["taskkill", "/IM", "msedge.exe"],
+        subprocess.run(["taskkill", "/F", "/T", "/IM", EXECUTAVEL_NAVEGADOR],
                        capture_output=True, check=False)
-        time.sleep(1.5)
+
+        morreu = False
+        limite = time.monotonic() + TEMPO_EDGE_MORRER_S
+        while time.monotonic() < limite:
+            if not _edge_rodando():
+                morreu = True
+                break
+            time.sleep(0.3)
+
+        if not morreu:
+            log.warning("edge_nao_encerrou",
+                        extra={"orgao": self.orgao,
+                               "esperou_s": TEMPO_EDGE_MORRER_S})
+        with contextlib.suppress(Exception):
+            perfil_edge.marcar_saida_limpa()
+        return morreu
 
     # ------------------------------------------------------------------
     # Fluxo
@@ -548,6 +603,7 @@ class AdapterRFBCego:
         formulário do zero, não reaproveitar a tela de resultado.
         """
         self._ultimo_texto_portal = None
+        self._renovar_sessao_se_gasta()
         self._focar()
         entrada_real.ir_para_url(URL_FORMULARIO)
         if not self._esperar_formulario() and self._recusado_por_cookies():
@@ -568,6 +624,8 @@ class AdapterRFBCego:
 
         # Enviar
         self._exigir_foco()
+        # Conta antes da resposta: recusada ou atendida, a sessão gastou uma.
+        self._emissoes_na_sessao += 1
         entrada_real.clicar(*self._ponto("botao_emitir"))
 
         reacao, caminho_baixado = self._aguardar_reacao(documento)
@@ -587,6 +645,21 @@ class AdapterRFBCego:
             )
 
         return reacao, caminho_baixado
+
+    def _renovar_sessao_se_gasta(self) -> None:
+        """Janela nova quando a atual já emitiu o que o portal tolera.
+
+        É mais barato do que descobrir pelo 023: aquela consulta seria
+        perdida de qualquer forma, e ainda pagaríamos a espera do micro-retry
+        antes de fazer exatamente isto aqui.
+        """
+        if self._emissoes_na_sessao < self.emissoes_por_sessao:
+            return
+        log.info("sessao_gasta_reabrindo",
+                 extra={"orgao": self.orgao,
+                        "emissoes": self._emissoes_na_sessao,
+                        "limite": self.emissoes_por_sessao})
+        self.reiniciar_sessao()
 
     # ------------------------------------------------------------------
     def _focar(self) -> None:
@@ -1055,4 +1128,7 @@ def criar(orgao: ConfigOrgao, cfg: Config) -> AdapterRFBCego:
         # órgão: o mesmo órgão pode trocar de adapter sem perder as medidas.
         caminho_calibragem=RAIZ_PROJETO / "data" / "calibragem" /
                            f"{orgao.adapter}.json",
+        emissoes_por_sessao=max(
+            1, int(orgao.extras.get("emissoes_por_sessao", EMISSOES_POR_SESSAO))
+        ),
     )
