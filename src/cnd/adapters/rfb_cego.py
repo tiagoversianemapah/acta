@@ -37,7 +37,7 @@ from pathlib import Path
 from cnd.adapters import rfb_matriz
 from cnd.adapters.rfb_pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
-from cnd.infra import cookies, entrada_real, tela
+from cnd.infra import entrada_real, perfil_edge, tela
 from cnd.infra.arquivos import caminho_certidao
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.log import obter
@@ -72,6 +72,8 @@ TEMPO_REACAO_S = 45.0
 INTERVALO_MODAL_S = 0.15
 PAUSA_ANTES_EMITIR_NOVA_S = (0.20, 0.35)
 TEMPO_PDF_S = 70.0
+# Quanto esperar o Edge sumir da lista de processos depois do taskkill /F.
+TEMPO_EDGE_MORRER_S = 15.0
 TEMPO_PRIMEIRA_LEITURA_TEXTO_S = 5.0
 INTERVALO_LEITURA_TEXTO_S = 2.0
 
@@ -374,16 +376,56 @@ class AdapterRFBCego:
         self._abrir_navegador()
 
     def _limpar_cookies_do_portal(self) -> None:
-        """Apaga do disco os cookies da Receita. Exige o Edge já fechado."""
+        """Apaga do disco os cookies da Receita.
+
+        Mata o Edge antes, e confere que ele morreu: com o processo vivo o
+        banco de cookies não abre, e a primeira versão disto saiu com
+        "removidos: 0" enquanto o portal seguia devolvendo 400 (15/08/2026).
+        """
         self._cookies_estourados = False
+        self._matar_edge()
         try:
-            removidos = cookies.limpar_dominio(DOMINIO_PORTAL)
+            removidos = perfil_edge.limpar_cookies(DOMINIO_PORTAL)
+            perfil_edge.marcar_saida_limpa()
         except Exception:
             log.exception("falha_ao_apagar_cookies", extra={"orgao": self.orgao})
             return
-        log.warning("cookies_do_portal_apagados",
-                    extra={"orgao": self.orgao, "dominio": DOMINIO_PORTAL,
-                           "removidos": removidos})
+        if removidos:
+            log.warning("cookies_do_portal_apagados",
+                        extra={"orgao": self.orgao, "dominio": DOMINIO_PORTAL,
+                               "removidos": removidos})
+        else:
+            # Sem isto, "não removi nada" e "não tinha nada para remover"
+            # ficam indistinguíveis — e são problemas opostos.
+            log.error("nenhum_cookie_removido",
+                      extra={"orgao": self.orgao, "dominio": DOMINIO_PORTAL,
+                             "dica": "conferir se o msedge.exe morreu e se o "
+                                     "perfil é o do usuário que roda o robô"})
+
+    def _matar_edge(self) -> bool:
+        """Encerra o Edge à força e espera ele sumir da lista de processos.
+
+        `encerrar()` fecha com educação de propósito — matar à força faz o
+        Edge voltar com a bolha "Restaurar páginas", que rouba o foco e
+        cobre a tela. Só que o processo de rede sobrevive alguns segundos ao
+        fechamento da janela e é ele quem segura o banco de cookies. Para
+        mexer no arquivo, morto é a única garantia; a bolha é desfeita em
+        `perfil_edge.marcar_saida_limpa`.
+        """
+        entrada_real.fechar_janelas(EXECUTAVEL_NAVEGADOR)
+        subprocess.run(["taskkill", "/F", "/T", "/IM", EXECUTAVEL_NAVEGADOR],
+                       capture_output=True, check=False)
+
+        limite = time.monotonic() + TEMPO_EDGE_MORRER_S
+        while time.monotonic() < limite:
+            if not _edge_rodando():
+                return True
+            time.sleep(0.5)
+
+        log.warning("edge_nao_encerrou",
+                    extra={"orgao": self.orgao,
+                           "esperou_s": TEMPO_EDGE_MORRER_S})
+        return False
 
     def _recomecar_sem_cookies(self) -> None:
         """Sessão nova e limpa, no meio da tentativa.
@@ -392,8 +434,7 @@ class AdapterRFBCego:
         estiver grande, o portal responde 400 a TODAS as consultas — e cada
         uma gastaria 65 segundos para terminar sem resposta.
         """
-        self.encerrar()
-        self._limpar_cookies_do_portal()
+        self._limpar_cookies_do_portal()      # já encerra o navegador
         self._abrir_navegador()
 
     def encerrar(self) -> None:
@@ -980,6 +1021,15 @@ class AdapterRFBCego:
         except Exception:
             log.exception("falha_ao_salvar_print")
             return None
+
+
+def _edge_rodando() -> bool:
+    """Ainda há msedge.exe vivo? Inclui os processos sem janela."""
+    saida = subprocess.run(
+        ["tasklist", "/FI", f"IMAGENAME eq {EXECUTAVEL_NAVEGADOR}", "/NH"],
+        capture_output=True, text=True, check=False,
+    )
+    return EXECUTAVEL_NAVEGADOR in (saida.stdout or "").lower()
 
 
 def _achar_edge() -> str:

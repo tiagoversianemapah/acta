@@ -650,12 +650,14 @@ class TestCabecalhoDeCookiesGrande:
             return ("cookies", None) if len(passos) == 1 else ("pdf", pdf)
 
         monkeypatch.setattr(adapter, "_submeter", submeter)
-        monkeypatch.setattr(adapter, "encerrar",
-                            lambda: passos.append(("encerrar",)))
+        monkeypatch.setattr(adapter, "_matar_edge",
+                            lambda: passos.append(("matar",)) or True)
         monkeypatch.setattr(adapter, "_abrir_navegador",
                             lambda: passos.append(("abrir",)))
-        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+        monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
                             lambda dominio: passos.append(("limpar", dominio)) or 42)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: passos.append(("saida_limpa",)) or 1)
         monkeypatch.setattr(
             adapter, "_ler_pdf",
             lambda _caminho, _doc: ResultadoTentativa(Desfecho.NEGATIVA,
@@ -665,12 +667,14 @@ class TestCabecalhoDeCookiesGrande:
         resultado = adapter.emitir(doc)
 
         assert resultado.desfecho == Desfecho.NEGATIVA
-        # Fechar o Edge ANTES de apagar: o banco de cookies fica travado
-        # enquanto ele roda, e a limpeza sairia sem efeito.
+        # Matar o Edge ANTES de apagar: com ele vivo o banco de cookies nem
+        # abre, e a limpeza sai sem efeito nenhum — foi o que aconteceu em
+        # produção em 15/08/2026, com "removidos: 0" e o 400 de pé.
         assert passos == [
             ("submeter", "04401250000194"),
-            ("encerrar",),
+            ("matar",),
             ("limpar", rfb_cego.DOMINIO_PORTAL),
+            ("saida_limpa",),
             ("abrir",),
             ("submeter", "04401250000194"),
         ]
@@ -705,15 +709,19 @@ class TestCabecalhoDeCookiesGrande:
 
         monkeypatch.setattr(adapter, "encerrar",
                             lambda: passos.append("encerrar"))
+        monkeypatch.setattr(adapter, "_matar_edge",
+                            lambda: passos.append("matar") or True)
         monkeypatch.setattr(adapter, "_abrir_navegador",
                             lambda: passos.append("abrir"))
-        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+        monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
                             lambda _dominio: passos.append("limpar") or 7)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: 1)
         monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
 
         adapter.reiniciar_sessao()
 
-        assert passos == ["encerrar", "limpar", "abrir"]
+        assert passos == ["encerrar", "matar", "limpar", "abrir"]
 
     def test_reiniciar_sessao_normal_nao_mexe_nos_cookies(
         self, monkeypatch, tmp_path
@@ -725,15 +733,74 @@ class TestCabecalhoDeCookiesGrande:
 
         monkeypatch.setattr(adapter, "encerrar",
                             lambda: passos.append("encerrar"))
+        monkeypatch.setattr(adapter, "_matar_edge",
+                            lambda: passos.append("matar") or True)
         monkeypatch.setattr(adapter, "_abrir_navegador",
                             lambda: passos.append("abrir"))
-        monkeypatch.setattr(rfb_cego.cookies, "limpar_dominio",
+        monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
                             lambda _dominio: passos.append("limpar") or 0)
         monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
 
         adapter.reiniciar_sessao()
 
         assert passos == ["encerrar", "abrir"]
+
+    def test_espera_o_edge_sumir_da_lista_de_processos(
+        self, monkeypatch, tmp_path
+    ):
+        """Fechar a janela não basta: o processo de rede do Edge sobrevive
+        a ela e é ele quem segura o banco de cookies. Enquanto estiver vivo,
+        o arquivo nem abre — o erro nem é 'travado', é 'unable to open'."""
+        adapter = self._adapter(tmp_path)
+        vidas = [True, True, False]
+        comandos = []
+
+        monkeypatch.setattr(rfb_cego.subprocess, "run",
+                            lambda args, **_kw: comandos.append(args))
+        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
+                            lambda _exe: 1)
+        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: vidas.pop(0))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        assert adapter._matar_edge() is True
+        assert vidas == []            # esperou as três checagens
+        assert comandos[0][:4] == ["taskkill", "/F", "/T", "/IM"]
+
+    def test_desiste_de_esperar_e_avisa_quando_o_edge_nao_morre(
+        self, monkeypatch, tmp_path
+    ):
+        adapter = self._adapter(tmp_path)
+        relogio = iter([0.0, 1.0, 99.0])
+
+        monkeypatch.setattr(rfb_cego.subprocess, "run",
+                            lambda _args, **_kw: None)
+        monkeypatch.setattr(rfb_cego.entrada_real, "fechar_janelas",
+                            lambda _exe: 1)
+        monkeypatch.setattr(rfb_cego, "_edge_rodando", lambda: True)
+        monkeypatch.setattr(rfb_cego.time, "monotonic", lambda: next(relogio))
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        assert adapter._matar_edge() is False
+
+    def test_limpeza_sem_nenhum_cookie_removido_vira_erro_no_log(
+        self, monkeypatch, tmp_path
+    ):
+        """"Não removi nada" e "não havia nada" são problemas opostos, e o
+        log de 15/08/2026 só dizia 'removidos: 0' em nível de aviso."""
+        adapter = self._adapter(tmp_path)
+        erros = []
+
+        monkeypatch.setattr(adapter, "_matar_edge", lambda: True)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "limpar_cookies",
+                            lambda _dominio: 0)
+        monkeypatch.setattr(rfb_cego.perfil_edge, "marcar_saida_limpa",
+                            lambda: 0)
+        monkeypatch.setattr(rfb_cego.log, "error",
+                            lambda evento, **_kw: erros.append(evento))
+
+        adapter._limpar_cookies_do_portal()
+
+        assert erros == ["nenhum_cookie_removido"]
 
     def test_400_lido_no_diagnostico_tambem_volta_para_a_fila(
         self, monkeypatch, tmp_path
