@@ -284,6 +284,43 @@ def reenfileirar_falhados(
     return total + cursor.rowcount
 
 
+def antecipar_esperas(
+    conn: sqlite3.Connection, orgao: str | None = None,
+    lote_id: int | None = None,
+) -> int:
+    """Traz para agora os itens que estão só esperando o relógio.
+
+    Um item em RETRY_WAIT não tem problema nenhum: ele já foi reagendado e
+    só aguarda a hora marcada. Mas, enquanto espera, o robô pode ficar
+    ocioso com a fila vazia — e não havia como intervir: "Tentar de novo"
+    só alcança quem está em FAILED. Foi o que aconteceu em 17/08/2026, com
+    13 itens marcados para dali a 20 minutos e o robô parado olhando.
+
+    Não zera as tentativas de propósito: quem pede isto quer adiantar a
+    fila, não dar chances extras. As três continuam valendo, e o disjuntor
+    continua protegendo o portal se a pressa não tiver sido boa ideia.
+    """
+    agora = tempo.agora_iso()
+    filtros: list[str] = []
+    filtros_args: list = []
+    if orgao:
+        filtros.append("orgao = ?")
+        filtros_args.append(orgao)
+    if lote_id:
+        filtros.append("lote_id = ?")
+        filtros_args.append(lote_id)
+    recorte = "".join(f" AND {condicao}" for condicao in filtros)
+
+    cursor = conn.execute(
+        f"""
+        UPDATE job SET proxima_execucao_em = ?, atualizado_em = ?
+         WHERE status = ?{recorte} AND proxima_execucao_em > ?
+        """,
+        (agora, agora, Status.RETRY_WAIT, *filtros_args, agora),
+    )
+    return cursor.rowcount
+
+
 def certidao_do_mes(conn: sqlite3.Connection, empresa_id: int, orgao: str,
                     lote_id: int | None = None) -> sqlite3.Row | None:
     """Certidão desta empresa/órgão emitida no MÊS CORRENTE (RNF-04).

@@ -225,3 +225,45 @@ class TestIntegracaoComAFila:
         assert linha["status"] == Status.PENDING
         assert linha["tentativas"] == 0
         assert linha["desfecho"] is None
+
+
+class TestAnteciparEsperas:
+    """O robô parado esperando relógio, sem ninguém poder intervir, foi o
+    que travou a operação em 17/08/2026."""
+
+    def _esperando(self, conn, lote, documento, daqui_a_s):
+        job_id = criar_job(conn, lote, documento=documento, orgao="RFB_PJ")
+        conn.execute(
+            "UPDATE job SET status = ?, proxima_execucao_em = ?, tentativas = 1 "
+            "WHERE id = ?",
+            (Status.RETRY_WAIT, tempo.daqui_a(daqui_a_s), job_id),
+        )
+        return job_id
+
+    def test_traz_para_agora_o_que_esperava(self, conn, lote):
+        job_id = self._esperando(conn, lote, "00000000000001", 3600)
+
+        assert fila.antecipar_esperas(conn, "RFB_PJ") == 1
+        assert conn.execute(
+            "SELECT proxima_execucao_em FROM job WHERE id = ?", (job_id,)
+        ).fetchone()["proxima_execucao_em"] <= tempo.agora_iso()
+
+    def test_nao_devolve_chances_extras(self, conn, lote):
+        """Quem aperta quer adiantar a fila, não dar mais tentativas."""
+        job_id = self._esperando(conn, lote, "00000000000001", 3600)
+
+        fila.antecipar_esperas(conn, "RFB_PJ")
+
+        assert conn.execute(
+            "SELECT tentativas FROM job WHERE id = ?", (job_id,)
+        ).fetchone()["tentativas"] == 1
+
+    def test_nao_mexe_em_quem_ja_podia_rodar(self, conn, lote):
+        self._esperando(conn, lote, "00000000000001", -60)
+
+        assert fila.antecipar_esperas(conn, "RFB_PJ") == 0
+
+    def test_nao_mexe_em_outro_orgao(self, conn, lote):
+        self._esperando(conn, lote, "00000000000001", 3600)
+
+        assert fila.antecipar_esperas(conn, "CRF") == 0

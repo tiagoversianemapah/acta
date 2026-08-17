@@ -296,7 +296,13 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
 
     @roteador.post("/reenfileirar")
     def reenfileirar(orgao: str = Form(default=""), lote_id: int = Form(default=0)):
-        """Devolve falhas definitivas para a fila desta máquina."""
+        """Faz a fila andar agora: devolve as falhas E adianta as esperas.
+
+        As duas coisas respondem à mesma pergunta de quem aperta o botão —
+        "por que ele não está trabalhando?". Separá-las obrigaria a operação
+        a saber a diferença entre FAILED e RETRY_WAIT para escolher o botão
+        certo, quando o que ela quer é simplesmente que ande.
+        """
         cfg = obter_config()
         exigir_senha_configurada(cfg)
         conn = conectar(cfg.banco)
@@ -304,9 +310,13 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
             quantidade = fila.reenfileirar_falhados(
                 conn, orgao or None, lote_id or None
             )
+            adiantados = fila.antecipar_esperas(
+                conn, orgao or None, lote_id or None
+            )
         finally:
             conn.close()
-        return {"ok": True, "quantidade": quantidade}
+        return {"ok": True, "quantidade": quantidade + adiantados,
+                "falhados": quantidade, "adiantados": adiantados}
 
     @roteador.post("/breaker/retomar")
     def retomar_todas_as_pausas():
