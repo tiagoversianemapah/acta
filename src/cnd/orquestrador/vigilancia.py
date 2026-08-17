@@ -30,6 +30,7 @@ ROTULOS = {
     "CPEN": "Com efeito de negativa",
     "POSITIVA": "Positivas (com pendência)",
     "PENDENCIA_MANUAL": "Exigem atendimento",
+    "INAPTA": "CNPJ inapto (omissão de declarações)",
     "APROVEITADA": "Já emitidas no mês",
     "BLOQUEIO_TEMPORARIO": "Recusadas pelo portal",
     "RESULTADO_PENDENTE": "Resultado pendente no portal",
@@ -59,7 +60,8 @@ class ResumoLote:
     def sem_certidao(self) -> int:
         """Empresas que precisam de tratamento: pendência ou atendimento."""
         return (self.por_desfecho.get("POSITIVA", 0)
-                + self.por_desfecho.get("PENDENCIA_MANUAL", 0))
+                + self.por_desfecho.get("PENDENCIA_MANUAL", 0)
+                + self.por_desfecho.get("INAPTA", 0))
 
     @property
     def duracao(self) -> str:

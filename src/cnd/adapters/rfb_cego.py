@@ -94,6 +94,14 @@ TEMPO_PRIMEIRA_LEITURA_TEXTO_S = 5.0
 INTERVALO_LEITURA_TEXTO_S = 2.0
 
 FRASE_INSUFICIENTE = "sao insuficientes para emitir a certidao pela internet"
+# "Inscrição no CNPJ ... Inapta - Omissão de declarações, emissão de
+# certidão não permitida." Vista em 17/08/2026 em 4 empresas do lote 1.
+# Vem numa caixa branca comum, sem faixa amarela nem vermelha, então a
+# heurística de cor não a enxerga: só o texto denuncia. Antes de existir
+# esta frase, essas 4 caíam no diagnóstico final como ERRO_TECNICO e
+# gastavam 3 tentativas contra uma tela que nunca mudaria sozinha.
+FRASE_INAPTA = "inapta"
+FRASE_INAPTA_MOTIVO = "emissao de certidao nao permitida"
 FRASE_RETORNE_RESULTADO = "retorne em alguns minutos para o resultado"
 FRASE_SERVICO_INDISPONIVEL = (
     "servico de emissao de certidao esta temporariamente indisponivel"
@@ -196,6 +204,11 @@ def _classificar_texto_portal(texto: str) -> str | None:
     if (any(frase in normalizado for frase in FRASES_RETENTAR_TEXTO)
             or RE_CODIGO_033.search(normalizado)):
         return "retentar"
+    # Exige as DUAS partes: "inapta" sozinha é palavra comum demais para
+    # decidir o destino de uma empresa, e o motivo sozinho poderia vir de
+    # outra recusa que ainda não conhecemos.
+    if FRASE_INAPTA in normalizado and FRASE_INAPTA_MOTIVO in normalizado:
+        return "inapta"
     if FRASE_INSUFICIENTE in normalizado:
         return "insuficiente"
     if any(frase in normalizado for frase in FRASES_BLOQUEIO_TEXTO):
@@ -979,6 +992,15 @@ class AdapterRFBCego:
                 Desfecho.POSITIVA,
                 mensagem_portal=_mensagem_curta(texto) or (
                     "informações insuficientes para emitir a certidão pela internet"
+                ),
+                evidencia=evidencia,
+            )
+        if tipo == "inapta":
+            return ResultadoTentativa(
+                Desfecho.INAPTA,
+                mensagem_portal=_mensagem_curta(texto) or (
+                    "CNPJ inapto por omissão de declarações; emissão de "
+                    "certidão não permitida"
                 ),
                 evidencia=evidencia,
             )

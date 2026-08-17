@@ -28,6 +28,7 @@ ROTULOS_DESFECHO = {
     Desfecho.CPEN: "Efeito de negativa",
     Desfecho.POSITIVA: "Positiva",
     Desfecho.PENDENCIA_MANUAL: "Informações insuficientes",
+    Desfecho.INAPTA: "CNPJ inapto",
     Desfecho.APROVEITADA: "Já emitida no mês",
     Desfecho.BLOQUEIO_TEMPORARIO: "Bloqueio temporário",
     Desfecho.RESULTADO_PENDENTE: "Resultado pendente",
@@ -43,6 +44,7 @@ DESFECHOS_OK = frozenset({
 DESFECHOS_ALERTA = frozenset({
     Desfecho.POSITIVA,
     Desfecho.PENDENCIA_MANUAL,
+    Desfecho.INAPTA,
     Desfecho.BLOQUEIO_TEMPORARIO,
     Desfecho.RESULTADO_PENDENTE,
 })

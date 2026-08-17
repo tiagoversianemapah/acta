@@ -292,6 +292,21 @@ class TestFaixaDeAlertaDoPortal:
 
         assert _classificar_texto_portal(texto) == "insuficiente"
 
+    def test_texto_de_cnpj_inapto_e_reconhecido(self):
+        """Tela vista em 17/08/2026. Antes de ser reconhecida, caía no
+        diagnóstico final como ERRO_TECNICO e gastava três tentativas."""
+        texto = (
+            "Inscrição no CNPJ 14.610.909/0001-76 Inapta - Omissão de "
+            "declarações, emissão de certidão não permitida."
+        )
+
+        assert _classificar_texto_portal(texto) == "inapta"
+
+    def test_a_palavra_inapta_sozinha_nao_classifica(self):
+        """Exigir as duas partes evita decidir o destino de uma empresa por
+        uma palavra que pode aparecer em qualquer outro texto do portal."""
+        assert _classificar_texto_portal("situação cadastral inapta") is None
+
     def test_texto_que_pede_a_matriz_nao_se_confunde_com_bloqueio(self):
         """A faixa que pede o CNPJ da matriz é amarela igual à do código 023.
         Se virasse 'bloqueio', o robô desaceleraria e retentaria três vezes
@@ -556,6 +571,37 @@ class TestFaixaDeAlertaDoPortal:
 
         assert resultado.desfecho == Desfecho.POSITIVA
         assert "insuficientes" in resultado.mensagem_portal
+
+    def test_cnpj_inapto_conclui_em_vez_de_virar_erro_tecnico(
+        self, monkeypatch, tmp_path
+    ):
+        """A caixa do CNPJ inapto é branca, sem faixa amarela nem vermelha:
+        só o texto a denuncia. Como ERRO_TECNICO, o item gastava as três
+        tentativas e ainda pedia reenvio no painel — contra uma tela que não
+        muda enquanto a empresa não entregar as declarações."""
+        cfg = SimpleNamespace(pasta_evidencias=tmp_path)
+        doc = SimpleNamespace(documento="14610909000176")
+        adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
+        adapter._calibragem = _calibragem()
+        adapter._ultimo_texto_portal = (
+            "Inscrição no CNPJ 14.610.909/0001-76 Inapta - Omissão de "
+            "declarações, emissão de certidão não permitida."
+        )
+
+        monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+        monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
+        monkeypatch.setattr(adapter, "_print", lambda *_args: tmp_path / "print.png")
+        monkeypatch.setattr(adapter, "_texto_da_pagina", lambda: "")
+        monkeypatch.setattr(rfb_cego.tela, "capturar", lambda: object())
+        monkeypatch.setattr(rfb_cego.tela, "cor_media", lambda *_args, **_kw: BRANCO)
+        monkeypatch.setattr(rfb_cego.entrada_real, "atalho", lambda *_args: None)
+        monkeypatch.setattr(rfb_cego.time, "sleep", lambda _segundos: None)
+
+        resultado = adapter._diagnosticar_falha(doc)
+
+        assert resultado.desfecho == Desfecho.INAPTA
+        assert resultado.conclusivo
+        assert "Inapta" in resultado.mensagem_portal
 
     def test_sem_pdf_sem_faixa_e_sem_texto_volta_para_a_fila(
         self, monkeypatch, tmp_path

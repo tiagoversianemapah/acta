@@ -117,6 +117,7 @@ RESULTADOS = {
     "Com efeito de negativa": "CPEN",
     "Positiva": "POSITIVA",
     "Informações insuficientes": "PENDENCIA_MANUAL",
+    "CNPJ inapto": "INAPTA",
     "Já emitida no mês": "APROVEITADA",
     "Portal recusou": "BLOQUEIO_TEMPORARIO",
     "Resultado pendente": "RESULTADO_PENDENTE",
@@ -143,6 +144,10 @@ ROTULOS_DE_RESULTADO = {
     # sugeria "atenção", quando o certo é "esta não sai".
     "POSITIVA": ("Positiva", "#B3261E"),
     "PENDENCIA_MANUAL": ("Informações insuficientes", "#8A5D00"),
+    # Vermelho como a positiva: também não sai certidão. O motivo é outro
+    # (cadastro, não débito), mas o que a operação faz é o mesmo — avisar o
+    # cliente de que nada será entregue enquanto ele não regularizar.
+    "INAPTA": ("CNPJ inapto", "#B3261E"),
     "APROVEITADA": ("Já emitida no mês", "#8A94A2"),
     "BLOQUEIO_TEMPORARIO": ("Portal recusou", "#B02A1C"),
     "RESULTADO_PENDENTE": ("Resultado pendente", "#8A5D00"),
@@ -2752,7 +2757,8 @@ class Aplicativo(ctk.CTk):
             self.metricas[chave].configure(text=_numero(por_desfecho(chave)))
 
         com_certidao = por_desfecho("NEGATIVA") + por_desfecho("CPEN")
-        sem_certidao = por_desfecho("POSITIVA") + por_desfecho("PENDENCIA_MANUAL")
+        sem_certidao = (por_desfecho("POSITIVA") + por_desfecho("PENDENCIA_MANUAL")
+                        + por_desfecho("INAPTA"))
 
         # Dizer POR EXTENSO o que vai no pacote. O filtro fica no bloco de
         # cima e o botão aqui embaixo; sem esta frase, não é óbvio que um

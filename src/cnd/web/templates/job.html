@@ -106,7 +106,7 @@
           <td>
             {% if t.desfecho in ['CAPTCHA','ERRO_TECNICO'] %}
               <span class="selo erro">{{ t.desfecho }}</span>
-            {% elif t.desfecho in ['PENDENCIA_MANUAL','BLOQUEIO_TEMPORARIO','RESULTADO_PENDENTE'] %}
+            {% elif t.desfecho in ['PENDENCIA_MANUAL','INAPTA','BLOQUEIO_TEMPORARIO','RESULTADO_PENDENTE'] %}
               <span class="selo alerta">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>
             {% elif t.desfecho %}
               <span class="selo ok">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>

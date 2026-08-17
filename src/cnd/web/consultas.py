@@ -20,6 +20,7 @@ ROTULOS = {
     Desfecho.CPEN: "Positivas c/ efeito de negativa",
     Desfecho.POSITIVA: "Positivas (com pendência)",
     Desfecho.PENDENCIA_MANUAL: "Informações insuficientes",
+    Desfecho.INAPTA: "CNPJ inapto (omissão de declarações)",
     Desfecho.APROVEITADA: "Aproveitadas (já vigentes)",
     Desfecho.RESULTADO_PENDENTE: "Resultado pendente",
 }

@@ -74,6 +74,10 @@ ASSINATURAS_CAPTCHA = (
 FRASE_SUCESSO = "certidão foi emitida com sucesso"
 FRASE_INSUFICIENTE = "são insuficientes para emitir a certidão pela internet"
 FRASE_PROCESSANDO = "estamos analisando seu pedido"
+# "Inscrição no CNPJ ... Inapta - Omissão de declarações, emissão de
+# certidão não permitida." Ver o mesmo par de frases em rfb_cego.
+FRASE_INAPTA = "inapta"
+FRASE_INAPTA_MOTIVO = "emissão de certidão não permitida"
 FRASE_RETORNE_RESULTADO = "retorne em alguns minutos para o resultado"
 FRASE_SERVICO_INDISPONIVEL = (
     "servico de emissao de certidao esta temporariamente indisponivel"
@@ -684,6 +688,15 @@ class AdapterRFBPJ:
                 Desfecho.PENDENCIA_MANUAL,
                 mensagem_portal=texto.strip()[:500],
                 evidencia=self._evidencia(pagina, doc, "exige-matriz"),
+            )
+
+        if FRASE_INAPTA in normalizado and FRASE_INAPTA_MOTIVO in normalizado:
+            # Cadastro irregular, não débito: a empresa precisa entregar as
+            # declarações atrasadas. Resposta definitiva — retentar não muda.
+            return ResultadoTentativa(
+                Desfecho.INAPTA,
+                mensagem_portal=texto.strip()[:500],
+                evidencia=self._evidencia(pagina, doc, "inapta"),
             )
 
         if FRASE_INSUFICIENTE in normalizado:

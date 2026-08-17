@@ -147,6 +147,31 @@ indisponibilidade momentânea daquele contribuinte. Com uma única ocorrência, 
 um piloto interrompido, qualquer conclusão seria chute. A tela Saúde do painel
 acumula esses eventos por hora do dia — é de lá que virá a resposta.
 
+## CNPJ inapto (17/08/2026)
+
+Numa caixa branca comum, no lugar do resultado — **sem faixa amarela ou
+vermelha**, então a heurística de cor do adapter cego não a enxerga:
+
+> Inscrição no CNPJ 14.610.909/0001-76 Inapta - Omissão de declarações,
+> emissão de certidão não permitida.
+
+Não é bloqueio nem instabilidade: é resposta definitiva. A empresa está com
+o cadastro inapto por não ter entregue declarações, e nenhuma retentativa
+muda isso. Desfecho próprio, `INAPTA`, decidido pelo usuário em 17/08/2026
+em vez de reaproveitar `POSITIVA` (que é débito) ou `PENDENCIA_MANUAL` (que
+é atendimento no e-CAC) — o que o escritório faz em cada caso é diferente,
+e juntá-los esconderia isso na planilha.
+
+Antes de ser reconhecida, essa tela caía no diagnóstico final como
+`ERRO_TECNICO` ("sem PDF e sem faixa de alerta"): gastava as três
+tentativas e ainda aparecia no painel convidando alguém a reenviar. Eram os
+**4 únicos erros técnicos** do lote 1 — Vereda dos Buritis, Maria Tereza
+Palmerston, SFR Administração Imobiliária e SCP High Yield.
+
+A classificação exige **as duas partes** ("inapta" e "emissão de certidão
+não permitida"): a palavra sozinha é comum demais para decidir o destino de
+uma empresa.
+
 ## Casos ainda não observados
 
 | Caso | Situação |

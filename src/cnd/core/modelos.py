@@ -31,6 +31,12 @@ class Desfecho(StrEnum):
     POSITIVA = "POSITIVA"                    # pendência impeditiva; sem PDF
     PENDENCIA_MANUAL = "PENDENCIA_MANUAL"    # exige e-CAC/atendimento
     APROVEITADA = "APROVEITADA"              # já havia certidão vigente (RNF-04)
+    # CNPJ inapto por omissão de declarações: o portal recusa a emissão e o
+    # conserto não é fiscal nem nosso — a empresa precisa entregar as
+    # declarações atrasadas. Separado de POSITIVA (que é débito) e de
+    # PENDENCIA_MANUAL (que é atendimento no e-CAC) porque o que o
+    # escritório faz em cada caso é diferente. Ver 17/08/2026 em docs.
+    INAPTA = "INAPTA"
 
     # --- falhas (geram retry) ---
     CAPTCHA = "CAPTCHA"                      # heurística antirrobô acionou
@@ -45,6 +51,7 @@ CONCLUSIVOS = frozenset({
     Desfecho.POSITIVA,
     Desfecho.PENDENCIA_MANUAL,
     Desfecho.APROVEITADA,
+    Desfecho.INAPTA,
 })
 
 RETENTAVEIS = frozenset({

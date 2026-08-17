@@ -129,6 +129,7 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     for desfecho, titulo in ((Desfecho.POSITIVA, "Positivas"),
                              (Desfecho.PENDENCIA_MANUAL,
                               "Informacoes insuficientes"),
+                             (Desfecho.INAPTA, "CNPJ inapto"),
                              (Desfecho.APROVEITADA, "Aproveitadas")):
         linhas = [
             [linha["nome"], formatar(linha["documento"]), linha["orgao"],
