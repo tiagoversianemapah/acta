@@ -301,9 +301,17 @@
       <div>
         {{ icone_metrica('pendentes') }}
         <span class="metrica-corpo">
-          <span class="rotulo">Pendentes</span>
-          <strong>{{ '{:,.0f}'.format(totais.pendentes).replace(',', '.') }}</strong>
-          <small>{{ totais.em_execucao }} em execução</small>
+          <span class="rotulo">Faltam</span>
+          <strong>{{ '{:,.0f}'.format(totais.get('restantes', totais.pendentes)).replace(',', '.') }}</strong>
+          {# A quebra explica o número, em vez de o número esconder a quebra. #}
+          <small>
+            {%- set falhados = totais.falhados or 0 -%}
+            {%- if falhados -%}
+              {{ totais.pendentes }} na fila · {{ falhados }} aguardando nova rodada
+            {%- else -%}
+              {{ totais.em_execucao }} em execução
+            {%- endif -%}
+          </small>
         </span>
       </div>
       <div>

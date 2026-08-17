@@ -61,7 +61,10 @@ class TestLoteConcluido:
         resumo = vigilancia.lotes_recem_concluidos(conn)[0]
 
         assert resumo.falhados == 1
-        assert "conferência manual" in resumo.como_texto()
+        # Não pede conferência manual: desde 17/08/2026 o robô devolve esses
+        # itens à fila sozinho, então mandar alguém olhar seria trabalho
+        # inventado. O resumo diz que ele continua tentando.
+        assert "continua tentando sozinho" in resumo.como_texto()
 
 
 class TestTravamento:

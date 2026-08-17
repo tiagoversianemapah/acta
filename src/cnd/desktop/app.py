@@ -2708,10 +2708,14 @@ class Aplicativo(ctk.CTk):
         # A faixa só existe quando há o que fazer. Cartão marcando "0
         # pendências" ocupa espaço para dizer que não há nada a dizer.
         if falhados:
+            # Desde 17/08/2026 falha não é ponto final: o robô devolve esses
+            # itens à fila sozinho, com intervalo crescente, até o portal
+            # responder. Dizer "precisa de conferência manual" mandava a
+            # pessoa trabalhar num problema que se resolve sozinho.
             self.rotulo_aviso.configure(
                 text=f"{_numero(falhados)} itens esgotaram as "
-                     f"{self._max_tentativas()} tentativas e precisam de "
-                     f"conferência manual")
+                     f"{self._max_tentativas()} tentativas — o robô vai "
+                     f"tentar de novo sozinho. Só olhe se insistir.")
             self.faixa_aviso.grid(row=3, column=0, sticky="ew", padx=30,
                                   pady=(0, 12))
         else:

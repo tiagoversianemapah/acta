@@ -108,8 +108,9 @@ class ResumoLote:
             linhas.append(f"  {rotulo:32s} {valor}")
         if self.falhados:
             linhas.append("")
-            linhas.append(f"  {self.falhados} item(ns) esgotaram as tentativas "
-                          f"e precisam de conferência manual.")
+            linhas.append(f"  {self.falhados} item(ns) esgotaram as tentativas. "
+                          f"O robô continua tentando sozinho, com intervalo "
+                          f"crescente, até o portal responder.")
         return "\n".join(linhas)
 
 

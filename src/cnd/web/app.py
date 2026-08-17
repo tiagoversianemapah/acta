@@ -278,6 +278,13 @@ def _totais(orgaos: list[dict]) -> dict:
         "pendentes": pendentes,
         "em_execucao": em_execucao,
         "percentual": (concluidos / total * 100) if total else 0.0,
+        # Quantos ainda não terminaram, do jeito que a pergunta é feita.
+        # "Pendentes" mostrava só quem está na fila e deixava os falhados de
+        # fora, então o cartão dizia 4 quando faltavam 7 — e a diferença só
+        # aparecia numa coluna lá embaixo. Desde que a recuperação automática
+        # existe, falhado também vai ser tentado de novo: para quem olha, as
+        # duas coisas são igualmente "ainda não terminou".
+        "restantes": max(total - concluidos, 0),
         "por_desfecho": por_desfecho,
         "negativas": por_desfecho.get("NEGATIVA", 0),
         "positivas": por_desfecho.get("POSITIVA", 0),
