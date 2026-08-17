@@ -267,3 +267,17 @@ class TestAnteciparEsperas:
         self._esperando(conn, lote, "00000000000001", 3600)
 
         assert fila.antecipar_esperas(conn, "CRF") == 0
+
+
+class TestLeituraTolerante:
+    """O painel lê o estado da recuperação a cada atualização de tela."""
+
+    def test_tabela_ausente_nao_derruba_a_leitura(self, conn):
+        """Banco antigo aberto por painel novo. Deixar o erro subir derrubava
+        a resposta INTEIRA do /api/estado, e a máquina aparecia offline por
+        causa de uma linha que só enfeitava a tela (17/08/2026)."""
+        conn.execute("DROP TABLE recuperacao")
+
+        estado = recuperacao.estado(conn, "RFB_PJ")
+
+        assert estado.virgem

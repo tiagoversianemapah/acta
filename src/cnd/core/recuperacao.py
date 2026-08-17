@@ -59,9 +59,21 @@ class EstadoRecuperacao:
 
 
 def estado(conn: sqlite3.Connection, orgao: str) -> EstadoRecuperacao:
-    linha = conn.execute(
-        "SELECT rodadas, proxima_em FROM recuperacao WHERE orgao = ?", (orgao,)
-    ).fetchone()
+    """Nunca levanta: o painel lê isto a cada atualização de tela.
+
+    A tabela nasce com o schema, mas quem lê pode chegar antes de quem
+    escreve — banco antigo aberto por um painel novo, conexão só de
+    leitura. Deixar o erro subir derrubava a resposta INTEIRA do /api/estado
+    e a máquina aparecia como offline por causa de uma linha que só
+    enfeitava a tela.
+    """
+    try:
+        linha = conn.execute(
+            "SELECT rodadas, proxima_em FROM recuperacao WHERE orgao = ?",
+            (orgao,),
+        ).fetchone()
+    except sqlite3.Error:
+        return EstadoRecuperacao(0, None)
     if linha is None:
         return EstadoRecuperacao(0, None)
     return EstadoRecuperacao(int(linha["rodadas"]), linha["proxima_em"])

@@ -426,6 +426,11 @@ def _contexto_painel(
         "orgaos": orgaos,
         "totais": totais,
         "bloqueios": [o for o in orgaos if o.get("disjuntor") == "ABERTO"],
+        # Órgãos com trabalho parado esperando a próxima rodada. Sem esta
+        # lista a tela não tem como avisar que o lote continua aberto.
+        "orgaos_aguardando_rodada": [
+            o for o in orgaos if (o.get("falhados") or 0) > 0
+        ],
         "atividade": selecionada.atividade if selecionada else [],
         "saude": selecionada.saude if selecionada else {},
         "lotes": lotes,

@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter
 
-from cnd.core import breaker, tempo
+from cnd.core import breaker, recuperacao, tempo
 from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config, nome_do_orgao
 from cnd.web import consultas, relatorio
@@ -91,6 +91,7 @@ def montar(obter_config: Callable[[], Config],
             for codigo in consultas.orgaos_do_lote(conn, lote_id):
                 resumo = consultas.resumo(conn, codigo, lote_id)
                 estado_breaker = breaker.consultar(conn, codigo)
+                estado_recuperacao = recuperacao.estado(conn, codigo)
                 orgaos.append({
                     "orgao": codigo,
                     # Quem conhece o nome de exibição é a máquina que atende
@@ -112,6 +113,12 @@ def montar(obter_config: Callable[[], Config],
                     "disjuntor_motivo": estado_breaker.motivo,
                     "disjuntor_ate": estado_breaker.aberto_ate,
                     **_detalhes_do_breaker(cfg, codigo, estado_breaker),
+                    # Sem isto a tela mentia por omissão: "99,8% concluído"
+                    # e "0 na fila" leem como lote terminado, quando há itens
+                    # esperando a próxima rodada. Quem olha precisa saber que
+                    # ainda não acabou, e quando volta.
+                    "recuperacao_rodadas": estado_recuperacao.rodadas,
+                    "recuperacao_em": estado_recuperacao.proxima_em,
                     "eta_horas": consultas.eta_horas(resumo),
                 })
 

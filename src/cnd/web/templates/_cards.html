@@ -389,6 +389,40 @@
     </section>
     {% endif %}
 
+    {# O lote não acabou, e a tela precisa dizer isso. Com "99,8% concluído"
+       e "0 na fila", quem olha conclui que terminou — e vai embora deixando
+       trabalho para trás. Esta faixa é a única coisa na tela que denuncia a
+       diferença, então ela aparece mesmo com o robô saudável. #}
+    {% set aguardando = orgaos_aguardando_rodada %}
+    {% if aguardando %}
+    <section class="linha-alerta">
+      <div>
+        <span class="rotulo">Lote não concluído</span>
+        <strong>
+          {{ aguardando | sum(attribute='falhados') }} item(ns) voltam para a
+          fila sozinhos — o robô não desistiu
+        </strong>
+      </div>
+      <div class="bloqueios">
+        {% for r in aguardando %}
+          <div>
+            <b>{{ r.rotulo or rotulo_orgao(r.orgao) }}</b>
+            <span>
+              {{ r.falhados }} sem resposta do portal depois de 3 tentativas
+              {%- if r.recuperacao_rodadas %} · {{ r.recuperacao_rodadas }}ª rodada já tentada{% endif %}
+            </span>
+            {% if r.recuperacao_em %}
+              <span class="bloqueio-tempo">
+                <span class="tempo-pill"><b>Volta</b> <span data-retoma-hora="{{ r.recuperacao_em }}"></span></span>
+                <span class="tempo-pill"><b>Faltam</b> <span data-countdown="{{ r.recuperacao_em }}"></span></span>
+              </span>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     <section class="maquina-resumo">
       <div class="secao-topo">
         <h2>Máquina</h2>
