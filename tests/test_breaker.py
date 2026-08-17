@@ -227,3 +227,52 @@ def test_sondagem_ruim_reabre(conn):
 
     assert estado.estado == breaker.ABERTO
     assert estado.aberturas == 2
+
+
+# --------------------------------------------------------------------------
+# Resultado pendente: quem descansa é o órgão, não o CNPJ (17/08/2026)
+# --------------------------------------------------------------------------
+
+def test_pendentes_isolados_nao_pausam(conn, lote):
+    """Um engasgo solto do portal não pode parar a fila inteira."""
+    estado = _registrar(conn, lote, "FAKE", Desfecho.RESULTADO_PENDENTE, 2)
+
+    assert estado.estado == breaker.FECHADO
+
+
+def test_tres_pendentes_pausam_o_orgao(conn, lote):
+    """O portal está engasgado para todo mundo: seguir batendo com os
+    próximos CNPJs só gasta consulta contra uma tela que não vai responder."""
+    estado = _registrar(conn, lote, "FAKE", Desfecho.RESULTADO_PENDENTE, 3)
+
+    assert estado.estado == breaker.ABERTO
+    assert "pendentes" in estado.motivo
+
+
+def test_pausa_por_pendente_e_fixa_e_nao_dobra(conn):
+    """Diferente do bloqueio: o portal disse "alguns minutos", e dobrar até
+    2h30 puniria o robô por um problema que costuma passar sozinho."""
+    parametros = breaker.ParametrosBreaker(cooldown_pendente_s=1800)
+
+    primeira = breaker.abrir(conn, "FAKE", "pendentes", parametros,
+                             Desfecho.RESULTADO_PENDENTE)
+    segunda = breaker.abrir(conn, "FAKE", "pendentes", parametros,
+                            Desfecho.RESULTADO_PENDENTE)
+
+    assert breaker.cooldown_atual_s(primeira, parametros,
+                                    Desfecho.RESULTADO_PENDENTE) == 1800
+    assert breaker.cooldown_atual_s(segunda, parametros,
+                                    Desfecho.RESULTADO_PENDENTE) == 1800
+    assert segunda.aberturas == 2
+
+
+def test_sondagem_com_pendente_reabre(conn):
+    """Resultado pendente não é resultado limpo: o portal continua sem
+    entregar certidão, então religar o órgão agora seria cedo demais."""
+    breaker.abrir(conn, "FAKE", "teste", P)
+    conn.execute("UPDATE breaker SET estado = ? WHERE orgao = 'FAKE'",
+                 (breaker.MEIO_ABERTO,))
+
+    estado = breaker.avaliar(conn, "FAKE", Desfecho.RESULTADO_PENDENTE, P)
+
+    assert estado.estado == breaker.ABERTO

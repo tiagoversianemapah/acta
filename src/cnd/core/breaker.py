@@ -23,6 +23,15 @@ ABERTO = "ABERTO"
 MEIO_ABERTO = "MEIO_ABERTO"
 COOLDOWN_MAXIMO_DO_SISTEMA_S = 9000
 
+# Desfechos que fazem o ÓRGÃO parar, e não o item apanhar. Todos têm em
+# comum não serem resposta sobre a empresa: são o portal indisponível,
+# desconfiado ou engasgado. Insistir com outros itens do mesmo órgão nesse
+# estado não adianta e ainda reforça o sinal de robô.
+ALIMENTAM_O_DISJUNTOR = BLOQUEIOS | {
+    Desfecho.ERRO_TECNICO,
+    Desfecho.RESULTADO_PENDENTE,
+}
+
 
 @dataclass(frozen=True)
 class ParametrosBreaker:
@@ -33,6 +42,14 @@ class ParametrosBreaker:
     cooldown_maximo_s: int = COOLDOWN_MAXIMO_DO_SISTEMA_S
     cooldown_erro_inicial_s: int | None = None
     cooldown_erro_maximo_s: int | None = None
+    # "Retorne em alguns minutos" não é recado sobre aquela empresa: é o
+    # portal engasgado para todo mundo. Punir o CNPJ (esperar 1h para tentar
+    # ELE de novo) fazia o item morrer sem culpa nenhuma, enquanto o robô
+    # seguia batendo no portal doente com os outros. O certo é o inverso —
+    # o item volta para o fim da fila na hora, e quem descansa é o órgão.
+    # Decisão de operação, 17/08/2026.
+    pendentes_para_pausar: int = 3
+    cooldown_pendente_s: int = 1800      # 30 min, e NÃO dobra
 
     @classmethod
     def de_config(cls, dados: dict) -> ParametrosBreaker:
@@ -119,6 +136,12 @@ def pode_despachar(conn: sqlite3.Connection, orgao: str) -> bool:
 
 def _faixa_cooldown(p: ParametrosBreaker,
                     desfecho: Desfecho | str | None) -> tuple[int, int]:
+    # Piso e teto iguais => pausa FIXA. O portal disse "alguns minutos";
+    # dobrar até 2h30 puniria o robô por um problema que não é dele e que
+    # costuma passar sozinho.
+    if str(desfecho or "") == str(Desfecho.RESULTADO_PENDENTE):
+        fixo = min(p.cooldown_pendente_s, COOLDOWN_MAXIMO_DO_SISTEMA_S)
+        return fixo, fixo
     if (str(desfecho or "") == str(Desfecho.ERRO_TECNICO)
             and p.cooldown_erro_inicial_s is not None):
         teto = p.cooldown_erro_maximo_s
@@ -194,14 +217,15 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
     _garantir(conn, orgao)
     atual = consultar(conn, orgao)
 
-    # Sondagem em MEIO_ABERTO: um resultado limpo religa o órgão.
+    # Sondagem em MEIO_ABERTO: um resultado limpo religa o órgão. Resultado
+    # pendente não é limpo — o portal continua sem entregar certidão.
     if atual.estado == MEIO_ABERTO:
-        if desfecho in BLOQUEIOS or desfecho == Desfecho.ERRO_TECNICO:
+        if desfecho in ALIMENTAM_O_DISJUNTOR:
             return abrir(conn, orgao, f"sondagem falhou ({desfecho})", p, desfecho)
         fechar(conn, orgao)
         return consultar(conn, orgao)
 
-    if desfecho not in BLOQUEIOS and desfecho != Desfecho.ERRO_TECNICO:
+    if desfecho not in ALIMENTAM_O_DISJUNTOR:
         return atual
 
     recentes = [
@@ -225,6 +249,16 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
             return abrir(
                 conn, orgao,
                 f"{bloqueios} bloqueios nas últimas {len(recentes)} tentativas",
+                p, desfecho,
+            )
+
+    if desfecho == Desfecho.RESULTADO_PENDENTE:
+        pendentes = sum(1 for d in recentes if d == Desfecho.RESULTADO_PENDENTE)
+        if pendentes >= p.pendentes_para_pausar:
+            return abrir(
+                conn, orgao,
+                f"{pendentes} resultados pendentes nas últimas "
+                f"{len(recentes)} tentativas",
                 p, desfecho,
             )
 

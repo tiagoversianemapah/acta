@@ -70,3 +70,24 @@ class TestVocabulario:
         só o segundo caso deve desacelerar o ritmo."""
         assert Desfecho.ERRO_TECNICO not in BLOQUEIOS
         assert Desfecho.RESULTADO_PENDENTE not in BLOQUEIOS
+
+
+def test_resultado_pendente_volta_para_a_fila_sem_castigo():
+    """"Retorne em alguns minutos" não é recado sobre aquela empresa.
+
+    Espera zero devolve o item para o FIM da fila na hora (reivindicar
+    ordena por proxima_execucao_em, então quem acabou de voltar fica atrás
+    de todos). Quem descansa é o órgão, pelo disjuntor. Até 17/08/2026 isto
+    era 1h por tentativa e matou 19 itens do lote 1 — decisão de operação
+    de 17/08/2026.
+    """
+    from cnd.core.modelos import Desfecho
+    from cnd.infra.config import ParametrosRetry
+
+    p = ParametrosRetry()
+
+    assert p.espera(Desfecho.RESULTADO_PENDENTE, 1) == 0.0
+    assert p.espera(Desfecho.RESULTADO_PENDENTE, 2) == 0.0
+    assert p.espera(Desfecho.RESULTADO_PENDENTE, 3) == 0.0
+    # O bloqueio continua recuando, que é outro caso: ali o portal nos barrou.
+    assert p.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1) > 0

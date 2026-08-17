@@ -27,8 +27,13 @@ class ParametrosRetry:
     backoff_bloqueio_s: tuple[int, ...] = (300, 900, 1800)
     # Uma chance curta para 005/023/106 antes de devolver o item para a fila.
     retentativa_bloqueio_s: tuple[float, ...] = (30.0, 90.0)
-    # Tela 001 da Receita: servico temporariamente indisponivel.
-    backoff_resultado_pendente_s: tuple[int, ...] = (3600, 3600, 3600)
+    # Tela 001/033 da Receita: "retorne em alguns minutos". ZERO de
+    # propósito — o item volta para o FIM da fila na hora (a fila ordena por
+    # proxima_execucao_em, então quem acabou de voltar fica atrás de todo
+    # mundo). Quem descansa é o órgão, pelo disjuntor: ver
+    # ParametrosBreaker.cooldown_pendente_s. Punir o CNPJ, como era até
+    # 17/08/2026, matava 19 itens por um engasgo que não era deles.
+    backoff_resultado_pendente_s: tuple[int, ...] = (0, 0, 0)
 
     def espera(self, desfecho: str, tentativa: int) -> float:
         """Quanto esperar antes da tentativa seguinte (1 = primeira falha)."""
@@ -285,7 +290,7 @@ def carregar(caminho: Path | None = None) -> Config:
                     retry_bruto.get("retentativa_bloqueio_s", (30.0, 90.0))
                 ),
                 backoff_resultado_pendente_s=tuple(
-                    retry_bruto.get("backoff_resultado_pendente_s", (3600, 3600, 3600))
+                    retry_bruto.get("backoff_resultado_pendente_s", (0, 0, 0))
                 ),
             ),
             recuperacao=ParametrosRecuperacao.de_config(
