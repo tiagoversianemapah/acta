@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cnd.core.breaker import ParametrosBreaker
+from cnd.core.recuperacao import ParametrosRecuperacao
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.db import RAIZ_PROJETO
 
@@ -69,6 +70,8 @@ class ConfigOrgao:
     pacing: ParametrosRitmo
     breaker: ParametrosBreaker
     retry: ParametrosRetry
+    recuperacao: ParametrosRecuperacao = field(
+        default_factory=ParametrosRecuperacao)
     # Nome de exibição. Vazio cai na tabela acima, e a tabela cai no
     # próprio código — um órgão novo funciona antes de alguém batizá-lo.
     nome: str = ""
@@ -285,9 +288,12 @@ def carregar(caminho: Path | None = None) -> Config:
                     retry_bruto.get("backoff_resultado_pendente_s", (3600, 3600, 3600))
                 ),
             ),
+            recuperacao=ParametrosRecuperacao.de_config(
+                bruto.get("recuperacao", {})
+            ),
             extras={c: v for c, v in bruto.items()
                     if c not in ("ativo", "adapter", "workers", "nome",
-                                 "pacing", "breaker", "retry")},
+                                 "pacing", "breaker", "retry", "recuperacao")},
         )
 
     def caminho_de(chave: str, padrao: str) -> Path:

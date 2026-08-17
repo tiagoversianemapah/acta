@@ -159,3 +159,41 @@ completa no [ADR-004](adr/ADR-004-estrategia-captcha.md).
   risco R1).
 - **Canário diário:** 1 CNPJ de controle por órgão, executado de madrugada;
   falha do canário gera alerta no dashboard antes de queimar o lote inteiro.
+
+## 8. Recuperação automática do lote (17/08/2026)
+
+`FAILED` não é fim de linha. Depois das três tentativas o item sai da fila
+para não travá-la, mas os desfechos que levam até lá — `BLOQUEIO_TEMPORARIO`,
+`RESULTADO_PENDENTE`, `ERRO_TECNICO` — são **todos passageiros**: nenhum deles
+é o órgão respondendo sobre a empresa. Deixar o item ali significa entregar o
+lote incompleto e depender de alguém lembrar de apertar "Reenviar itens com
+falha".
+
+Foi o que aconteceu no lote 1: **30 itens em aberto, nenhum deles resposta do
+portal** — 19 esperando resultado, 7 bloqueados no código 005 e 4 numa tela
+(CNPJ inapto) que o robô ainda não conhecia.
+
+Regra: **quando a fila do órgão esvazia e ainda há falhas, o vigia devolve
+tudo para a fila e recomeça.** Só com a fila vazia — enquanto houver item
+pendente o lote ainda está andando, e reenfileirar no meio só bagunçaria a
+ordem.
+
+A espera entre rodadas **cresce**: 30min, 1h, 2h, 4h, teto de 6h.
+
+| Motivo | Consequência |
+|---|---|
+| Portal fora do ar | insistir de minuto em minuto não resolve e ainda alimenta o disjuntor |
+| Item quebrado de verdade | custo limitado a ~4 consultas por dia, em vez de dezenas |
+
+**Não existe rodada final.** Por decisão de operação, o robô nunca desiste:
+item sem resposta é trabalho não entregue. O que existe é aviso — a partir da
+5ª rodada (`avisar_apos`) o Teams recebe um alerta para alguém olhar o que
+está travando, e o robô continua tentando enquanto ninguém olha.
+
+A contagem de rodadas fica na tabela `recuperacao`, e não em memória: o robô
+reinicia a cada atualização, e uma contagem volátil faria toda publicação
+zerar a espera e voltar a martelar o portal de 30 em 30 minutos.
+
+Configurável em `[orgaos.X.recuperacao]`; `ativa = false` volta ao
+comportamento antigo. Implementação em `core/recuperacao.py`, execução em
+`Vigia._recuperar_falhas`.

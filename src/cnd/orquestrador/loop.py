@@ -20,8 +20,9 @@ from dataclasses import dataclass, field, replace
 
 from cnd.adapters.base import AdapterOrgao
 from cnd.adapters.base import carregar as carregar_adapter
-from cnd.core import breaker, fila, ritmo, tempo
+from cnd.core import breaker, fila, recuperacao, ritmo, tempo
 from cnd.core.modelos import CONCLUSIVOS, RETENTAVEIS, Desfecho, ResultadoTentativa
+from cnd.core.modelos import Status
 from cnd.infra import alertas, heartbeat
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.config import carregar as carregar_config
@@ -431,12 +432,79 @@ class Vigia:
             return
         self._proxima = time.monotonic() + INTERVALO_VIGILANCIA_S
         try:
+            for orgao in self.orgaos:
+                self._recuperar_falhas(conn, orgao)
             self._avisar_lotes_concluidos(conn)
             for orgao in self.orgaos:
                 self._avisar_travamento(conn, orgao)
             self._avisar_falhas_definitivas(conn)
         except Exception:
             log.exception("falha_na_vigilancia")
+
+    # ------------------------------------------------------------------
+    def _recuperar_falhas(self, conn, orgao: ConfigOrgao) -> None:
+        """Devolve as falhas à fila quando não há mais nada a fazer.
+
+        Roda só com a fila vazia: enquanto houver item pendente, o lote
+        ainda está andando e reenfileirar agora só atrapalharia a ordem.
+        Ver core/recuperacao.py para o porquê da espera crescente.
+        """
+        p = orgao.recuperacao
+        if not p.ativa:
+            return
+
+        falhados = conn.execute(
+            "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status = ?",
+            (orgao.codigo, Status.FAILED),
+        ).fetchone()["n"]
+
+        if not falhados:
+            # Lote fechado: a contagem recomeça, senão o próximo herdaria a
+            # espera de 6h da última rodada deste.
+            recuperacao.zerar(conn, orgao.codigo)
+            return
+
+        if fila.ha_trabalho(conn, orgao.codigo):
+            return
+
+        estado_atual = recuperacao.agendar(conn, orgao.codigo, p)
+        if not recuperacao.pode_recuperar(conn, orgao.codigo):
+            log.info("recuperacao_agendada", extra={
+                "orgao": orgao.codigo,
+                "falhados": falhados,
+                "rodada": estado_atual.rodadas + 1,
+                "em": estado_atual.proxima_em,
+            })
+            return
+
+        devolvidos = fila.reenfileirar_falhados(conn, orgao.codigo)
+        novo = recuperacao.registrar_rodada(conn, orgao.codigo, p)
+        log.warning("recuperacao_automatica", extra={
+            "orgao": orgao.codigo,
+            "devolvidos": devolvidos,
+            "rodada": novo.rodadas,
+            "proxima_em": novo.proxima_em,
+        })
+
+        if novo.rodadas == p.avisar_apos:
+            # Uma vez só, na rodada exata: o robô continua tentando, mas a
+            # essa altura o problema não é passageiro e alguém precisa ver.
+            alertas.enviar(
+                self.cfg.alertas,
+                f"{orgao.codigo}: {devolvidos} item(ns) resistindo",
+                f"Já são {novo.rodadas} rodadas de recuperação automática e "
+                f"estes itens continuam sem resposta do portal.",
+                acao="1. Abrir o painel em Itens > Situação: Falhou.\n"
+                     "2. Conferir a coluna Retorno do portal — se a mensagem "
+                     "for sempre a mesma, pode ser tela que o robô ainda não "
+                     "conhece.\n"
+                     "3. O robô NÃO desistiu: segue tentando com intervalo "
+                     "cada vez maior.",
+                dados={"Itens": str(devolvidos), "Rodadas": str(novo.rodadas)},
+                acoes=self._link_das_falhas(),
+                severidade="aviso",
+                chave=f"recuperacao:{orgao.codigo}",
+            )
 
     # ------------------------------------------------------------------
     def _avisar_lotes_concluidos(self, conn) -> None:

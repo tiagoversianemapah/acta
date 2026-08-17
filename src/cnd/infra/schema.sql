@@ -80,6 +80,17 @@ CREATE TABLE IF NOT EXISTS breaker (
     atualizado_em TEXT NOT NULL
 );
 
+-- Rodadas de recuperação automática: quantas vezes seguidas o órgão
+-- devolveu falhas à fila sem conseguir fechar o lote. Fica no banco porque
+-- a contagem precisa sobreviver a reinício do robô — que é justamente o
+-- que acontece a cada atualização.
+CREATE TABLE IF NOT EXISTS recuperacao (
+    orgao         TEXT PRIMARY KEY,
+    rodadas       INTEGER NOT NULL DEFAULT 0,
+    proxima_em    TEXT,
+    atualizado_em TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS heartbeat (
     processo      TEXT PRIMARY KEY,
     atualizado_em TEXT NOT NULL
