@@ -362,9 +362,9 @@
                 <span class="tempo-pill"><b>Faltam</b> <span data-countdown="{{ b.disjuntor_ate }}"></span></span>
               </span>
             {% endif %}
-            <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ b.orgao }}/retomar">
-              <button class="botao botao-mini" type="submit">Resetar pausa</button>
-            </form>
+            {# Sem botão aqui: "Retomar agora", na barra do topo, faz o mesmo
+               e está sempre no lugar. Dois botões para a mesma ação obrigam
+               a decidir qual apertar quando não há decisão nenhuma. #}
           </div>
         {% endfor %}
       </div>
@@ -490,9 +490,7 @@
                     </small>
                     <small class="linha-menor">faltam <span data-countdown="{{ r.disjuntor_ate }}"></span></small>
                   {% endif %}
-                  <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ r.orgao }}/retomar">
-                    <button class="botao botao-mini" type="submit">Resetar pausa</button>
-                  </form>
+                  {# Ação fica só em "Retomar agora", na barra do topo. #}
                 {% else %}
                   <span class="muted">sem bloqueio</span>
                 {% endif %}
