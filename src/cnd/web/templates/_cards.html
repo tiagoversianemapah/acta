@@ -145,6 +145,8 @@
   {% set cpen = totais.cpen %}
   {% set positivas = totais.positivas %}
   {% set insuficientes = totais.insuficientes %}
+  {% set inaptos = totais.get('inaptos', 0) %}
+  {% set aproveitadas = totais.get('aproveitadas', 0) %}
   {% set robo_parado_com_fila = selecionada.pendentes and not selecionada.robo_ativo %}
 
   <section class="operacao">
@@ -312,7 +314,15 @@
             <span><strong>{{ negativas }}</strong><small>negativas</small></span>
             <span><strong>{{ positivas }}</strong><small>positivas</small></span>
           </span>
-          <small><span class="bolinha-texto verde">{{ cpen }} CPEN</span> · <span>{{ insuficientes }} informações insuficientes</span></small>
+          {# Tudo que conta como concluído aparece aqui: sem isto a soma da
+             linha não bate com o "X de Y" da fila, e quem confere fica sem
+             saber para onde foram os que faltam. #}
+          <small>
+            <span class="bolinha-texto verde">{{ cpen }} CPEN</span>
+            {% if inaptos %} · <span>{{ inaptos }} CNPJ inapto</span>{% endif %}
+            {% if aproveitadas %} · <span>{{ aproveitadas }} já emitidas no mês</span>{% endif %}
+            {% if insuficientes %} · <span>{{ insuficientes }} informações insuficientes</span>{% endif %}
+          </small>
         </span>
       </div>
     </div>

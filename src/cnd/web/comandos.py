@@ -95,17 +95,47 @@ try {
         }
     }
 
+    # Conferir que morreram, e nao dormir 2s torcendo. Em 17/08/2026 o
+    # robo ainda estava encerrando quando a copia comecou, segurou
+    # _internal\libcrypto-3.dll, a copia parou no meio e a maquina ficou
+    # com instalacao pela metade e painel morto - so voltou por AnyDesk.
+    # Mesma licao do _matar_edge em adapters/rfb_cego.py.
     Registrar "parando processos"
     try { schtasks /End /TN "ACTA Painel" 2>$null | Out-Null } catch {}
-    Get-Process cnd, ACTA -ErrorAction SilentlyContinue | Stop-Process -Force
-    Start-Sleep -Seconds 2
+    $vivos = @()
+    $limiteMorte = (Get-Date).AddSeconds(30)
+    while ($true) {
+        $vivos = @(Get-Process cnd, ACTA -ErrorAction SilentlyContinue)
+        if ($vivos.Count -eq 0 -or (Get-Date) -ge $limiteMorte) { break }
+        $vivos | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Milliseconds 500
+    }
+    if ($vivos.Count -gt 0) {
+        Registrar ("AVISO: " + $vivos.Count + " processo(s) ainda vivos; a copia pode falhar")
+    } else {
+        Registrar "processos encerrados"
+    }
 
     Registrar "extraindo"
     if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
     Expand-Archive $zip -DestinationPath $tmp -Force
 
+    # Mesmo com tudo morto, o Windows solta o arquivo com atraso (antivirus,
+    # indexador). Insistir por ~15s custa menos que deixar a pasta pela
+    # metade, que e o unico estado do qual nao da para sair pela rede.
     Registrar "copiando para $Pasta"
-    Copy-Item "$tmp\*" $Pasta -Recurse -Force
+    $tentativaCopia = 0
+    while ($true) {
+        try {
+            Copy-Item "$tmp\*" $Pasta -Recurse -Force -ErrorAction Stop
+            break
+        } catch {
+            $tentativaCopia++
+            if ($tentativaCopia -ge 5) { throw }
+            Registrar ("copia falhou (" + $tentativaCopia + "/5): " + $_.Exception.Message)
+            Start-Sleep -Seconds 3
+        }
+    }
 
     Registrar "subindo painel"
     $agendadorOk = $false
@@ -116,7 +146,14 @@ try {
     } else {
         Registrar "agendador indisponivel; usando inicio direto"
     }
-    Start-Sleep -Seconds 5
+    # Dar tempo ao agendador antes de chamar o fallback. Com 5s fixos, o
+    # painel do agendador quase nunca tinha subido ainda, o fallback abria um
+    # SEGUNDO painel, e sobrava um processo extra segurando arquivo - que e
+    # justamente o que trava a copia da proxima atualizacao.
+    $limitePainel = (Get-Date).AddSeconds(25)
+    while ((Get-Date) -lt $limitePainel -and -not (PainelRespondendo)) {
+        Start-Sleep -Seconds 2
+    }
     if (-not (PainelRespondendo)) {
         IniciarPainelDireto
         Registrar "painel iniciado por fallback direto"

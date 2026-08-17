@@ -283,6 +283,11 @@ def _totais(orgaos: list[dict]) -> dict:
         "positivas": por_desfecho.get("POSITIVA", 0),
         "cpen": por_desfecho.get("CPEN", 0),
         "insuficientes": por_desfecho.get("PENDENCIA_MANUAL", 0),
+        # Sem isto o cartão não fecha com o "X de Y": os inaptos entram em
+        # concluídos e não apareciam em lugar nenhum do resumo, deixando uma
+        # diferença sem explicação para quem confere.
+        "inaptos": por_desfecho.get("INAPTA", 0),
+        "aproveitadas": por_desfecho.get("APROVEITADA", 0),
     }
 
 
