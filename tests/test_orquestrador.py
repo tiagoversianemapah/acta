@@ -300,3 +300,24 @@ def test_bloqueio_033_nao_usa_retentativa_rapida(conn, lote, tmp_path, monkeypat
     job = conn.execute("SELECT status, tentativas FROM job").fetchone()
     assert job["status"] == Status.RETRY_WAIT
     assert job["tentativas"] == 1
+
+
+def test_cnpj_com_005_nao_dispara_micro_retentativa(conn, lote, tmp_path, monkeypatch):
+    """Os dígitos do CNPJ não são código do portal.
+
+    Sem a data no regex, uma empresa com 005 no número ganhava a segunda
+    chance por acaso — e outra, sem ele, não ganhava mesmo tendo levado
+    bloqueio de verdade."""
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal="cnpj 12.005.678/0001-99 nao foi possivel emitir",
+        ),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
+
+    executar(cfg, limite=1)
+
+    assert adapter.chamadas == ["00000000000001"]

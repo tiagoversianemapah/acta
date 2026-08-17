@@ -1067,3 +1067,36 @@ class TestPortalPedeAMatriz:
         assert enviados == ["04401250000194"]
         assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
         assert "matriz" in resultado.mensagem_portal
+
+
+class TestCodigoDoPortalNaoSeConfundeComCNPJ:
+    """O código de erro vem carimbado com a data ("033 - 17/08/2026").
+    Sem exigir esse formato, os três dígitos do CNPJ viravam código."""
+
+    def test_cnpj_com_033_nao_vira_resultado_pendente(self):
+        """Caso real: ANGONESE, 17.406.033/0001-39, em 17/08/2026. O portal
+        respondeu 'insuficientes' (POSITIVA) e o item foi classificado como
+        pendente por causa do próprio número — e, como o robô não desiste,
+        entraria em laço eterno."""
+        texto = (
+            "Resultado da Emissao de Certidao cnpj 17.406.033/0001-39 "
+            "As informacoes disponiveis na Receita Federal e na "
+            "Procuradoria-Geral da Fazenda Nacional sobre o contribuinte "
+            "17.406.033/0001-39 sao insuficientes para emitir a certidao "
+            "pela internet."
+        )
+
+        assert _classificar_texto_portal(texto) == "insuficiente"
+
+    def test_codigo_033_de_verdade_continua_valendo(self):
+        texto = ("Nao foi possivel emitir a certidao. Tente novamente em "
+                 "alguns minutos. 033 - 17/08/2026 15:18:08")
+
+        assert _classificar_texto_portal(texto) == "retentar"
+
+    def test_cnpj_com_033_e_codigo_033_juntos(self):
+        """O CNPJ não pode anular o código verdadeiro nem o contrário."""
+        texto = ("cnpj 17.406.033/0001-39 Nao foi possivel emitir a certidao. "
+                 "Tente novamente em alguns minutos. 033 - 17/08/2026 15:18:08")
+
+        assert _classificar_texto_portal(texto) == "retentar"

@@ -94,7 +94,9 @@ FRASES_BLOQUEIO = (
     "não foi possível emitir a certidão",
     "não foi possível concluir a ação para o contribuinte informado",
 )
-RE_CODIGO_033 = re.compile(r"\b033\b")
+# Com a data junto, senão casa com os dígitos do próprio CNPJ — ver o
+# comentário em rfb_cego, e o caso da ANGONESE em 17/08/2026.
+RE_CODIGO_033 = re.compile(r"\b033\s*-\s*\d{2}/\d{2}/\d{4}")
 
 # Títulos do PDF, na ORDEM em que devem ser testados. CPEN vem primeiro
 # porque o título dela contém a palavra "positiva" — testar positiva

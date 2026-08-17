@@ -37,7 +37,10 @@ PAUSA_SEM_TRABALHO_S = 5.0
 PAUSA_BREAKER_ABERTO_S = 15.0
 PAUSA_FORA_DA_JANELA_S = 60.0
 INTERVALO_HEARTBEAT_S = 60.0
-RE_CODIGO_PORTAL = re.compile(r"\b(001|005|023|033|106)\b")
+# Com a data junto: o código vem carimbado como "005 - 17/08/2026 12:03:32".
+# Sem exigir isso, os três dígitos do CNPJ passavam por código do portal e o
+# item ganhava (ou perdia) a micro-retentativa por acaso do número dele.
+RE_CODIGO_PORTAL = re.compile(r"\b(001|005|023|033|106)\s*-\s*\d{2}/\d{2}/\d{4}")
 
 
 def _codigo_portal(resultado: ResultadoTentativa) -> str | None:

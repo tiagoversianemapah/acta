@@ -123,7 +123,13 @@ FRASES_COOKIE_GRANDE = (
     "request header or cookie too large",
     "400 bad request",
 )
-RE_CODIGO_033 = re.compile(r"\b033\b")
+# O portal carimba o código junto da data: "033 - 17/08/2026 15:18:08".
+# Exigir esse formato não é preciosismo — sem a data, `\b033\b` casava com
+# os três dígitos DENTRO DO CNPJ. A ANGONESE (17.406.033/0001-39) recebeu
+# "são insuficientes para emitir a certidão", que é POSITIVA, e foi
+# classificada como resultado pendente por causa do próprio número dela
+# (17/08/2026). Vale para qualquer CNPJ com .033/ ou .033. no meio.
+RE_CODIGO_033 = re.compile(r"\b033\s*-\s*\d{2}/\d{2}/\d{4}")
 
 # Pontos fora do centro da tela. O modal branco costuma cobrir o centro; o
 # veu escuro aparece melhor nas laterais.
