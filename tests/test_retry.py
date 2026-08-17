@@ -14,7 +14,6 @@ P = ParametrosRetry(
     backoff_erro_s=(120, 600, 2700),
     backoff_captcha_s=(3600, 14400, 43200),
     backoff_bloqueio_s=(300, 900, 1800),
-    backoff_resultado_pendente_s=(3600, 3600, 3600),
 )
 
 
@@ -31,10 +30,11 @@ class TestBackoff:
         assert P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1) == 300
         assert P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 2) == 900
 
-    def test_resultado_pendente_recua_uma_hora(self):
-        """Portal indisponivel volta para a fila sem abrir pausa do orgao."""
-        assert P.espera(Desfecho.RESULTADO_PENDENTE, 1) == 3600
-        assert P.espera(Desfecho.RESULTADO_PENDENTE, 2) == 3600
+    def test_resultado_pendente_nao_recua(self):
+        """Era 1h por tentativa até 17/08/2026, e matou 19 itens do lote 1.
+        Agora o item volta para o fim da fila na hora e quem descansa é o
+        órgão — ver o teste no fim deste arquivo."""
+        assert P.espera(Desfecho.RESULTADO_PENDENTE, 1) == 0.0
 
     def test_bloqueio_e_captcha_tem_esperas_diferentes(self):
         assert (P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1)
@@ -78,16 +78,22 @@ def test_resultado_pendente_volta_para_a_fila_sem_castigo():
     Espera zero devolve o item para o FIM da fila na hora (reivindicar
     ordena por proxima_execucao_em, então quem acabou de voltar fica atrás
     de todos). Quem descansa é o órgão, pelo disjuntor. Até 17/08/2026 isto
-    era 1h por tentativa e matou 19 itens do lote 1 — decisão de operação
-    de 17/08/2026.
+    era 1h por tentativa e matou 19 itens do lote 1.
     """
-    from cnd.core.modelos import Desfecho
-    from cnd.infra.config import ParametrosRetry
-
-    p = ParametrosRetry()
-
-    assert p.espera(Desfecho.RESULTADO_PENDENTE, 1) == 0.0
-    assert p.espera(Desfecho.RESULTADO_PENDENTE, 2) == 0.0
-    assert p.espera(Desfecho.RESULTADO_PENDENTE, 3) == 0.0
+    assert P.espera(Desfecho.RESULTADO_PENDENTE, 1) == 0.0
+    assert P.espera(Desfecho.RESULTADO_PENDENTE, 2) == 0.0
+    assert P.espera(Desfecho.RESULTADO_PENDENTE, 3) == 0.0
     # O bloqueio continua recuando, que é outro caso: ali o portal nos barrou.
-    assert p.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1) > 0
+    assert P.espera(Desfecho.BLOQUEIO_TEMPORARIO, 1) > 0
+
+
+def test_nao_da_para_reativar_o_castigo_por_config():
+    """A regra não é calibrável, e é isso que a protege.
+
+    Enquanto foi parâmetro, um config desatualizado numa máquina desfazia a
+    correção — foi o que aconteceu no robô, que ficou com [3600,3600,3600]
+    depois de o código já estar certo. Config antigo agora é ignorado.
+    """
+    from cnd.infra.config import ParametrosRetry as PR
+
+    assert "backoff_resultado_pendente_s" not in PR.__dataclass_fields__

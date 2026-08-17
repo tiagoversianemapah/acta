@@ -848,6 +848,36 @@ def acao_robo_remoto(indice: int, acao: str):
     )
 
 
+@app.post("/acoes/maquina/{indice}/breaker/retomar")
+def acao_resetar_pausa_toda(indice: int):
+    """Botão sempre visível: destrava a máquina sem exigir saber o órgão."""
+    try:
+        if cfg.rede.maquinas:
+            if indice < 0 or indice >= len(cfg.rede.maquinas):
+                raise RuntimeError("Maquina nao encontrada.")
+            resposta = remoto.retomar_todas_as_pausas(
+                cfg.rede.maquinas[indice], cfg.rede.senha
+            )
+            if resposta is None:
+                raise RuntimeError("Nao consegui resetar a pausa da maquina.")
+        else:
+            if indice != 0:
+                raise RuntimeError("Maquina nao encontrada.")
+            for orgao_ativo in cfg.ativos():
+                _resetar_pausa_local(orgao_ativo.codigo)
+    except Exception as erro:
+        log.warning("reset_pausa_falhou",
+                    extra={"maquina": indice, "erro": str(erro)})
+        return RedirectResponse(_url_destino("/", indice, erro=str(erro)),
+                                status_code=303)
+
+    log.info("breaker_retomado_manualmente", extra={"maquina": indice})
+    return RedirectResponse(
+        _url_destino("/", indice, mensagem="Pausa resetada."),
+        status_code=303,
+    )
+
+
 @app.post("/acoes/maquina/{indice}/breaker/{orgao}/retomar")
 def acao_resetar_pausa_maquina(indice: int, orgao: str):
     try:

@@ -27,22 +27,28 @@ class ParametrosRetry:
     backoff_bloqueio_s: tuple[int, ...] = (300, 900, 1800)
     # Uma chance curta para 005/023/106 antes de devolver o item para a fila.
     retentativa_bloqueio_s: tuple[float, ...] = (30.0, 90.0)
-    # Tela 001/033 da Receita: "retorne em alguns minutos". ZERO de
-    # propósito — o item volta para o FIM da fila na hora (a fila ordena por
-    # proxima_execucao_em, então quem acabou de voltar fica atrás de todo
-    # mundo). Quem descansa é o órgão, pelo disjuntor: ver
-    # ParametrosBreaker.cooldown_pendente_s. Punir o CNPJ, como era até
-    # 17/08/2026, matava 19 itens por um engasgo que não era deles.
-    backoff_resultado_pendente_s: tuple[int, ...] = (0, 0, 0)
+    # Resultado pendente NÃO tem espera configurável, e isso é de propósito.
+    #
+    # "Retorne em alguns minutos" é o portal engasgado para todo mundo, não
+    # recado sobre aquela empresa — então castigar o CNPJ é sempre errado,
+    # em qualquer valor. Não é uma escolha de operação a ser calibrada; é
+    # regra. Enquanto foi parâmetro (1h por tentativa, até 17/08/2026), a
+    # regra podia ser desfeita por um arquivo desatualizado numa máquina —
+    # e foi exatamente o que aconteceu: o config do robô continuou com
+    # [3600,3600,3600] depois de o código já ter sido corrigido.
+    #
+    # O item volta para o FIM da fila na hora (reivindicar ordena por
+    # proxima_execucao_em). Quem descansa é o órgão, pelo disjuntor: ver
+    # ParametrosBreaker.cooldown_pendente_s.
 
     def espera(self, desfecho: str, tentativa: int) -> float:
         """Quanto esperar antes da tentativa seguinte (1 = primeira falha)."""
         from cnd.core.modelos import Desfecho
 
+        if desfecho == Desfecho.RESULTADO_PENDENTE:
+            return 0.0                      # ver o comentário acima
         if desfecho == Desfecho.CAPTCHA:
             tabela = self.backoff_captcha_s
-        elif desfecho == Desfecho.RESULTADO_PENDENTE:
-            tabela = self.backoff_resultado_pendente_s
         elif desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
             tabela = self.backoff_bloqueio_s
         else:
@@ -289,9 +295,8 @@ def carregar(caminho: Path | None = None) -> Config:
                 retentativa_bloqueio_s=tuple(
                     retry_bruto.get("retentativa_bloqueio_s", (30.0, 90.0))
                 ),
-                backoff_resultado_pendente_s=tuple(
-                    retry_bruto.get("backoff_resultado_pendente_s", (0, 0, 0))
-                ),
+                # backoff_resultado_pendente_s foi removido de propósito e é
+                # ignorado se ainda existir no config de alguma máquina.
             ),
             recuperacao=ParametrosRecuperacao.de_config(
                 bruto.get("recuperacao", {})

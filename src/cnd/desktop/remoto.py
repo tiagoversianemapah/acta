@@ -439,6 +439,15 @@ def reenfileirar_falhados(
         return None
 
 
+def retomar_todas_as_pausas(maquina: Maquina, senha: str = "") -> dict | None:
+    """Destrava todos os órgãos da máquina — o botão sempre visível."""
+    try:
+        resultado = _postar(maquina, "/api/breaker/retomar", senha)
+    except Exception:
+        return None
+    return resultado if isinstance(resultado, dict) else None
+
+
 def retomar_pausa(maquina: Maquina, orgao: str, senha: str = "") -> dict | None:
     try:
         resultado = _postar(maquina, f"/api/breaker/{orgao}/retomar", senha)

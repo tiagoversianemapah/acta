@@ -308,6 +308,29 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
             conn.close()
         return {"ok": True, "quantidade": quantidade}
 
+    @roteador.post("/breaker/retomar")
+    def retomar_todas_as_pausas():
+        """Destrava TUDO nesta máquina, sem precisar saber o nome do órgão.
+
+        Existe para o botão do painel poder ficar sempre visível. O de
+        órgão único só aparecia quando já havia pausa — e quem quer
+        destravar costuma chegar na tela justamente por causa da pausa,
+        depois de ela ter começado.
+        """
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+        conn = conectar(cfg.banco)
+        try:
+            codigos = [o.codigo for o in cfg.ativos()]
+            for codigo in codigos:
+                breaker.fechar(conn, codigo)
+                conn.execute("UPDATE breaker SET aberturas = 0 WHERE orgao = ?",
+                             (codigo,))
+        finally:
+            conn.close()
+        return _resposta("Pausa resetada.",
+                         f"Pausa resetada em {len(codigos)} órgão(s).")
+
     @roteador.post("/breaker/{orgao}/retomar")
     def retomar_breaker(orgao: str):
         """Fecha a pausa automatica de um orgao nesta maquina."""
