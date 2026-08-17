@@ -24,7 +24,7 @@ class ParametrosRetry:
     backoff_captcha_s: tuple[int, ...] = (3600, 14400, 43200)
     # O portal pede "alguns minutos" — esperar horas seria exagero.
     backoff_bloqueio_s: tuple[int, ...] = (300, 900, 1800)
-    # Uma chance curta para 106/023 antes de devolver o item para a fila.
+    # Uma chance curta para 005/023/106 antes de devolver o item para a fila.
     retentativa_bloqueio_s: tuple[float, ...] = (30.0, 90.0)
     # Tela 001 da Receita: servico temporariamente indisponivel.
     backoff_resultado_pendente_s: tuple[int, ...] = (3600, 3600, 3600)

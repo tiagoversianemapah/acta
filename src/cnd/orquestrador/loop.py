@@ -36,7 +36,7 @@ PAUSA_SEM_TRABALHO_S = 5.0
 PAUSA_BREAKER_ABERTO_S = 15.0
 PAUSA_FORA_DA_JANELA_S = 60.0
 INTERVALO_HEARTBEAT_S = 60.0
-RE_CODIGO_PORTAL = re.compile(r"\b(001|023|033|106)\b")
+RE_CODIGO_PORTAL = re.compile(r"\b(001|005|023|033|106)\b")
 
 
 def _codigo_portal(resultado: ResultadoTentativa) -> str | None:
@@ -46,9 +46,15 @@ def _codigo_portal(resultado: ResultadoTentativa) -> str | None:
 
 
 def _deve_retentativa_rapida(resultado: ResultadoTentativa) -> bool:
+    # 005 entrou em 17/08/2026: era o código de TODOS os 7 itens que
+    # morreram como FAILED no servidor, e a mensagem dele é literalmente
+    # "tente novamente em alguns minutos" — exatamente o caso para o qual
+    # esta segunda chance foi feita. Sem estar nesta lista ele pulava a
+    # micro-retentativa, ia direto ao backoff de 5/15/30 min e queimava as
+    # três tentativas sem nunca tentar com sessão nova.
     if resultado.desfecho != Desfecho.BLOQUEIO_TEMPORARIO:
         return False
-    return _codigo_portal(resultado) in {"023", "106"}
+    return _codigo_portal(resultado) in {"005", "023", "106"}
 
 
 def _espera_retentativa_rapida(valores: tuple[float, ...]) -> float:

@@ -248,6 +248,41 @@ def test_bloqueio_106_persistente_reagenda_sem_consumir_duas_tentativas(
     assert breaker.consultar(conn, "FAKE").estado == breaker.FECHADO
 
 
+def test_bloqueio_005_faz_retentativa_rapida_e_recupera(
+    conn, lote, tmp_path, monkeypatch
+):
+    """005 é o código que mais apareceu em produção (17/08/2026) e o único
+    que morria sem nunca tentar com sessão nova."""
+    criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(
+            Desfecho.BLOQUEIO_TEMPORARIO,
+            mensagem_portal=("Nao foi possivel emitir a certidao. Tente "
+                             "novamente em alguns minutos. 005 - 17/08/2026"),
+        ),
+        ResultadoTentativa(
+            Desfecho.NEGATIVA,
+            mensagem_portal="PDF baixado",
+        ),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
+
+    executar(cfg, ate_esvaziar=True)
+
+    assert adapter.chamadas == ["00000000000001", "00000000000001"]
+    assert adapter.reinicios == 1
+    job = conn.execute("SELECT status, desfecho, tentativas FROM job").fetchone()
+    assert job["status"] == Status.DONE
+    assert job["desfecho"] == Desfecho.NEGATIVA
+    assert job["tentativas"] == 1
+    tentativas = conn.execute("SELECT mensagem_portal FROM tentativa").fetchall()
+    assert len(tentativas) == 1
+    assert "micro-retentativa apos bloqueio temporario 005" in (
+        tentativas[0]["mensagem_portal"]
+    )
+
+
 def test_bloqueio_033_nao_usa_retentativa_rapida(conn, lote, tmp_path, monkeypatch):
     criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
     adapter = AdapterSequencial([
