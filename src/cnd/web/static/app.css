@@ -1132,3 +1132,15 @@
   /* Aviso que mora dentro da coluna de conteúdo. Ganha a margem que o
      conteúdo tem, senão encostaria nas bordas da seção. */
   .aviso-conteudo{margin:1.35rem 1.6rem 0}
+
+  /* Controle da fila, na linha de cada automação — é onde a decisão
+     acontece. Botão pequeno de propósito: são ações de exceção, e dar a
+     eles o peso do "Iniciar robô" faria a tabela gritar. */
+  .coluna-controle{min-width:210px}
+  .acoes-fila{display:flex;gap:.35rem;flex-wrap:wrap;margin-top:.35rem}
+  .botao.mini,.primario.mini{
+    min-height:0;padding:.3rem .7rem;font-size:11.5px;border-radius:99px;
+  }
+  .botao.mini.perigo{color:var(--vermelho);border-color:var(--linha)}
+  .botao.mini.perigo:hover{border-color:var(--vermelho);background:var(--vermelho-fundo)}
+  .botao.mini[disabled],.primario.mini[disabled]{opacity:.6;cursor:progress}

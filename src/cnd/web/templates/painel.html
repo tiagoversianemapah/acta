@@ -151,6 +151,41 @@
       return;
     }
 
+    // Controle da fila: estacionar, cancelar, retomar, rodar agora. Passa
+    // pelo mesmo caminho dos outros comandos, mas com confirmação quando a
+    // ação é a única que não se desfaz sozinha.
+    const fila = evento.target.closest('[data-fila]');
+    if (fila) {
+      evento.preventDefault();
+      const aviso = fila.dataset.confirmar;
+      if (aviso && !window.confirm(aviso)) return;
+      fila.disabled = true;
+      const rotulo = fila.textContent;
+      fila.textContent = 'Aguarde';
+      fetch(fila.dataset.fila, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({acao: fila.dataset.acao})
+      })
+        .then(function (resposta) {
+          if (!resposta.ok) return resposta.json().then(function (corpo) {
+            throw new Error(corpo.detail || 'Comando recusado');
+          });
+          return resposta.json();
+        })
+        .then(function (corpo) {
+          window.location.href = destinoComMensagem(
+            mensagemDaApi(corpo, 'Fila atualizada.'));
+        })
+        .catch(function (erro) {
+          fila.disabled = false;
+          fila.textContent = rotulo;
+          avisarErro(erro);
+        });
+      return;
+    }
+
     const botao = evento.target.closest('[data-api-action]');
     if (!botao) return;
     evento.preventDefault();

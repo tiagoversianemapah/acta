@@ -436,70 +436,13 @@
     </section>
     {% endif %}
 
-    <section class="maquina-resumo">
-      <div class="secao-topo">
-        <h2>Máquina</h2>
-        <span>{{ dados.versao or 'sem versão' }}</span>
-      </div>
-      <div class="ficha-maquina">
-        <div>
-          {{ icone_ficha('ram') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">RAM</span>
-            <strong>{{ '%.1f' % ram_usada }} GB de {{ '%.1f' % ram_total }} GB</strong>
-            <div class="barra"><span style="width: {{ '%.1f' % ram_pct }}%"></span></div>
-          </div>
-        </div>
-        <div>
-          {{ icone_ficha('disco') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">Disco</span>
-            <strong>{{ '%.1f' % disco_usado }} GB usados · {{ '%.1f' % disco_livre }} GB livres</strong>
-            <div class="barra"><span style="width: {{ '%.1f' % disco_pct }}%"></span></div>
-          </div>
-        </div>
-        <div>
-          {{ icone_ficha('ligada') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">Ligada há</span>
-            <strong>{% if ligada_h >= 0 %}{{ '%.1f' % ligada_h }} h{% else %}sem leitura{% endif %}</strong>
-          </div>
-        </div>
-        <div>
-          {{ icone_ficha('certidoes') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">Certidões salvas</span>
-            <strong>{{ dados.certidoes.arquivos or 0 }} PDFs · {{ dados.certidoes.gb or 0 }} GB</strong>
-          </div>
-        </div>
-        <div>
-          {{ icone_ficha('calibragem') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">Calibragem</span>
-            <strong>
-              {% if dados.calibragem %}
-                {{ dados.calibragem.pontos }} pontos · {{ dados.calibragem.quando }}
-              {% else %}
-                sem registro
-              {% endif %}
-            </strong>
-          </div>
-        </div>
-        {% if saude.avisos %}
-        <div>
-          {{ icone_ficha('calibragem') }}
-          <div class="ficha-corpo">
-            <span class="rotulo-ficha">Avisos</span>
-            <strong>{{ saude.avisos | join(' · ') }}</strong>
-          </div>
-        </div>
-        {% endif %}
-      </div>
-    </section>
+    {# RAM, disco, tempo ligada e calibragem saíram daqui para o
+       Diagnóstico: ninguém opera olhando memória, e cada coisa a mais
+       nesta tela rouba atenção do que importa — o que está rodando. #}
 
     <section class="tabela-operacional">
       <div class="secao-topo">
-        <h2>Órgãos e fila</h2>
+        <h2>Na fila</h2>
         <span>{{ orgaos | length }}</span>
       </div>
       <div class="rolagem">
@@ -512,7 +455,7 @@
               <th class="num">Concluído</th>
               <th class="num">Falhas</th>
               <th>Ritmo</th>
-              <th>Bloqueio</th>
+              <th>Controle</th>
             </tr>
           </thead>
           <tbody>
@@ -523,7 +466,11 @@
                 <small class="linha-menor">{{ r.orgao }}</small>
               </td>
               <td>
-                {% if not selecionada.robo_ativo and r.pendentes %}
+                {% if r.situacao_fila == 'ESTACIONADA' %}
+                  <span class="estado cinza">Estacionada</span>
+                {% elif r.situacao_fila == 'CANCELADA' %}
+                  <span class="estado cinza">Cancelada</span>
+                {% elif not selecionada.robo_ativo and r.pendentes %}
                   <span class="estado vermelho">Parado</span>
                 {% elif r.disjuntor == 'ABERTO' %}
                   <span class="estado ambar">Pausado</span>
@@ -545,19 +492,36 @@
                   <span class="muted">sem leitura</span>
                 {% endif %}
               </td>
-              <td>
+              <td class="coluna-controle">
                 {% if r.disjuntor == 'ABERTO' %}
+                  {# O bloqueio do portal continua visível, mas agora divide
+                     espaço com o controle: quem vê "pausado" quer saber se
+                     pode mandar outra automação na frente. #}
                   <span class="texto-alerta">{{ r.disjuntor_motivo or 'bloqueio temporário' }}</span>
                   {% if r.disjuntor_ate %}
-                    <small class="linha-menor">
-                      {% if r.disjuntor_pausa %}pausa {{ r.disjuntor_pausa }} · {% endif %}
-                      retoma às <span data-retoma-hora="{{ r.disjuntor_ate }}"></span>
-                    </small>
-                    <small class="linha-menor">faltam <span data-countdown="{{ r.disjuntor_ate }}"></span></small>
+                    <small class="linha-menor">retoma às <span data-retoma-hora="{{ r.disjuntor_ate }}"></span></small>
                   {% endif %}
-                  {# Ação fica só em "Retomar agora", na barra do topo. #}
-                {% else %}
-                  <span class="muted">sem bloqueio</span>
+                {% endif %}
+                {% if lote_id and selecionada.local %}
+                <div class="acoes-fila">
+                  {% if r.situacao_fila == 'ATIVA' %}
+                    <button class="botao mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
+                            data-acao="estacionar" data-label="Estacionar">Estacionar</button>
+                    <button class="botao mini perigo"
+                            data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
+                            data-acao="cancelar" data-label="Cancelar"
+                            data-confirmar="Cancelar {{ r.pendentes }} item(ns) desta automação? Eles ficam guardados, mas saem da fila.">Cancelar</button>
+                  {% else %}
+                    {# Estacionada ou cancelada: o caminho de volta é o mesmo,
+                       e "Rodar agora" também reativa — ver core/controle.py. #}
+                    <button class="primario mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
+                            data-acao="agora" data-label="Rodar agora">Rodar agora</button>
+                    {% if r.situacao_fila == 'ESTACIONADA' %}
+                    <button class="botao mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
+                            data-acao="retomar" data-label="Retomar">Retomar</button>
+                    {% endif %}
+                  {% endif %}
+                </div>
                 {% endif %}
               </td>
             </tr>

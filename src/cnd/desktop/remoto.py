@@ -296,7 +296,7 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
     """
     import platform
 
-    from cnd.core import breaker
+    from cnd.core import breaker, controle
     from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
     from cnd.infra import maquina
     from cnd.infra.db import conectar_leitura
@@ -309,9 +309,17 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
             lotes = consultas.lotes(conn)
             em_execucao = consultas.lote_em_execucao(conn)
+            # Colhido AQUI, com a conexão viva: a lista de órgãos abaixo é
+            # montada depois do `with`, e consultar de lá dava "Cannot
+            # operate on a closed database".
+            situacao_da_fila = {
+                r.orgao: controle.situacao(conn, panorama.lote_id, r.orgao).situacao
+                for r in panorama.resumos
+            } if panorama.lote_id is not None else {}
     except Exception:
         lotes = []
         em_execucao = None
+        situacao_da_fila = {}
     # Sem AnyDesk no cartão local: é o computador em que a pessoa já está,
     # e oferecer acesso remoto a si mesmo só confundiria.
     esta = Maquina(cfg.rede.nome or platform.node(), "")
@@ -339,6 +347,12 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
                               if panorama.robo_idade_s is not None else None),
         "orgaos": [{
             "orgao": r.orgao,
+            # Estacionada, cancelada ou priorizada. Precisa vir por aqui
+            # também, e não só pelo /api/estado: quando o console É a
+            # máquina do robô, a tela lê deste caminho — e sem isto os
+            # botões da fila apareciam todos como se nada estivesse
+            # estacionado.
+            "situacao_fila": situacao_da_fila.get(r.orgao, controle.ATIVA),
             "rotulo": (cfg.orgaos[r.orgao].rotulo if r.orgao in cfg.orgaos
                        else nome_do_orgao(r.orgao)),
             "total": r.total, "concluidos": r.concluidos,
