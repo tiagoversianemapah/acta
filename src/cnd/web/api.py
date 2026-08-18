@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter
 
-from cnd.core import breaker, recuperacao, tempo
+from cnd.core import breaker, controle, recuperacao, tempo
 from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config, nome_do_orgao
 from cnd.web import consultas, relatorio
@@ -95,8 +95,15 @@ def montar(obter_config: Callable[[], Config],
                 # não existe. Ver breaker.consultar_leitura.
                 estado_breaker = breaker.consultar_leitura(conn, codigo)
                 estado_recuperacao = recuperacao.estado(conn, codigo)
+                # Estacionada, cancelada ou na frente da fila. Vai por órgão
+                # porque é assim que se controla: a mesma planilha tem RFB e
+                # CRF, e parar um não pode parar o outro.
+                ctrl = (controle.situacao(conn, lote_id, codigo)
+                        if lote_id is not None else controle.PADRAO)
                 orgaos.append({
                     "orgao": codigo,
+                    "situacao_fila": ctrl.situacao,
+                    "prioridade": ctrl.prioridade,
                     # Quem conhece o nome de exibição é a máquina que atende
                     # o órgão; o console só repassa o que ela mandar.
                     "rotulo": (cfg.orgaos[codigo].rotulo if codigo in cfg.orgaos

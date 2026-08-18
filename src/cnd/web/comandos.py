@@ -30,7 +30,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
-from cnd.core import breaker, fila, tempo
+from cnd.core import breaker, controle, fila, tempo
 from cnd.core.modelos import Status
 from cnd.infra import maquina
 from cnd.infra.config import Config
@@ -175,6 +175,16 @@ try {
 """
 
 
+def _recado_do_controle(acao: str, resultado) -> str:
+    """O que a tela mostra depois. Diz o que MUDOU, não o que foi clicado."""
+    return {
+        "estacionar": "Automação estacionada. Retome quando quiser.",
+        "retomar": "Automação retomada de onde parou.",
+        "cancelar": "Automação cancelada. Os itens continuam guardados.",
+        "agora": "Automação posta na frente da fila.",
+    }.get((acao or "").strip().lower(), "Fila atualizada.")
+
+
 def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
     roteador = APIRouter(prefix="/api")
 
@@ -193,6 +203,50 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                        "robô move o mouse de verdade e lê a tela — precisa da "
                        "sessão do Windows aberta e destravada. Entre nela "
                        "pelo AnyDesk, destrave e tente de novo.")
+
+    @roteador.post("/fila/{lote_id}/{orgao}")
+    def controlar_fila(lote_id: int, orgao: str, acao: str = Form(...)):
+        """Estaciona, cancela, retoma ou põe na frente uma automação.
+
+        Por planilha E automação: a carteira vem com RFB e CRF no mesmo
+        arquivo, e parar um não pode parar o outro. Ver core/controle.py.
+
+        Não mexe no robô. Se ele estiver rodando um item desta automação
+        agora, aquele item termina — estacionar vale do próximo em diante.
+        Interromper no meio deixaria o portal com uma consulta aberta e a
+        certidão sem baixar, que é pior do que esperar dez segundos.
+        """
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+
+        acoes = {
+            "estacionar": lambda c: controle.definir(
+                c, lote_id, orgao, controle.ESTACIONADA),
+            "retomar": lambda c: controle.definir(
+                c, lote_id, orgao, controle.ATIVA),
+            "cancelar": lambda c: controle.definir(
+                c, lote_id, orgao, controle.CANCELADA),
+            "agora": lambda c: controle.priorizar(c, lote_id, orgao),
+        }
+        executar = acoes.get((acao or "").strip().lower())
+        if executar is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ação desconhecida: {acao!r}. "
+                       f"Use: {', '.join(sorted(acoes))}.")
+
+        conn = conectar(cfg.banco)
+        try:
+            resultado = executar(conn)
+            conn.commit()
+        finally:
+            conn.close()
+
+        log.info("fila_controlada", extra={
+            "lote": lote_id, "orgao": orgao, "acao": acao,
+            "situacao": resultado.situacao, "prioridade": resultado.prioridade,
+        })
+        return _resposta(_recado_do_controle(acao, resultado))
 
     @roteador.post("/identidade")
     def renomear_maquina(nome: str = Form(...)):
