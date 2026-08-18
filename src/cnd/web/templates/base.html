@@ -78,13 +78,17 @@ document.addEventListener('change', function (evento) {
 marcarEscolhidas();
 
 document.addEventListener('submit', function (evento) {
-  var botao = evento.target.querySelector('[data-enviando]');
-  if (!botao) return;
-  // Uma planilha de milhares de linhas leva segundos subindo. Sem travar o
-  // botão, o segundo clique manda o arquivo de novo e cria dois lotes.
-  botao.disabled = true;
-  var texto = botao.querySelector('span');
-  if (texto) texto.textContent = botao.dataset.enviando;
+  var alvo = evento.target.querySelector('[data-enviando]');
+  if (!alvo) return;
+  // Uma planilha de milhares de linhas leva segundos subindo, e a página
+  // fica parada o tempo todo. Sem dizer que está indo, quem enviou aperta
+  // de novo — e cada aperto cria um lote repetido na máquina.
+  if (alvo.disabled === false) alvo.disabled = true;
+  alvo.classList.add('carregando');
+  var campo = alvo.querySelector('input[type=file]');
+  if (campo) campo.disabled = true;      // trava o rótulo, que não desabilita
+  var texto = alvo.querySelector('span');
+  if (texto) texto.textContent = alvo.dataset.enviando;
 });
 </script>
 </body>

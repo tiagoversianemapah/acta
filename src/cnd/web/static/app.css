@@ -1113,3 +1113,18 @@
     .mapear-topo form{grid-column:2;justify-self:start}
     .mapear-acoes{flex-direction:column-reverse;align-items:stretch}
   }
+
+  /* "Está indo" precisa ser visível sem ler: o giro conta o tempo que a
+     barra de progresso do navegador não conta, porque o envio de formulário
+     não mostra progresso nenhum. */
+  .botao.carregando,.primario.carregando{
+    pointer-events:none;opacity:.75;cursor:progress;
+  }
+  .botao.carregando svg:first-child,.primario.carregando svg:first-child{
+    animation:girando .9s linear infinite;transform-origin:50% 50%;
+  }
+  @keyframes girando{to{transform:rotate(360deg)}}
+  @media (prefers-reduced-motion:reduce){
+    .botao.carregando svg:first-child,
+    .primario.carregando svg:first-child{animation:none}
+  }

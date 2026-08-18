@@ -177,7 +177,11 @@
              finalmente existem para serem mostradas. #}
           <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
                 enctype="multipart/form-data" class="upload-planilha">
-            <label class="botao">
+            {# `data-enviando` no rótulo, e não num botão: aqui quem
+               dispara o envio é o próprio seletor de arquivo. Uma planilha
+               de milhares de linhas leva segundos subindo, e sem dizer
+               nada a pessoa aperta de novo — e cada aperto cria um lote. #}
+            <label class="botao" data-enviando="Enviando planilha…">
               {{ icone_acao('planilha') }}<span>Enviar planilha</span>
               <input type="file" name="arquivo" accept=".xlsx,.xlsm"
                      onchange="this.form.submit()">
