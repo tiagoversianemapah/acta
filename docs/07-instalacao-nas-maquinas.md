@@ -158,12 +158,31 @@ confiança da máquina — um certificado criado por nós mesmos, ainda que
 distribuído por diretiva de grupo, não passa. Ele serve para diretiva de
 aplicativo dentro do domínio, e só.
 
-### O Playwright fica de fora
+### O Playwright agora vai junto — por causa do CRF
 
-O adapter `rfb_pj` está desligado — o portal da Receita o detecta
-(comprovado em 07/08/2026, teste A/B com o mesmo CNPJ e o mesmo IP). Ele é
-excluído do pacote junto com o Playwright, que traria ~100 MB de navegador
-sem utilidade. O pacote fica em 50 MB.
+Isto mudou em 18/08/2026 e vale entender por quê, porque a frase antiga
+misturava duas coisas.
+
+O adapter `rfb_pj` continua excluído: o portal da **Receita** detecta
+automação de navegador (comprovado em 07/08/2026, teste A/B com o mesmo
+CNPJ e o mesmo IP), e quem atende a Receita é o `rfb_cego`, que move o
+mouse de verdade e lê a tela.
+
+Mas isso é sobre a Receita, não sobre o Playwright. O portal do **CRF da
+Caixa** usa ShieldSquare/Radware, que barra `urllib` (uma requisição
+direta volta página de captcha) e **não** barrou o Playwright dirigindo o
+Edge. Então o `crf.py` é por elemento — sem calibragem, sem coordenada de
+tela, sem depender da resolução da máquina.
+
+E não são "~100 MB de navegador": o adapter usa `channel="msedge"`, o Edge
+que toda máquina já tem. O que entra é o *driver* do Playwright (node +
+protocolo). **O pacote foi de 50 MB para 190 MB.** Vale saber antes de
+atualizar várias máquinas pela rede.
+
+O `cnd.adapters.crf` precisa estar nos `hiddenimports` do `acta.spec`:
+adapter é escolhido pelo `config.toml` e importado por nome, coisa que o
+PyInstaller não enxerga lendo o código. Sem essa linha o pacote sai limpo
+e o robô morre ao subir o worker.
 
 ## Instalar numa máquina do robô
 

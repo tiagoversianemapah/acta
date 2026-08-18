@@ -91,7 +91,11 @@ def _esperar_texto(pagina, frases: tuple[str, ...], timeout_ms: float) -> bool:
     try:
         pagina.wait_for_function(
             """alvos => {
-                const t = (document.body.innerText || '')
+                // `document.body &&` nao e paranoia: durante a navegacao do
+                // JSF o body fica nulo por um instante, e sem isto o
+                // wait_for_function estoura TypeError em vez de continuar
+                // esperando -- virando ERRO_TECNICO intermitente.
+                const t = ((document.body && document.body.innerText) || '')
                     .normalize('NFKD').replace(/[\\u0300-\\u036f]/g, '')
                     .toLowerCase();
                 return alvos.some(a => t.includes(a));
