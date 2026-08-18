@@ -1,7 +1,15 @@
 """Relatório final do lote em Excel — ver docs/05, seção 2.
 
-Espelha o formato que a equipe já usa: uma aba por tipo de desfecho, mais
-resumo e erros. É o produto que sai do sistema para a operação.
+Quatro abas, cada uma respondendo uma pergunta da operação: quanto saiu
+(Resumo), o que eu entrego ao cliente (Certidões), quem precisa de
+tratamento (Pendências) e o que não terminou (Erros).
+
+Antes era uma aba por desfecho — nove no total, quatro delas com colunas
+idênticas e só o desfecho mudando. Quem abria o arquivo tinha de somar
+guias na mão para saber quantas certidões tinha em mãos, e ainda passava
+pela Auditoria (uma linha por tentativa do robô), que é diagnóstico
+técnico e não relatório. O desfecho não sumiu: virou coluna, que o Excel
+filtra melhor do que uma guia separada.
 """
 from __future__ import annotations
 
@@ -86,21 +94,54 @@ class Recorte:
         return self.mes + (f" · {self.orgao}" if self.orgao else "")
 
 
+# Rótulo de cada desfecho dentro da planilha. Com o desfecho virando
+# coluna, ele passa a ser lido linha a linha — e "PENDENCIA_MANUAL" numa
+# célula não diz nada a quem confere. Cobre também as falhas, que antes
+# saíam como código cru na aba de erros e no resumo.
+ROTULO = {
+    Desfecho.NEGATIVA: "Negativa",
+    Desfecho.CPEN: "Positiva c/ efeito de negativa",
+    Desfecho.APROVEITADA: "Já emitida no mês",
+    Desfecho.POSITIVA: "Positiva (com pendência)",
+    Desfecho.PENDENCIA_MANUAL: "Informações insuficientes",
+    Desfecho.INAPTA: "CNPJ inapto (omissão de declarações)",
+    Desfecho.CAPTCHA: "Exigiu captcha",
+    Desfecho.BLOQUEIO_TEMPORARIO: "Portal recusou",
+    Desfecho.RESULTADO_PENDENTE: "Resultado pendente no portal",
+    Desfecho.ERRO_TECNICO: "Erro técnico",
+}
+
+# A ordem em que as linhas aparecem dentro da aba. Não é a alfabética dos
+# códigos: é a da conversa com o cliente — primeiro o que está resolvido,
+# depois o que exige providência dele, por gravidade.
+COM_CERTIDAO = (Desfecho.NEGATIVA, Desfecho.CPEN, Desfecho.APROVEITADA)
+A_TRATAR = (Desfecho.POSITIVA, Desfecho.PENDENCIA_MANUAL, Desfecho.INAPTA)
+
+
 def _por_desfecho(conn: sqlite3.Connection, recorte: Recorte,
-                  desfecho: Desfecho) -> list[sqlite3.Row]:
+                  desfechos: tuple[Desfecho, ...]) -> list[sqlite3.Row]:
+    """Os jobs que terminaram em qualquer um desses desfechos.
+
+    A ordem das linhas segue a ordem dos desfechos pedidos, e não a
+    alfabética do código: dentro da aba, quem lê espera encontrar os
+    grupos na sequência em que eles aparecem no cabeçalho.
+    """
+    marcadores = ", ".join("?" * len(desfechos))
+    ordem = " ".join(f"WHEN ? THEN {i}" for i, _ in enumerate(desfechos))
+    codigos = [str(d) for d in desfechos]
     return conn.execute(
         f"""
-        SELECT e.nome, e.documento, j.orgao, j.atualizado_em,
+        SELECT e.nome, e.documento, j.orgao, j.desfecho, j.atualizado_em,
                c.emitida_em, c.valida_ate, c.codigo_controle, c.caminho_pdf,
                (SELECT t.mensagem_portal FROM tentativa t
                  WHERE t.job_id = j.id ORDER BY t.id DESC LIMIT 1) AS mensagem
           FROM job j
           JOIN empresa e ON e.id = j.empresa_id
           LEFT JOIN certidao c ON c.job_id = j.id
-         WHERE {recorte.onde} AND j.desfecho = ?
-         ORDER BY e.nome
+         WHERE {recorte.onde} AND j.desfecho IN ({marcadores})
+         ORDER BY CASE j.desfecho {ordem} END, e.nome
         """,
-        [*recorte.valores, str(desfecho)],
+        [*recorte.valores, *codigos, *codigos],
     ).fetchall()
 
 
@@ -110,35 +151,38 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     livro = Workbook()
     livro.remove(livro.active)
 
-    # --- abas com PDF ---
-    for desfecho, titulo in ((Desfecho.NEGATIVA, "Negativas"), (Desfecho.CPEN, "CPEN")):
-        registros = _por_desfecho(conn, recorte, desfecho)
-        linhas = [
-            [linha["nome"], formatar(linha["documento"]), linha["orgao"],
-             _data_curta(linha["emitida_em"]), _data_curta(linha["valida_ate"]),
-             linha["codigo_controle"],
-             Path(linha["caminho_pdf"]).name if linha["caminho_pdf"] else ""]
-            for linha in registros
-        ]
-        planilha = livro.create_sheet(titulo)
-        _escrever(planilha,
-                  ["Empresa", "Documento", "Órgão", "Emitida em", "Válida até",
-                   "Código de controle", "Arquivo PDF"], linhas)
+    # --- o que se entrega ao cliente ---
+    # As três valem como certidão em mãos: negativa, positiva com efeito
+    # de negativa (débito parcelado ou suspenso) e a que já havia sido
+    # emitida no mês. Juntas numa aba só porque o destino delas é o mesmo
+    # — o pacote de PDFs — e porque "quantas certidões eu tenho?" deixa de
+    # exigir soma de guias.
+    _escrever(
+        livro.create_sheet("Certidões"),
+        ["Empresa", "Documento", "Órgão", "Tipo", "Emitida em", "Válida até",
+         "Código de controle", "Arquivo PDF"],
+        [[linha["nome"], formatar(linha["documento"]), linha["orgao"],
+          ROTULO.get(linha["desfecho"], linha["desfecho"]),
+          _data_curta(linha["emitida_em"]), _data_curta(linha["valida_ate"]),
+          linha["codigo_controle"],
+          Path(linha["caminho_pdf"]).name if linha["caminho_pdf"] else ""]
+         for linha in _por_desfecho(conn, recorte, COM_CERTIDAO)],
+    )
 
-    # --- abas sem PDF ---
-    for desfecho, titulo in ((Desfecho.POSITIVA, "Positivas"),
-                             (Desfecho.PENDENCIA_MANUAL,
-                              "Informacoes insuficientes"),
-                             (Desfecho.INAPTA, "CNPJ inapto"),
-                             (Desfecho.APROVEITADA, "Aproveitadas")):
-        linhas = [
-            [linha["nome"], formatar(linha["documento"]), linha["orgao"],
-             linha["atualizado_em"], (linha["mensagem"] or "")[:300]]
-            for linha in _por_desfecho(conn, recorte, desfecho)
-        ]
-        _escrever(livro.create_sheet(titulo),
-                  ["Empresa", "Documento", "Órgão", "Consultado em", "Mensagem do portal"],
-                  linhas)
+    # --- o que precisa de providência ---
+    # Nenhuma gerou PDF, e em todas a bola está com o cliente: pagar o
+    # débito, procurar o e-CAC ou entregar as declarações atrasadas. O que
+    # o escritório faz em cada caso muda, e é isso que a coluna Situação
+    # diz — sem ela seriam três abas com o mesmo cabeçalho.
+    _escrever(
+        livro.create_sheet("Pendências"),
+        ["Empresa", "Documento", "Órgão", "Situação", "Consultado em",
+         "Mensagem do portal"],
+        [[linha["nome"], formatar(linha["documento"]), linha["orgao"],
+          ROTULO.get(linha["desfecho"], linha["desfecho"]),
+          _data_curta(linha["atualizado_em"]), (linha["mensagem"] or "")[:300]]
+         for linha in _por_desfecho(conn, recorte, A_TRATAR)],
+    )
 
     # --- erros ---
     erros = conn.execute(
@@ -157,35 +201,9 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
         ["Empresa", "Documento", "Órgão", "Última falha", "Tentativas",
          "Quando", "Mensagem"],
         [[linha["nome"], formatar(linha["documento"]), linha["orgao"],
-          linha["desfecho"], linha["tentativas"], linha["atualizado_em"],
+          ROTULO.get(linha["desfecho"], linha["desfecho"]),
+          linha["tentativas"], _data_curta(linha["atualizado_em"]),
           (linha["mensagem"] or "")[:300]] for linha in erros],
-    )
-
-    # --- auditoria ---
-    auditoria = conn.execute(
-        f"""
-        SELECT t.id, t.job_id, t.numero, t.iniciada_em, t.finalizada_em,
-               t.desfecho AS desfecho_tentativa, t.mensagem_portal,
-               t.evidencia, t.worker,
-               e.nome, e.documento, j.orgao, j.status, j.desfecho AS desfecho_final
-          FROM tentativa t
-          JOIN job j ON j.id = t.job_id
-          JOIN empresa e ON e.id = j.empresa_id
-         WHERE {recorte.onde}
-         ORDER BY t.id
-        """,
-        recorte.valores,
-    ).fetchall()
-    _escrever(
-        livro.create_sheet("Auditoria"),
-        ["Tentativa", "Job", "Empresa", "Documento", "Órgão", "Status final",
-         "Desfecho final", "Nº tentativa", "Iniciada em", "Finalizada em",
-         "Desfecho tentativa", "Worker", "Mensagem", "Evidência"],
-        [[t["id"], t["job_id"], t["nome"], formatar(t["documento"]), t["orgao"],
-          t["status"], t["desfecho_final"], t["numero"], t["iniciada_em"],
-          t["finalizada_em"], t["desfecho_tentativa"], t["worker"],
-          (t["mensagem_portal"] or "")[:500], t["evidencia"] or ""]
-         for t in auditoria],
     )
 
     # --- resumo ---
@@ -205,13 +223,14 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
 
     resumo_linhas.append([])
     resumo_linhas.append(["Desfecho", "Quantidade"])
+    linha_dos_desfechos = len(resumo_linhas)   # 1-indexado, como no Excel
     for linha in conn.execute(
         f"SELECT j.desfecho AS desfecho, COUNT(*) AS n FROM job j "
         f"WHERE {recorte.onde} AND j.desfecho IS NOT NULL "
         f"GROUP BY j.desfecho ORDER BY n DESC", recorte.valores
     ):
         resumo_linhas.append([
-            consultas.ROTULOS.get(linha["desfecho"], linha["desfecho"]), linha["n"]
+            ROTULO.get(linha["desfecho"], linha["desfecho"]), linha["n"]
         ])
 
     planilha = livro.create_sheet("Resumo", 0)
@@ -225,8 +244,12 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     for celula in planilha["A"]:
         if celula.value and not isinstance(celula.value, (int, float)):
             celula.font = Font(bold=True)
-    # As duas linhas de cabeçalho de tabela ganham fundo e texto claro.
-    for numero_da_linha in (7, len(resumo_linhas) - 1):
+    # As duas linhas de cabeçalho de tabela ganham fundo e texto claro. A
+    # segunda tem de ser guardada antes de listar os desfechos: contada
+    # pelo tamanho final da lista, ela só calhava de acertar quando havia
+    # exatamente um desfecho, e nos outros casos pintava uma linha de
+    # dados no meio da tabela.
+    for numero_da_linha in (7, linha_dos_desfechos):
         for celula in planilha[numero_da_linha]:
             if celula.value:
                 celula.font = CABECALHO

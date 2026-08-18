@@ -41,17 +41,22 @@ para acompanhamento humano, sem WebSocket.
 
 ## 2. Relatório de saída (RF-08)
 
-Exportação Excel por lote, botão no dashboard — espelha o formato que a equipe
-já usa:
+Exportação Excel por mês e órgão, botão no dashboard e no ACTA. Quatro abas,
+cada uma respondendo uma pergunta da operação:
 
-| Aba | Conteúdo |
-|---|---|
-| `Negativas` | Empresa, CNPJ, data de emissão, validade, código de controle, nome do arquivo PDF |
-| `CPEN` | Idem |
-| `Positivas` | Empresa, CNPJ, mensagem do portal, data da consulta |
-| `Pendencia manual` | Empresa, CNPJ, motivo/mensagem do portal |
-| `Erros` | Empresa, CNPJ, última falha, nº de tentativas (inclui erros de entrada da ingestão) |
-| `Resumo` | Totais por desfecho, período de execução, parâmetros de pacing usados |
+| Aba | Pergunta | Conteúdo |
+|---|---|---|
+| `Resumo` | Quanto saiu? | Totais por órgão e por desfecho, recorte e data de geração |
+| `Certidões` | O que eu entrego? | `NEGATIVA`, `CPEN` e `APROVEITADA` — empresa, CNPJ, órgão, tipo, emissão, validade, código de controle e nome do PDF |
+| `Pendências` | Quem precisa de providência? | `POSITIVA`, `PENDENCIA_MANUAL` e `INAPTA` — empresa, CNPJ, órgão, situação, data da consulta e mensagem do portal |
+| `Erros` | O que não terminou? | Empresa, CNPJ, órgão, última falha, nº de tentativas e mensagem |
+
+Era uma aba por desfecho, mais uma de auditoria (uma linha por tentativa do
+robô). Nove no total, quatro delas com colunas idênticas e só o desfecho
+mudando: para saber quantas certidões havia em mãos era preciso somar guias, e
+a auditoria — que é diagnóstico técnico, não relatório — vinha no meio do
+caminho. O desfecho virou coluna (`Tipo` / `Situação`), que o Excel filtra
+melhor do que uma guia separada.
 
 Junto do Excel, opção de baixar um `.zip` com os PDFs do lote na mesma estrutura
 de pastas do storage.
