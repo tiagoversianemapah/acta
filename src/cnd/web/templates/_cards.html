@@ -172,54 +172,17 @@
 
       <div class="acoes-operacao">
         {% if selecionada.online and selecionada.roda_robo %}
-          {# Antes o arquivo ia embora no onchange, sem escolha e sem
-             confirmação: a mesma máquina só sabia fazer Receita PJ, e o
-             robô ainda começava sozinho. Agora quem envia diz QUAL
-             automação e aperta Enviar. #}
-          <button type="button" class="botao" data-abrir="#dialogo-planilha">
-            {{ icone_acao('planilha') }}<span>Enviar planilha</span>
-          </button>
-          <dialog id="dialogo-planilha" class="dialogo">
-            <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
-                  enctype="multipart/form-data" class="upload-planilha">
-              <h3>Enviar planilha</h3>
-
-              <label class="campo">
-                <span class="rotulo">Automação</span>
-                <select name="aba" required>
-                  {% for a in automacoes() %}
-                    <option value="{{ a.aba }}"
-                            {{ 'disabled' if not a.disponivel }}
-                            {{ 'selected' if a.disponivel and loop.first }}>
-                      {{ a.rotulo }} · aba {{ a.aba }}
-                      {%- if not a.disponivel %} — {{ a.motivo }}{% endif %}
-                    </option>
-                  {% endfor %}
-                </select>
-                <small>A automação vem da aba da planilha. Só entra o que
-                  estiver nessa aba.</small>
-              </label>
-
-              <label class="campo">
-                <span class="rotulo">Arquivo</span>
-                <input type="file" name="arquivo" accept=".xlsx,.xlsm" required>
-              </label>
-
-              {# O envio de uma planilha grande leva segundos e a página fica
-                 parada. Sem dizer que está carregando, quem enviou aperta de
-                 novo e manda duas vezes. #}
-              <p class="dialogo-nota">
-                A planilha entra na fila, mas <strong>o robô não começa
-                sozinho</strong> — aperte "Iniciar robô" quando quiser.
-              </p>
-              <div class="dialogo-acoes">
-                <button type="button" class="botao" data-fechar>Cancelar</button>
-                <button type="submit" class="primario" data-enviando="Enviando…">
-                  {{ icone_acao('planilha') }}<span>Enviar</span>
-                </button>
-              </div>
-            </form>
-          </dialog>
+          {# Um passo só aqui: escolher o arquivo. O que fazer com cada
+             aba dele se decide na tela seguinte, que é onde as abas
+             finalmente existem para serem mostradas. #}
+          <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
+                enctype="multipart/form-data" class="upload-planilha">
+            <label class="botao">
+              {{ icone_acao('planilha') }}<span>Enviar planilha</span>
+              <input type="file" name="arquivo" accept=".xlsx,.xlsm"
+                     onchange="this.form.submit()">
+            </label>
+          </form>
         {% endif %}
         {% if selecionada.online and selecionada.roda_robo %}
           {% if selecionada.robo_ativo %}

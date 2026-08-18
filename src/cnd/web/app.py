@@ -774,6 +774,74 @@ def baixar_diagnostico(maquina: int | None = None, dias: int = 7):
 # Ações
 # ----------------------------------------------------------------------
 
+# ----------------------------------------------------------------------
+# Envio de planilha em dois passos
+# ----------------------------------------------------------------------
+# As abas de um arquivo só existem depois de abri-lo, então não há como
+# oferecer a escolha antes de recebê-lo. O arquivo espera aqui entre o
+# passo 1 (mandar) e o passo 2 (mapear aba -> automação), identificado por
+# um token que só quem enviou conhece — e sai do disco assim que confirma,
+# desiste ou o prazo vence. Planilha de cliente não pode ficar esquecida
+# numa pasta temporária (RNF-06).
+PRAZO_DA_PLANILHA_GUARDADA_S = 1800.0
+_planilhas_guardadas: dict[str, dict] = {}
+
+
+def _guardar_planilha(caminho: Path, indice: int | None) -> str:
+    _limpar_planilhas_vencidas()
+    token = secrets.token_urlsafe(16)
+    _planilhas_guardadas[token] = {
+        "caminho": caminho, "maquina": indice, "quando": time.monotonic(),
+    }
+    return token
+
+
+def _pegar_planilha(token: str) -> dict | None:
+    _limpar_planilhas_vencidas()
+    guardada = _planilhas_guardadas.get(token)
+    if guardada and not guardada["caminho"].exists():
+        _descartar_planilha(token)
+        return None
+    return guardada
+
+
+def _descartar_planilha(token: str) -> None:
+    guardada = _planilhas_guardadas.pop(token, None)
+    if guardada:
+        shutil.rmtree(guardada["caminho"].parent, ignore_errors=True)
+
+
+def _limpar_planilhas_vencidas() -> None:
+    """Quem fecha a aba no meio do caminho não deixa arquivo para trás."""
+    agora = time.monotonic()
+    vencidos = [t for t, g in _planilhas_guardadas.items()
+                if agora - g["quando"] > PRAZO_DA_PLANILHA_GUARDADA_S]
+    for token in vencidos:
+        _descartar_planilha(token)
+
+
+def _mapa_das_abas(caminho: Path) -> list[dict]:
+    """As abas do arquivo, cada uma com a automação que ela sugere.
+
+    A sugestão vem do nome — aba "CRF" provavelmente é FGTS — mas é só
+    sugestão: quem manda é a escolha na tela. Aba vazia e aba sem sugestão
+    aparecem do mesmo jeito, porque sumir com elas faria a pessoa procurar
+    uma aba que ela sabe que existe.
+    """
+    from cnd.ingestao.planilha import ABA_PARA_ORGAO, abas_da_planilha
+
+    disponiveis = {a["codigo"] for a in automacoes() if a["disponivel"]}
+    mapa = []
+    for nome, linhas in abas_da_planilha(caminho):
+        sugerido = ABA_PARA_ORGAO.get(nome.strip().upper(), ("", ""))[0]
+        mapa.append({
+            "nome": nome,
+            "linhas": linhas,
+            "sugerido": sugerido if sugerido in disponiveis else "",
+        })
+    return mapa
+
+
 async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     nome = Path(arquivo.filename or "planilha.xlsx").name
     if not nome.lower().endswith((".xlsx", ".xlsm")):
@@ -876,49 +944,133 @@ def _resetar_pausa_local(orgao: str) -> None:
 
 
 @app.post("/acoes/maquina/{indice}/planilha")
-async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA,
-                                aba: str = Form(default=""),
-                                orgao: str = Form(default="")):
-    caminho: Path | None = None
-    try:
-        orgao = _automacao_valida(orgao)
-        caminho = await _salvar_planilha_temporaria(arquivo)
-        if cfg.rede.maquinas:
-            if indice < 0 or indice >= len(cfg.rede.maquinas):
-                return RedirectResponse(
-                    _url_destino("/", erro="Maquina nao encontrada."),
-                    status_code=303,
-                )
-            resposta = remoto.enviar_planilha(
-                cfg.rede.maquinas[indice], caminho, cfg.rede.senha,
-                aba=aba, orgao=orgao
-            )
-        else:
-            if indice != 0 or not cfg.rede.roda_robo:
-                return RedirectResponse(
-                    _url_destino("/", erro="Maquina nao encontrada."),
-                    status_code=303,
-                )
-            resposta = _importar_planilha_local(caminho, aba, orgao)
+async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA):
+    """Passo 1: recebe o arquivo e leva para a tela de mapeamento.
 
-        destino = "/jobs"
-        lote = int(resposta.get("lote") or 0) or None
-        return RedirectResponse(
-            _url_destino(
-                destino, indice, arquivo=lote,
-                mensagem=_mensagem_importacao(resposta),
-            ),
-            status_code=303,
-        )
+    Não importa nada ainda. As abas do arquivo só existem depois de
+    abri-lo, então a escolha de "qual aba roda qual automação" só pode ser
+    oferecida agora — e é ela que decide o que entra na fila.
+    """
+    try:
+        caminho = await _salvar_planilha_temporaria(arquivo)
     except Exception as erro:
-        log.warning("envio_planilha_falhou", extra={"maquina": indice, "erro": str(erro)})
+        log.warning("envio_planilha_falhou",
+                    extra={"maquina": indice, "erro": str(erro)})
+        return RedirectResponse(_url_destino("/", indice, erro=str(erro)),
+                                status_code=303)
+
+    try:
+        abas = _mapa_das_abas(caminho)
+    except Exception as erro:
+        shutil.rmtree(caminho.parent, ignore_errors=True)
         return RedirectResponse(
-            _url_destino("/", indice, erro=str(erro)),
-            status_code=303,
-        )
+            _url_destino("/", indice,
+                         erro=f"Não consegui ler a planilha: {erro}"),
+            status_code=303)
+
+    if not abas:
+        shutil.rmtree(caminho.parent, ignore_errors=True)
+        return RedirectResponse(
+            _url_destino("/", indice, erro="A planilha não tem nenhuma aba."),
+            status_code=303)
+
+    token = _guardar_planilha(caminho, indice)
+    return RedirectResponse(f"/planilha/{token}", status_code=303)
+
+
+@app.get("/planilha/{token}", response_class=HTMLResponse)
+def tela_mapear_planilha(request: Request, token: str):
+    """Passo 2: o que a planilha tem, e o que fazer com cada aba."""
+    guardada = _pegar_planilha(token)
+    if guardada is None:
+        return RedirectResponse(
+            _url_destino("/", erro="O envio expirou. Mande a planilha de novo."),
+            status_code=303)
+    return templates.TemplateResponse(request, "planilha.html", {
+        "token": token,
+        "arquivo": guardada["caminho"].name,
+        "abas": _mapa_das_abas(guardada["caminho"]),
+        "automacoes": [a for a in automacoes() if a["disponivel"]],
+        "indisponiveis": [a for a in automacoes() if not a["disponivel"]],
+        "selecionada_idx": guardada["maquina"],
+        "pagina": "painel",
+    })
+
+
+@app.post("/planilha/{token}/cancelar")
+def acao_cancelar_planilha(token: str):
+    guardada = _pegar_planilha(token)
+    indice = guardada["maquina"] if guardada else None
+    _descartar_planilha(token)
+    return RedirectResponse(
+        _url_destino("/", indice, mensagem="Envio cancelado."), status_code=303)
+
+
+@app.post("/planilha/{token}/confirmar")
+async def acao_confirmar_planilha(request: Request, token: str):
+    """Passo 3: importa cada aba na automação que você escolheu.
+
+    Um envio só resolve a planilha inteira: a carteira vem com RFB e CRF
+    no mesmo arquivo, e mandá-lo duas vezes seria trabalho repetido para
+    um problema que é de tela, não de dados.
+    """
+    guardada = _pegar_planilha(token)
+    if guardada is None:
+        return RedirectResponse(
+            _url_destino("/", erro="O envio expirou. Mande a planilha de novo."),
+            status_code=303)
+
+    indice = guardada["maquina"]
+    caminho = guardada["caminho"]
+    formulario = await request.form()
+
+    # Cada aba manda um campo "orgao__<nome da aba>"; vazio quer dizer
+    # "não importar esta". Sem par escolhido não há o que fazer.
+    pares: list[tuple[str, str]] = []
+    for chave, valor in formulario.items():
+        if chave.startswith("orgao__") and str(valor).strip():
+            pares.append((chave[len("orgao__"):], str(valor).strip()))
+
+    if not pares:
+        return RedirectResponse(
+            f"/planilha/{token}?erro=Escolha+ao+menos+uma+aba", status_code=303)
+
+    try:
+        for _, escolhido in pares:
+            _automacao_valida(escolhido)
+
+        criados = rejeitados = 0
+        detalhes: list[dict] = []
+        ultimo_lote = None
+        for aba, escolhido in pares:
+            if cfg.rede.maquinas:
+                if indice is None or not (0 <= indice < len(cfg.rede.maquinas)):
+                    raise ValueError("Máquina não encontrada.")
+                resposta = remoto.enviar_planilha(
+                    cfg.rede.maquinas[indice], caminho, cfg.rede.senha,
+                    aba=aba, orgao=escolhido)
+            else:
+                if indice not in (0, None) or not cfg.rede.roda_robo:
+                    raise ValueError("Máquina não encontrada.")
+                resposta = _importar_planilha_local(caminho, aba, escolhido)
+            criados += int(resposta.get("criados") or 0)
+            rejeitados += int(resposta.get("total_rejeitados") or 0)
+            detalhes.extend(resposta.get("rejeitados") or [])
+            ultimo_lote = int(resposta.get("lote") or 0) or ultimo_lote
+
+        resumo = {"criados": criados, "total_rejeitados": rejeitados,
+                  "rejeitados": detalhes}
+        return RedirectResponse(
+            _url_destino("/jobs", indice, arquivo=ultimo_lote,
+                         mensagem=_mensagem_importacao(resumo)),
+            status_code=303)
+    except Exception as erro:
+        log.warning("importacao_falhou",
+                    extra={"maquina": indice, "erro": str(erro)})
+        return RedirectResponse(_url_destino("/", indice, erro=str(erro)),
+                                status_code=303)
     finally:
-        if caminho is not None:
-            shutil.rmtree(caminho.parent, ignore_errors=True)
+        _descartar_planilha(token)
 
 
 @app.post("/acoes/maquina/{indice}/robo/{acao}")

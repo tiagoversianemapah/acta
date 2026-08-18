@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% set pagina = 'painel' %}
+{% block titulo %}Enviar planilha - ACTA{% endblock %}
+
+{% block conteudo %}
+{# Página inteira, e não um diálogo: aqui se decide o que vai para a fila,
+   e planilha de carteira tem dez abas. Espremer isso num modal obrigaria a
+   rolar dentro de uma caixa para conferir a linha de baixo. #}
+<div class="mapear">
+  <header class="mapear-topo">
+    <div>
+      <span class="rotulo">Enviar planilha</span>
+      <h1>{{ arquivo }}</h1>
+      <p class="sub">
+        Escolha o que fazer com cada aba. O nome da aba não decide nada —
+        quem manda é a automação que você marcar ao lado dela.
+      </p>
+    </div>
+    <form method="post" action="/planilha/{{ token }}/cancelar">
+      <button class="botao">Cancelar</button>
+    </form>
+  </header>
+
+  <form method="post" action="/planilha/{{ token }}/confirmar" class="mapear-form">
+    <table class="tabela mapear-tabela">
+      <thead>
+        <tr>
+          <th>Aba</th>
+          <th class="num">Linhas</th>
+          <th>Automação</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for a in abas %}
+        <tr {{ 'class=vazia' if not a.linhas }}>
+          <td>
+            <strong>{{ a.nome }}</strong>
+            {% if not a.linhas %}
+              <small class="linha-menor">sem linhas</small>
+            {% endif %}
+          </td>
+          <td class="num mono">{{ '{:,.0f}'.format(a.linhas).replace(',', '.') }}</td>
+          <td>
+            {# Pré-marcado pelo nome quando ele bate com uma automação: é o
+               caso comum e poupa o clique. Continua trocável — a sugestão
+               não pode virar decisão tomada por baixo do pano. #}
+            <select name="orgao__{{ a.nome }}" {{ 'disabled' if not a.linhas }}>
+              <option value="">— não importar —</option>
+              {% for auto in automacoes %}
+                <option value="{{ auto.codigo }}"
+                        {{ 'selected' if auto.codigo == a.sugerido }}>
+                  {{ auto.rotulo }}
+                </option>
+              {% endfor %}
+            </select>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if indisponiveis %}
+    <p class="mapear-nota">
+      Não dá para escolher agora:
+      {% for a in indisponiveis %}
+        <strong>{{ a.rotulo }}</strong> ({{ a.motivo }}){{ "; " if not loop.last }}
+      {% endfor %}
+    </p>
+    {% endif %}
+
+    <div class="mapear-acoes">
+      <p class="mapear-aviso">
+        A planilha entra na fila, mas <strong>o robô não começa sozinho</strong>
+        — aperte "Iniciar robô" quando quiser.
+      </p>
+      <button type="submit" class="primario" data-enviando="Importando…">
+        <span>Importar</span>
+      </button>
+    </div>
+  </form>
+</div>
+{% endblock %}

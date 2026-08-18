@@ -983,3 +983,56 @@
   }
   .dialogo-acoes{display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap}
   .dialogo-acoes .primario[disabled]{opacity:.65;cursor:progress}
+
+  /* Tela de mapear aba -> automação. Página inteira e não modal: planilha
+     de carteira tem muitas abas, e conferir a de baixo dentro de uma caixa
+     rolante é pior do que rolar a página. */
+  .mapear{
+    max-width:920px;margin:0 auto;background:var(--branco);
+    border:1px solid var(--linha);border-radius:8px;overflow:hidden;
+    box-shadow:0 14px 38px rgba(15,23,42,.05);
+  }
+  .mapear-topo{
+    display:flex;align-items:flex-start;justify-content:space-between;
+    gap:1rem;padding:1.3rem 1.4rem 1.1rem;border-bottom:1px solid var(--linha);
+    background:linear-gradient(180deg,#fff,#FBFCFF);
+  }
+  .mapear-topo h1{font-size:19px;margin:.2rem 0 0;word-break:break-all}
+  .mapear-topo .sub{margin:.45rem 0 0;font-size:13px}
+  .mapear-form{padding:1.1rem 1.4rem 1.3rem}
+  .mapear-tabela{width:100%;border-collapse:collapse}
+  .mapear-tabela th{
+    text-align:left;font-size:11px;text-transform:uppercase;font-weight:800;
+    color:var(--texto-3);padding:.5rem .6rem;border-bottom:1px solid var(--linha);
+  }
+  .mapear-tabela td{padding:.7rem .6rem;border-bottom:1px solid var(--linha)}
+  .mapear-tabela .num{text-align:right;white-space:nowrap}
+  .mapear-tabela tr.vazia{color:var(--texto-3)}
+  .mapear-tabela tr.vazia strong{font-weight:700}
+  .mapear-tabela select{
+    width:100%;max-width:280px;padding:.5rem .6rem;font:inherit;font-size:13px;
+    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
+    color:var(--texto);
+  }
+  .mapear-tabela select:disabled{background:var(--cinza-fundo);color:var(--texto-3)}
+  .mapear-tabela select:focus-visible{outline:2px solid var(--azul-acao);outline-offset:1px}
+  .mapear-nota{
+    margin:1rem 0 0;font-size:12.5px;color:var(--texto-2);line-height:1.5;
+  }
+  .mapear-acoes{
+    display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    flex-wrap:wrap;margin-top:1.2rem;padding-top:1.1rem;
+    border-top:1px solid var(--linha);
+  }
+  .mapear-aviso{
+    margin:0;font-size:12.5px;line-height:1.45;color:#14213F;
+    padding:.6rem .8rem;border-radius:8px;background:var(--azul-claro);
+    border:1px solid #DCE6FA;
+  }
+  .mapear-acoes .primario[disabled]{opacity:.65;cursor:progress}
+  @media (max-width:760px){
+    .mapear-topo{display:block}
+    .mapear-topo form{margin-top:.8rem}
+    .mapear-acoes{display:block}
+    .mapear-acoes .primario{width:100%;margin-top:.8rem}
+  }
