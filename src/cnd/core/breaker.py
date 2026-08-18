@@ -81,7 +81,29 @@ def _garantir(conn: sqlite3.Connection, orgao: str) -> sqlite3.Row:
 
 
 def consultar(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
+    """Para quem pode escrever. Cria a linha do órgão se ela não existir."""
     linha = _garantir(conn, orgao)
+    return _estado_da_linha(linha)
+
+
+def consultar_leitura(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
+    """O mesmo estado, mas SEM nunca escrever.
+
+    O painel abre o banco em modo leitura, e `consultar` chama `_garantir`,
+    que INSERE a linha quando ela não existe. Bastou o CRF ser ligado e
+    ganhar fila em 18/08/2026 para o /api/estado devolver 500 —
+    "attempt to write a readonly database" — e a tela de Operação aparecer
+    vazia, enquanto a Receita seguia funcionando porque a linha dela já
+    existia desde agosto.
+
+    Órgão sem linha é órgão que ainda não rodou, e não rodar não é estar
+    bloqueado: devolve fechado, que é a verdade.
+    """
+    linha = conn.execute(
+        "SELECT * FROM breaker WHERE orgao = ?", (orgao,)).fetchone()
+    if linha is None:
+        return EstadoBreaker(estado=FECHADO, aberto_ate=None,
+                             aberturas=0, motivo=None)
     return _estado_da_linha(linha)
 
 

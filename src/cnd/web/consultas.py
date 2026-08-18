@@ -143,7 +143,9 @@ def resumo(conn: sqlite3.Connection, orgao: str, lote_id: int | None = None) -> 
         )
     }
 
-    estado_breaker = breaker.consultar(conn, orgao)
+    # `consultar_leitura`, e não `consultar`: esta consulta roda na
+    # conexão só-leitura do painel, e a outra escreve. Ver breaker.py.
+    estado_breaker = breaker.consultar_leitura(conn, orgao)
 
     linha_ritmo = conn.execute(
         "SELECT intervalo_s FROM ritmo WHERE orgao = ?", (orgao,)
