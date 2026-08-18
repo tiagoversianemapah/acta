@@ -68,8 +68,68 @@
         <a class="botao botao-quieto" href="{{ exportar_url }}">
           {{ icons.icone('download') }} Exportar relatório
         </a>
+        {# Atualizar mora aqui, e não na Operação: é manutenção, e derruba o
+           robô para trocar arquivos. Ao lado do "Iniciar robô" era convite a
+           clique errado com consequência real. #}
+        {% if selecionada and selecionada.online %}
+          {% if usa_rede and not selecionada.local %}
+            <button class="botao botao-quieto"
+                    data-update-form="/acoes/maquina/{{ selecionada_idx }}/atualizar"
+                    title="Atualiza esta máquina usando o pacote publicado pelo console">
+              {{ icons.icone('atualizar') }} Atualizar programa
+            </button>
+          {% elif selecionada.local %}
+            <button class="botao botao-quieto"
+                    data-update-api="/api/atualizar"
+                    title="Atualiza esta máquina usando o pacote publicado pelo console">
+              {{ icons.icone('atualizar') }} Atualizar programa
+            </button>
+          {% endif %}
+        {% endif %}
       </div>
     </div>
+
+    {# RAM, disco, tempo ligada e calibragem vieram da Operação. Aqui eles
+       respondem a pergunta desta tela — "esta máquina está saudável?" — em
+       vez de disputar atenção com o que está rodando. #}
+    {% if selecionada and selecionada.saude %}
+    {% set s = selecionada.saude %}
+    {% set disco_total = s.disco_total_gb or 0 %}
+    {% set disco_livre = s.disco_livre_gb or 0 %}
+    <section class="ficha-maquina-diag">
+      <div>
+        <span class="rotulo">RAM</span>
+        <strong>{{ '%.1f' % (s.ram_usada_gb or 0) }} GB de {{ '%.1f' % (s.ram_total_gb or 0) }} GB</strong>
+      </div>
+      <div>
+        <span class="rotulo">Disco</span>
+        <strong>{{ '%.1f' % (disco_total - disco_livre) }} GB usados</strong>
+        <small>{{ '%.1f' % disco_livre }} GB livres</small>
+      </div>
+      <div>
+        <span class="rotulo">Ligada há</span>
+        <strong>{{ '%.1f' % (s.ligada_ha_h or 0) }} h</strong>
+      </div>
+      {% if selecionada.dados.certidoes %}
+      <div>
+        <span class="rotulo">Certidões salvas</span>
+        <strong>{{ selecionada.dados.certidoes.arquivos }} PDFs</strong>
+        <small>{{ selecionada.dados.certidoes.gb }} GB</small>
+      </div>
+      {% endif %}
+      {% if selecionada.dados.calibragem %}
+      <div>
+        <span class="rotulo">Calibragem</span>
+        <strong>{{ selecionada.dados.calibragem.pontos }} pontos</strong>
+        <small>{{ selecionada.dados.calibragem.quando }}</small>
+      </div>
+      {% endif %}
+      <div>
+        <span class="rotulo">Versão</span>
+        <strong>{{ selecionada.dados.versao or '—' }}</strong>
+      </div>
+    </section>
+    {% endif %}
 
     <div class="diagnostico-kpis">
       <article class="diagnostico-kpi">

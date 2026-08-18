@@ -77,6 +77,108 @@ document.addEventListener('change', function (evento) {
 });
 marcarEscolhidas();
 
+
+// Atualizar o programa. Mora aqui e não na tela de Operação porque o botão
+// passou a viver no Diagnóstico — e um tratador preso a uma página faria
+// dele um botão decorativo na outra.
+function origemPadraoAtualizacao() {
+  return localStorage.getItem('actaOrigemAtualizacao') ||
+    'http://100.125.207.8:8899';
+}
+function pedirOrigemAtualizacao() {
+  var origem = window.prompt('Origem da atualização', origemPadraoAtualizacao());
+  if (!origem) return '';
+  var limpa = origem.trim().replace(/\/+$/, '');
+  if (limpa) localStorage.setItem('actaOrigemAtualizacao', limpa);
+  return limpa;
+}
+document.addEventListener('click', function (evento) {
+    const atualizar = evento.target.closest('[data-update-api], [data-update-form]');
+    if (atualizar) {
+      evento.preventDefault();
+      const origem = pedirOrigemAtualizacao();
+      if (!origem) return;
+
+      if (atualizar.dataset.updateForm) {
+        const form = document.createElement('form');
+        form.method = 'post';
+        form.action = atualizar.dataset.updateForm;
+        const campo = document.createElement('input');
+        campo.type = 'hidden';
+        campo.name = 'origem';
+        campo.value = origem;
+        form.appendChild(campo);
+        document.body.appendChild(form);
+        form.submit();
+        return;
+      }
+
+      atualizar.disabled = true;
+      atualizar.dataset.originalHtml = atualizar.innerHTML;
+      const textoAtualizar = atualizar.querySelector('span');
+      if (textoAtualizar) textoAtualizar.textContent = 'Atualizando';
+      else atualizar.textContent = 'Atualizando';
+      fetch(atualizar.dataset.updateApi, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({origem: origem})
+      })
+        .then(function (resposta) {
+          if (!resposta.ok) return resposta.json().then(function (corpo) {
+            throw new Error(corpo.detail || 'Atualização recusada');
+          });
+          return resposta.json();
+        })
+        .then(function (corpo) {
+          window.location.href = destinoComMensagem(
+            mensagemDaApi(corpo, 'Atualização iniciada.')
+          );
+        })
+        .catch(function (erro) {
+          atualizar.disabled = false;
+          atualizar.innerHTML = atualizar.dataset.originalHtml || 'Atualizar';
+          avisarErro(erro);
+        });
+      return;
+    }
+
+    // Controle da fila: estacionar, cancelar, retomar, rodar agora. Passa
+    // pelo mesmo caminho dos outros comandos, mas com confirmação quando a
+    // ação é a única que não se desfaz sozinha.
+    const fila = evento.target.closest('[data-fila]');
+    if (fila) {
+      evento.preventDefault();
+      const aviso = fila.dataset.confirmar;
+      if (aviso && !window.confirm(aviso)) return;
+      fila.disabled = true;
+      const rotulo = fila.textContent;
+      fila.textContent = 'Aguarde';
+      fetch(fila.dataset.fila, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({acao: fila.dataset.acao})
+      })
+        .then(function (resposta) {
+          if (!resposta.ok) return resposta.json().then(function (corpo) {
+            throw new Error(corpo.detail || 'Comando recusado');
+          });
+          return resposta.json();
+        })
+        .then(function (corpo) {
+          window.location.href = destinoComMensagem(
+            mensagemDaApi(corpo, 'Fila atualizada.'));
+        })
+        .catch(function (erro) {
+          fila.disabled = false;
+          fila.textContent = rotulo;
+          avisarErro(erro);
+        });
+      return;
+    }
+});
+
 document.addEventListener('submit', function (evento) {
   var alvo = evento.target.querySelector('[data-enviando]');
   if (!alvo) return;

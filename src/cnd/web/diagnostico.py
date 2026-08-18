@@ -167,6 +167,10 @@ def contexto(
     agora = tempo.agora().astimezone()
     return {
         "estados": estados,
+        # Diz se o botão Atualizar fala com uma máquina remota ou com esta
+        # mesma — são rotas diferentes. Sem isto o `usa_rede` do template
+        # seria sempre falso e o botão sumiria em instalação de rede.
+        "usa_rede": len(estados) > 1 or any(not e.local for e in estados),
         "selecionada": selecionada,
         "selecionada_idx": selecionada_idx,
         "diagnostico": principal,

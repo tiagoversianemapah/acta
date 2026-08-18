@@ -1200,3 +1200,16 @@
   }
   .entregar strong{display:block;font-size:15px;font-weight:800;margin:.15rem 0}
   .entregar small{display:block;color:var(--texto-3);font-size:12.5px;max-width:52ch}
+
+  /* A ficha da máquina, agora no Diagnóstico. Grade simples: são seis
+     números que se lê de relance, não uma tabela para percorrer. */
+  .ficha-maquina-diag{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));
+    gap:1px;background:var(--linha);border:1px solid var(--linha);
+    border-radius:10px;overflow:hidden;margin-bottom:1.2rem;
+  }
+  .ficha-maquina-diag > div{background:var(--branco);padding:.85rem .95rem}
+  .ficha-maquina-diag strong{
+    display:block;font-size:15px;font-weight:800;margin-top:.15rem;
+  }
+  .ficha-maquina-diag small{display:block;font-size:11.5px;color:var(--texto-3)}
