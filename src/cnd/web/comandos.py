@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,9 @@ from cnd.core.modelos import Status
 from cnd.infra import maquina
 from cnd.infra.config import Config
 from cnd.infra.db import caminho_parada_manual, conectar
+from cnd.infra.log import obter
+
+log = obter("web")
 
 # Planilha da carteira inteira não passa de alguns megabytes; o limite
 # existe para um envio errado não encher o disco da máquina do robô.
@@ -189,6 +193,78 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                        "robô move o mouse de verdade e lê a tela — precisa da "
                        "sessão do Windows aberta e destravada. Entre nela "
                        "pelo AnyDesk, destrave e tente de novo.")
+
+    @roteador.post("/identidade")
+    def renomear_maquina(nome: str = Form(...)):
+        """Troca o nome com que ESTA máquina se apresenta.
+
+        Existe porque o nome vive no config.toml dela, que não viaja com o
+        pacote de atualização (é da instalação, não do programa) e não se
+        alcança pela rede: só entrando na máquina. Enquanto uma máquina
+        rodava uma automação só, o nome "PC Receita Federal 01" descrevia a
+        verdade; com várias, ele passou a mentir — e corrigir isso exigia
+        sessão de AnyDesk por máquina, que é justamente o que o painel
+        existe para evitar.
+
+        Escreve UMA chave, `[rede] nome`, por substituição da linha: o
+        arquivo é cheio de comentário explicativo, e reescrevê-lo a partir
+        do TOML lido apagaria tudo isso.
+        """
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+
+        limpo = " ".join((nome or "").split())
+        if not limpo:
+            raise HTTPException(status_code=400, detail="Nome vazio.")
+        if len(limpo) > 60:
+            raise HTTPException(status_code=400,
+                                detail="Nome longo demais (máx. 60).")
+        if '"' in limpo or "\\" in limpo:
+            # Iriam quebrar a string TOML que a linha vira.
+            raise HTTPException(status_code=400,
+                                detail='Nome não pode ter aspas nem barras.')
+
+        from cnd.infra.config import CAMINHO_PADRAO
+        from cnd.infra.config import carregar as recarregar
+
+        arquivo = Path(CAMINHO_PADRAO)
+        try:
+            texto = arquivo.read_text(encoding="utf-8-sig")
+        except OSError as erro:
+            raise HTTPException(status_code=500,
+                                detail=f"Não li o config: {erro}") from erro
+
+        # Só a chave `nome` da seção [rede], e não a de outra seção: cada
+        # órgão também tem um `nome`, e trocar o primeiro que aparecesse
+        # renomearia a Receita Federal.
+        secao = re.search(r"(?ms)^\[rede\]\s*$(.*?)(?=^\[|\Z)", texto)
+        if secao is None:
+            raise HTTPException(status_code=500,
+                                detail="Não achei a seção [rede] no config.")
+        corpo = secao.group(1)
+        trocado, quantas = re.subn(
+            r"(?m)^(\s*nome\s*=\s*)(\".*?\"|'.*?')",
+            lambda m: f'{m.group(1)}"{limpo}"', corpo, count=1)
+        if not quantas:
+            raise HTTPException(
+                status_code=500,
+                detail="Não achei a chave 'nome' dentro de [rede].")
+
+        novo = texto[:secao.start(1)] + trocado + texto[secao.end(1):]
+        try:
+            arquivo.write_text(novo, encoding="utf-8")
+        except OSError as erro:
+            raise HTTPException(status_code=500,
+                                detail=f"Não gravei o config: {erro}") from erro
+
+        # Sem isto o nome só mudaria no próximo restart do painel, e quem
+        # renomeou veria o nome velho e concluiria que não funcionou.
+        from cnd.web import app as modulo_app
+        with contextlib.suppress(Exception):
+            modulo_app.cfg = recarregar()
+
+        log.info("maquina_renomeada", extra={"nome": limpo})
+        return _resposta(f"Máquina renomeada para {limpo}.")
 
     @roteador.post("/planilha")
     async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
