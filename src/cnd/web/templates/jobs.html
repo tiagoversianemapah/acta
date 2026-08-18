@@ -106,40 +106,28 @@
         </p>
       </div>
       <div class="carteira-acoes">
-        {% if selecionada and selecionada.online %}
-        <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/planilha"
-              enctype="multipart/form-data" class="upload-planilha">
-          <label class="botao botao-quieto">
-            {{ icons.icone('arquivo') }} Enviar planilha
-            <input type="file" name="arquivo" accept=".xlsx,.xlsm" onchange="this.form.submit()">
-          </label>
-        </form>
-        {% endif %}
+        {# "Enviar planilha" saiu daqui: já está na Operação, e dois
+           caminhos para a mesma ação fazem duvidar se são a mesma coisa. #}
+        {# Só aparece quando há o que retentar, e diz quantos. Antes
+           aparecia com zero erros, o que faz a pessoa apertar por via das
+           dúvidas e não entender por que nada aconteceu. #}
+        {% if metricas.erros %}
         <form method="post" action="{{ reenfileirar_url }}">
           <input type="hidden" name="maquina" value="{{ filtros.maquina }}">
           <input type="hidden" name="arquivo" value="{{ filtros.arquivo }}">
           <input type="hidden" name="orgao" value="{{ filtros.orgao or '' }}">
-          <button class="botao botao-quieto" type="submit">
-            {{ icons.icone('atualizar') }} Tentar de novo o que ficou sem resposta
+          <button class="botao" type="submit">
+            {{ icons.icone('atualizar') }}
+            Tentar de novo · {{ metricas.erros }} sem resposta
           </button>
         </form>
-        {% if arquivo_atual %}
-          <a class="botao botao-quieto" href="/jobs?maquina={{ filtros.maquina }}&arquivo={{ arquivo_atual.id }}">
-            {{ icons.icone('calendario') }} {{ arquivo_atual.criado_fmt }}
-          </a>
         {% endif %}
       </div>
     </div>
 
     <div class="carteira-kpis">
-      <article class="diagnostico-kpi">
-        <span class="diagnostico-icone azul">{{ icons.icone('arquivo') }}</span>
-        <span>
-          <small>Total na fila</small>
-          <strong>{{ metricas.total_fila_fmt }}</strong>
-          <em>Neste arquivo</em>
-        </span>
-      </article>
+      {# "Total na fila" saiu: a tabela já diz o total no rodapé, e
+         repetir número faz duvidar de qual é o certo. #}
       <article class="diagnostico-kpi">
         <span class="diagnostico-icone verde">{{ icons.icone('check') }}</span>
         <span>
