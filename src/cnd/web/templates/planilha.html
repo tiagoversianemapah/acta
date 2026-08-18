@@ -3,12 +3,15 @@
 {% block titulo %}Enviar planilha - ACTA{% endblock %}
 
 {% block conteudo %}
-{# Página inteira, e não um diálogo: aqui se decide o que vai para a fila,
-   e planilha de carteira tem dez abas. Espremer isso num modal obrigaria a
-   rolar dentro de uma caixa para conferir a linha de baixo. #}
+{# Página inteira, e não um diálogo: planilha de carteira tem sete abas ou
+   mais, e conferir a de baixo dentro de uma caixa rolante é pior do que
+   rolar a página. #}
 <div class="mapear">
   <header class="mapear-topo">
-    <div>
+    <span class="mapear-icone" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="m9 13 6 6"/><path d="m15 13-6 6"/></svg>
+    </span>
+    <div class="mapear-titulo">
       <span class="rotulo">Enviar planilha</span>
       <h1>{{ arquivo }}</h1>
       <p class="sub">
@@ -17,63 +20,68 @@
       </p>
     </div>
     <form method="post" action="/planilha/{{ token }}/cancelar">
-      <button class="botao">Cancelar</button>
+      <button class="botao mapear-fechar">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        <span>Cancelar</span>
+      </button>
     </form>
   </header>
 
   <form method="post" action="/planilha/{{ token }}/confirmar" class="mapear-form">
-    <table class="tabela mapear-tabela">
-      <thead>
-        <tr>
-          <th>Aba</th>
-          <th class="num">Linhas</th>
-          <th>Automação</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for a in abas %}
-        <tr {{ 'class=vazia' if not a.linhas }}>
-          <td>
-            <strong>{{ a.nome }}</strong>
-            {% if not a.linhas %}
-              <small class="linha-menor">sem linhas</small>
-            {% endif %}
-          </td>
-          <td class="num mono">{{ '{:,.0f}'.format(a.linhas).replace(',', '.') }}</td>
-          <td>
-            {# Pré-marcado pelo nome quando ele bate com uma automação: é o
-               caso comum e poupa o clique. Continua trocável — a sugestão
-               não pode virar decisão tomada por baixo do pano. #}
-            <select name="orgao__{{ a.nome }}" {{ 'disabled' if not a.linhas }}>
-              <option value="">— não importar —</option>
-              {% for auto in automacoes %}
-                <option value="{{ auto.codigo }}"
-                        {{ 'selected' if auto.codigo == a.sugerido }}>
-                  {{ auto.rotulo }}
-                </option>
-              {% endfor %}
-            </select>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <div class="mapear-cabecalho">
+      <span>Aba</span>
+      <span class="num">Linhas</span>
+      <span>Automação</span>
+    </div>
+
+    <div class="mapear-linhas">
+      {% for a in abas %}
+      <div class="mapear-linha{{ ' vazia' if not a.linhas }}">
+        <span class="mapear-aba">
+          <svg class="mapear-folha" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+          <strong>{{ a.nome }}</strong>
+          {% if not a.linhas %}<small>sem linhas</small>{% endif %}
+        </span>
+        <span class="num">{{ '{:,.0f}'.format(a.linhas).replace(',', '.') }}</span>
+        <span class="mapear-escolha">
+          {# Pré-marcada quando o nome bate com uma automação: é o caso
+             comum e poupa o clique. Continua trocável — sugestão que não
+             se troca vira decisão tomada por baixo do pano. #}
+          <select name="orgao__{{ a.nome }}" {{ 'disabled' if not a.linhas }}>
+            <option value="">— não importar —</option>
+            {% for auto in automacoes %}
+              <option value="{{ auto.codigo }}"
+                      {{ 'selected' if auto.codigo == a.sugerido }}>
+                {{ auto.rotulo }}
+              </option>
+            {% endfor %}
+          </select>
+          <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </span>
+      </div>
+      {% endfor %}
+    </div>
 
     {% if indisponiveis %}
     <p class="mapear-nota">
-      Não dá para escolher agora:
-      {% for a in indisponiveis %}
-        <strong>{{ a.rotulo }}</strong> ({{ a.motivo }}){{ "; " if not loop.last }}
-      {% endfor %}
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <span>Não dá para escolher agora:
+        {% for a in indisponiveis %}<strong>{{ a.rotulo }}</strong>
+          ({{ a.motivo }}){{ "; " if not loop.last }}{% endfor %}
+      </span>
     </p>
     {% endif %}
 
+    <p class="mapear-aviso">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <span>A planilha entra na fila, mas <strong>o robô não começa
+        sozinho</strong> — aperte "Iniciar robô" quando quiser.</span>
+    </p>
+
     <div class="mapear-acoes">
-      <p class="mapear-aviso">
-        A planilha entra na fila, mas <strong>o robô não começa sozinho</strong>
-        — aperte "Iniciar robô" quando quiser.
-      </p>
+      <a class="botao" href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}">Cancelar</a>
       <button type="submit" class="primario" data-enviando="Importando…">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
         <span>Importar</span>
       </button>
     </div>

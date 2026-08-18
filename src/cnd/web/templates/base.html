@@ -64,6 +64,19 @@ document.addEventListener('click', function (evento) {
   }
 });
 
+// Marca em azul a aba que já tem automação escolhida. Não dá para fazer
+// só em CSS: `:valid` vale para qualquer select sem `required`, então
+// pintaria até as que estão em "não importar" — o oposto do que se quer.
+function marcarEscolhidas() {
+  document.querySelectorAll('.mapear-escolha select').forEach(function (s) {
+    s.classList.toggle('escolhida', !!s.value && !s.disabled);
+  });
+}
+document.addEventListener('change', function (evento) {
+  if (evento.target.closest('.mapear-escolha')) marcarEscolhidas();
+});
+marcarEscolhidas();
+
 document.addEventListener('submit', function (evento) {
   var botao = evento.target.querySelector('[data-enviando]');
   if (!botao) return;
