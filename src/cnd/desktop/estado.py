@@ -254,7 +254,11 @@ def estado_dos_orgaos(cfg: Config) -> dict[str, str]:
     except Exception:
         return {}
     try:
-        return {o.codigo: breaker.consultar(conn, o.codigo).estado
+        # `consultar_leitura`, e não `consultar`: a conexão acima é
+        # só de leitura, e a outra escreve. Aqui o defeito era pior
+        # que um 500 — o `except` abaixo engolia e a tela concluía
+        # que nenhum órgão tinha disjuntor. Ver breaker.py.
+        return {o.codigo: breaker.consultar_leitura(conn, o.codigo).estado
                 for o in cfg.ativos()}
     except Exception:
         return {}

@@ -90,7 +90,10 @@ def montar(obter_config: Callable[[], Config],
             orgaos = []
             for codigo in consultas.orgaos_do_lote(conn, lote_id):
                 resumo = consultas.resumo(conn, codigo, lote_id)
-                estado_breaker = breaker.consultar(conn, codigo)
+                # `consultar_leitura`: esta rota abre o banco só para
+                # ler, e `consultar` cria a linha do órgão quando ela
+                # não existe. Ver breaker.consultar_leitura.
+                estado_breaker = breaker.consultar_leitura(conn, codigo)
                 estado_recuperacao = recuperacao.estado(conn, codigo)
                 orgaos.append({
                     "orgao": codigo,
