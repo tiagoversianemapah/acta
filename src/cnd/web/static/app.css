@@ -1128,3 +1128,7 @@
     .botao.carregando svg:first-child,
     .primario.carregando svg:first-child{animation:none}
   }
+
+  /* Aviso que mora dentro da coluna de conteúdo. Ganha a margem que o
+     conteúdo tem, senão encostaria nas bordas da seção. */
+  .aviso-conteudo{margin:1.35rem 1.6rem 0}

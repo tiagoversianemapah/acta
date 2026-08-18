@@ -193,10 +193,18 @@ async def vigiar_orquestrador() -> None:
                 na_fila = consultas.pendentes(conn)
             limite = cfg.alertas.heartbeat_timeout_s
             mudo = idade is not None and idade > limite
+            # Robô parado porque ALGUÉM mandou parar não é incidente, e
+            # não se relança. Sem esta condição, enviar uma planilha e não
+            # apertar "Iniciar robô" deixava o vigia tentando religar de
+            # cinco em cinco minutos, apanhando da parada manual, e ainda
+            # abrindo "Robô parado com trabalho na fila" a cada minuto —
+            # o alarme falso que este arquivo inteiro existe para evitar.
+            de_proposito = comandos.parada_manual_ativa(cfg.banco)
 
-            retomou = _tentar_retomada_automatica(idade, na_fila) if mudo else False
+            retomou = (_tentar_retomada_automatica(idade, na_fila)
+                       if mudo and not de_proposito else False)
 
-            if mudo and na_fila and not retomou:
+            if mudo and na_fila and not retomou and not de_proposito:
                 alertas.abrir_incidente(
                     cfg.alertas, "heartbeat",
                     "Robô parado com trabalho na fila",

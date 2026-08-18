@@ -8,10 +8,6 @@
 {% set status_texto = selecionada.situacao[0] if selecionada else 'Sem máquina' %}
 {% set status_cor = selecionada.situacao[1] if selecionada else 'cinza' %}
 
-{% if erro_diagnostico %}
-<div class="aviso erro">{{ erro_diagnostico }}</div>
-{% endif %}
-
 <div class="workspace diagnostico-workspace">
   <aside class="maquinas diagnostico-sidebar painel-sidebar">
     <a class="lateral-marca" href="/">
@@ -51,6 +47,10 @@
   </aside>
 
   <section class="diagnostico-conteudo">
+    {# Ver jobs.html: aviso antes do workspace cai atrás da barra lateral. #}
+    {% if erro_diagnostico %}
+      <div class="aviso erro aviso-conteudo">{{ erro_diagnostico }}</div>
+    {% endif %}
     <div class="diagnostico-cabecalho">
       <div class="diagnostico-titulo">
         <div class="linha-identidade">

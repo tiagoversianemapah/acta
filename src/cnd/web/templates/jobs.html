@@ -21,16 +21,6 @@
 {% endmacro %}
 
 {% block conteudo %}
-{% if mensagem_carteira %}
-  <div class="aviso ok">{{ mensagem_carteira }}</div>
-{% endif %}
-{% if erro_carteira %}
-  <div class="aviso erro">{{ erro_carteira }}</div>
-{% endif %}
-{% if maquinas_mudas %}
-  <div class="aviso erro">Sem resposta de: {{ maquinas_mudas | join(', ') }}</div>
-{% endif %}
-
 <div class="workspace carteira-workspace">
   <aside class="maquinas carteira-sidebar painel-sidebar">
     <a class="lateral-marca" href="/">
@@ -92,6 +82,18 @@
   </aside>
 
   <section class="carteira-conteudo">
+    {# Dentro da coluna, e não antes do workspace: em `tela-maquinas` o
+       `main` é puxado 55px para cima para encaixar sob a barra do topo, e
+       aviso solto ali cai atrás da barra lateral, cortado ao meio. #}
+    {% if mensagem_carteira %}
+      <div class="aviso ok aviso-conteudo">{{ mensagem_carteira }}</div>
+    {% endif %}
+    {% if erro_carteira %}
+      <div class="aviso erro aviso-conteudo">{{ erro_carteira }}</div>
+    {% endif %}
+    {% if maquinas_mudas %}
+      <div class="aviso erro aviso-conteudo">Sem resposta de: {{ maquinas_mudas | join(', ') }}</div>
+    {% endif %}
     <div class="carteira-cabecalho">
       <div>
         <h1>Carteira por arquivo</h1>

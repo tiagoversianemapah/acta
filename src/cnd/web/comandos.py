@@ -588,8 +588,17 @@ def _limpar_parada_manual(banco: Path) -> None:
         caminho_parada_manual(banco).unlink()
 
 
-def _parada_manual_ativa(banco: Path) -> bool:
+def parada_manual_ativa(banco: Path) -> bool:
+    """Se um humano decidiu que este robô está parado.
+
+    Pública porque o vigia do painel também precisa saber: parada
+    intencional não é incidente e não deve ser desfeita sozinha.
+    """
     return caminho_parada_manual(banco).exists()
+
+
+# Nome antigo, ainda usado aqui dentro.
+_parada_manual_ativa = parada_manual_ativa
 
 
 def _ambiente_robo() -> dict[str, str]:
