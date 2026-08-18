@@ -251,15 +251,30 @@
     </header>
 
     <div class="faixa-operacao">
-      <div>
-        {{ icone_metrica('planilha') }}
-        <span class="metrica-corpo">
-          <span class="rotulo">Planilha</span>
+      {# A planilha não é mais uma métrica entre outras: ela é o recorte a
+         que TODOS os números ao lado se referem. Por isso ganha rótulo
+         próprio e um bloco que se anuncia como controle — com ícone de
+         arquivo, nome em destaque e chevron — em vez de um texto que só
+         quem já sabia descobria ser clicável. #}
+      <div class="cartao-planilha">
+        <span class="rotulo">Planilha selecionada</span>
+        {# O select cobre a caixa inteira, invisível: o clique vale em
+           qualquer ponto dela e a lista abre nativa, sem JS de menu. #}
+        <span class="escolha-planilha{{ ' sem-troca' if lotes|length < 2 }}">
+          {{ icone_metrica('planilha') }}
+          <span class="escolha-corpo">
+            <strong>{{ lote_nome }}</strong>
+            <small>
+              {% if lote_em_execucao and lote_em_execucao == lote_id %}
+                em processamento agora
+              {% else %}
+                fila de processamento
+              {% endif %}
+            </small>
+          </span>
           {% if lotes|length > 1 %}
-            {# Os números abaixo são TODOS desta planilha. Com mais de uma
-               na máquina, sem poder trocar não há como acompanhar a que
-               está rodando enquanto outra espera na fila. #}
-            <select class="seletor-planilha"
+            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+            <select class="seletor-planilha" aria-label="Planilha selecionada"
                     onchange="location.href='/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo=' + this.value">
               {% for lote in lotes %}
                 <option value="{{ lote.id }}" {{ 'selected' if lote.id == lote_id }}>
@@ -268,27 +283,17 @@
                 </option>
               {% endfor %}
             </select>
-          {% else %}
-            <strong>{{ lote_nome }}</strong>
-          {% endif %}
-          {% if lote_em_execucao and lote_em_execucao != lote_id %}
-            {# A queixa que originou isto: a tela mostrava uma planilha
-               zerada enquanto o robô emitia certidões de outra, e parecia
-               travada. Agora ela diz onde o trabalho está, e leva lá. #}
-            <small class="aviso-outra-planilha">
-              O robô está emitindo <strong>{{ lote_em_execucao_nome }}</strong> —
-              <a href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">acompanhar essa</a>
-            </small>
-          {% else %}
-            <small>
-              {% if lote_em_execucao and lote_em_execucao == lote_id %}
-                em processamento agora
-              {% else %}
-                fila de processamento
-              {% endif %}
-            </small>
           {% endif %}
         </span>
+        {% if lote_em_execucao and lote_em_execucao != lote_id %}
+          {# A queixa que originou isto: a tela mostrava uma planilha
+             zerada enquanto o robô emitia certidões de outra, e parecia
+             travada. Agora ela diz onde o trabalho está, e leva lá. #}
+          <small class="aviso-outra-planilha">
+            O robô está emitindo <strong>{{ lote_em_execucao_nome }}</strong> —
+            <a href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">acompanhar essa</a>
+          </small>
+        {% endif %}
       </div>
       <div>
         {{ icone_metrica('fila') }}

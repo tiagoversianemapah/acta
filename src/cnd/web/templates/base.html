@@ -21,5 +21,26 @@
   {% block ferramentas %}{% endblock %}
 </header>
 <main>{% block conteudo %}{% endblock %}</main>
+<script>
+// A transição de página é do navegador; o que falta é a resposta ao
+// clique. Enquanto a próxima página não chega, a aba (ou a máquina) que
+// acabou de ser apertada já acende — sem isso, num servidor lento o
+// clique parece não ter pego e a pessoa aperta de novo.
+document.addEventListener('click', function (evento) {
+  var alvo = evento.target.closest('.abas a, .maquina-linha');
+  if (!alvo || alvo.classList.contains('ativo')
+      || alvo.classList.contains('selecionada')) return;
+  // Só navegação simples: com modificador o link abre em outra aba e ESTA
+  // página continua onde está — acender aqui seria mentira.
+  if (evento.metaKey || evento.ctrlKey || evento.shiftKey || evento.button) return;
+  var grupo = alvo.closest('.abas, .lista-maquinas');
+  if (grupo) {
+    grupo.querySelectorAll('.selecionando').forEach(function (outro) {
+      outro.classList.remove('selecionando');
+    });
+  }
+  alvo.classList.add('selecionando');
+});
+</script>
 </body>
 </html>

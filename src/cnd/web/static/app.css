@@ -1,3 +1,26 @@
+  /* Navegar entre Operação, Carteira e Diagnóstico é troca de página, não
+     de aba num app — e a tela inteira piscava em branco a cada clique. Com
+     isto o navegador faz a passagem: o conteúdo cruza em fade e os
+     elementos com `view-transition-name` (a pílula da aba escolhida, a
+     barra da máquina escolhida) DESLIZAM do lugar antigo para o novo, por
+     serem reconhecidos como o mesmo elemento dos dois lados.
+
+     Onde não houver suporte, a regra é ignorada e a navegação segue como
+     sempre foi — nada depende dela para funcionar. */
+  @view-transition{navigation:auto}
+  ::view-transition-old(root),
+  ::view-transition-new(root){animation-duration:.22s}
+  ::view-transition-group(aba-ativa),
+  ::view-transition-group(maquina-ativa){animation-duration:.26s}
+  /* Quem pediu menos movimento no sistema não pediu menos software: a
+     seleção continua mudando, só que sem o deslize. */
+  @media (prefers-reduced-motion:reduce){
+    ::view-transition-group(*),
+    ::view-transition-old(*),
+    ::view-transition-new(*){animation:none !important}
+    *{transition-duration:.01ms !important;animation-duration:.01ms !important}
+  }
+
   :root{
     --azul:#29276A;
     --azul-escuro:#17163E;
@@ -82,16 +105,26 @@
     box-shadow:inset 0 1px 0 rgba(255,255,255,.85);
   }
   .abas a{
-    min-height:34px;padding:.45rem .95rem;color:#31415E;
+    position:relative;min-height:34px;padding:.45rem .95rem;color:#31415E;
     text-decoration:none;border-radius:999px;border:1px solid transparent;
     font-weight:800;font-size:13px;white-space:nowrap;
     display:flex;align-items:center;
+    transition:color .18s ease,background-color .18s ease;
   }
   .abas a:hover{color:var(--azul);background:#fff}
+  .abas a:active{transform:scale(.97)}
   .abas a.ativo{
     color:var(--azul);background:#fff;border-color:#DFE8F5;
     box-shadow:0 6px 14px rgba(37,99,235,.08);
+    /* A pílula branca é a MESMA entre as três páginas: nomeada assim, o
+       navegador a desliza da aba antiga para a nova em vez de apagá-la
+       aqui e acendê-la ali. Ver a transição de navegação lá embaixo. */
+    view-transition-name:aba-ativa;
   }
+  /* Trocar de página leva o tempo que levar; o clique não pode esperar por
+     ele. Sem esta resposta imediata, quem aperta "Carteira" numa máquina
+     lenta fica olhando "Operação" ainda aceso, sem saber se pegou. */
+  .abas a.selecionando{color:var(--azul);background:#fff}
 
   .ferramentas{
     border-top:1px solid var(--linha);background:var(--faixa);
@@ -151,10 +184,16 @@
   .maquina-linha + .maquina-linha{margin-top:.7rem}
   .maquina-linha:last-child{border-bottom:1px solid var(--linha)}
   .maquina-linha:hover{background:#FBFCFE;color:inherit}
+  .maquina-linha{transition:background-color .18s ease,box-shadow .18s ease}
+  .maquina-linha:active{transform:scale(.995)}
   .maquina-linha.selecionada{
     background:linear-gradient(90deg,#F4F8FF,#fff);
     box-shadow:inset 3px 0 0 var(--azul-acao),0 16px 36px rgba(37,99,235,.08);
   }
+  /* Mesma ideia da pílula das abas: a barra azul da máquina escolhida
+     desliza até a nova em vez de piscar de um lugar para o outro. */
+  .maquina-linha.selecionada{view-transition-name:maquina-ativa}
+  .maquina-linha.selecionando{background:#FBFCFE;box-shadow:inset 3px 0 0 var(--linha-forte)}
   .maquina-texto{display:grid;min-width:0}
   .maquina-texto strong{font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .maquina-texto small,.maquina-planilha{font-size:11.5px;color:var(--texto-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -301,29 +340,63 @@
     overflow:hidden;text-overflow:ellipsis;
   }
   .faixa-operacao small{display:block;color:var(--texto-3);font-size:12px}
-  /* Parece o nome da planilha, e não um formulário: no lugar de um campo
-     cinza no meio dos números, um texto forte que abre a lista ao clicar. */
-  .seletor-planilha{
-    display:block;width:100%;max-width:100%;margin:.12rem 0;padding:.1rem 1.3rem .1rem 0;
-    border:0;background:transparent;color:inherit;cursor:pointer;
-    font:800 15px inherit;font-family:inherit;
-    text-overflow:ellipsis;white-space:nowrap;overflow:hidden;
-    appearance:none;
-    background-image:linear-gradient(45deg,transparent 50%,var(--texto-3) 50%),
-                     linear-gradient(135deg,var(--texto-3) 50%,transparent 50%);
-    background-position:calc(100% - 9px) center,calc(100% - 4px) center;
-    background-size:5px 5px,5px 5px;background-repeat:no-repeat;
+
+  /* A planilha manda no resto da faixa: é dela que saem fila, faltam e
+     resultado. Por isso não segue o desenho das outras (ícone à esquerda,
+     número à direita) e sim o de um controle — rótulo em cima, caixa
+     clicável embaixo. */
+  .faixa-operacao > .cartao-planilha{
+    display:block;padding:.85rem .9rem .9rem;
   }
-  .seletor-planilha:hover{color:var(--azul-acao)}
+  .cartao-planilha > .rotulo{display:block;margin-bottom:.5rem}
+  .escolha-planilha{
+    position:relative;display:grid;
+    grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:.75rem;
+    padding:.6rem .7rem;border:1px solid var(--linha);border-radius:8px;
+    background:var(--faixa);
+    transition:border-color .18s ease,background-color .18s ease,box-shadow .18s ease;
+  }
+  .escolha-planilha .icone-metrica{width:38px;height:38px;border-radius:8px}
+  .escolha-planilha .icone-metrica svg{width:19px;height:19px}
+  .escolha-corpo{min-width:0}
+  .escolha-corpo strong{
+    display:block;font-size:15px;font-weight:800;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .escolha-corpo small{display:block;color:var(--texto-3);font-size:12px}
+  .escolha-planilha .chevron{
+    width:18px;height:18px;fill:none;stroke:var(--texto-3);stroke-width:2;
+    stroke-linecap:round;stroke-linejoin:round;
+    transition:stroke .18s ease,transform .18s ease;
+  }
+  /* A caixa fica igual com uma planilha ou com dez — é ela que diz "os
+     números ao lado são DESTA aqui". O que sai é só o convite a abrir:
+     sem chevron, sem hover, sem cursor de clique, porque uma caixa que se
+     oferece para abrir e não abre é pior do que uma caixa quieta. */
+  .escolha-planilha:not(.sem-troca):hover{
+    border-color:var(--linha-forte);background:#fff;
+    box-shadow:0 6px 18px rgba(15,23,42,.06);
+  }
+  .escolha-planilha:not(.sem-troca):hover .chevron{stroke:var(--azul-acao);transform:translateY(1px)}
+  .escolha-planilha:focus-within{
+    border-color:var(--azul-acao);
+    box-shadow:0 0 0 3px rgba(37,99,235,.16);
+  }
+  /* Invisível por cima da caixa inteira: o clique vale em qualquer ponto
+     dela e quem abre a lista é o próprio navegador. Um menu em JS daria o
+     mesmo desenho e ainda teria de reimplementar teclado e rolagem. */
+  .seletor-planilha{
+    position:absolute;inset:0;width:100%;height:100%;
+    opacity:0;cursor:pointer;appearance:none;border:0;padding:0;
+  }
   .aviso-outra-planilha{
-    display:block;color:var(--ambar);font-size:12px;line-height:1.35;
+    display:block;margin-top:.5rem;color:var(--ambar);font-size:12px;line-height:1.35;
   }
   .aviso-outra-planilha strong{
     display:inline;margin:0;font-size:12px;font-weight:800;color:inherit;
     white-space:normal;
   }
   .aviso-outra-planilha a{font-weight:800;white-space:nowrap}
-  .seletor-planilha:focus-visible{outline:2px solid var(--azul-acao);outline-offset:2px}
   .resultado-geral{
     display:flex;align-items:baseline;gap:.7rem;min-width:0;flex-wrap:wrap;
     margin:.1rem 0 .08rem;
