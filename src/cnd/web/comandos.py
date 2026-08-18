@@ -191,7 +191,8 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                        "pelo AnyDesk, destrave e tente de novo.")
 
     @roteador.post("/planilha")
-    async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO):
+    async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
+                              aba: str = Form(default="RFB")):
         """Recebe a planilha e cria o lote nesta máquina.
 
         Resolve o caminho que hoje obriga a entrar por AnyDesk em cada
@@ -226,9 +227,16 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
             try:
                 criar_schema(conn)
                 lote_id, leitura = importar(conn, destino,
-                                            f"Importação de {nome}", ["RFB"])
+                                            f"Importação de {nome}",
+                                            [(aba or "RFB").strip().upper()])
             finally:
                 conn.close()
+
+            # Planilha entregue não é ordem de começar. Sem este marcador o
+            # vigia do painel veria fila cheia e robô sem sinal e relançaria
+            # sozinho em menos de um minuto — exatamente o começo automático
+            # que se quis tirar. Apertar "Iniciar robô" limpa o marcador.
+            _marcar_parada_manual(cfg.banco)
 
             return {
                 "lote": lote_id,

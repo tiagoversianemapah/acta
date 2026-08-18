@@ -612,11 +612,18 @@ def baixar_planilha(cfg: Config, mes: str, destino: Path,
     return entrega
 
 
-def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "") -> dict:
-    """Sobe a planilha para a máquina e devolve o resumo da importação."""
+def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "",
+                    aba: str = "RFB") -> dict:
+    """Sobe a planilha para a máquina e devolve o resumo da importação.
+
+    `aba` é a automação escolhida: a mesma máquina roda mais de uma, e é a
+    aba da planilha que diz qual (ver ingestao.planilha.ABA_PARA_ORGAO).
+    """
     limite = b"----acta" + str(id(arquivo)).encode()
     corpo = b"".join([
         b"--", limite, b"\r\n",
+        b'Content-Disposition: form-data; name="aba"\r\n\r\n',
+        (aba or "RFB").encode("utf-8"), b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="arquivo"; filename="',
         arquivo.name.encode("utf-8"), b'"\r\n',
         b"Content-Type: application/vnd.openxmlformats-officedocument"

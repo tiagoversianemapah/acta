@@ -951,3 +951,35 @@
     .lateral-nome{font-size:24px}
     .painel-sidebar .maquina-linha{min-height:96px;padding:1rem .95rem}
   }
+
+  /* Diálogo de envio de planilha. Nativo (<dialog>) de propósito: o
+     navegador já dá o fundo, o foco preso dentro e o Esc para fechar —
+     tudo o que um modal caseiro erra. */
+  .dialogo{
+    width:min(460px,calc(100vw - 2rem));padding:0;
+    border:1px solid var(--linha);border-radius:12px;background:#fff;
+    color:var(--texto);box-shadow:0 30px 70px rgba(15,23,42,.22);
+  }
+  .dialogo::backdrop{background:rgba(15,23,42,.42)}
+  .dialogo form{display:grid;gap:1rem;padding:1.35rem 1.4rem 1.2rem;margin:0}
+  .dialogo h3{margin:0;font-size:17px;font-weight:800;color:var(--texto)}
+  .dialogo .campo{display:grid;gap:.35rem;min-width:0}
+  .dialogo .campo > .rotulo{display:block}
+  .dialogo select,.dialogo input[type=file]{
+    width:100%;padding:.6rem .7rem;font:inherit;font-size:13px;color:var(--texto);
+    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
+  }
+  .dialogo select:focus-visible,.dialogo input[type=file]:focus-visible{
+    outline:2px solid var(--azul-acao);outline-offset:1px;
+  }
+  /* Indisponível continua na lista, para a pessoa ver que existe — mas
+     apagada, e o navegador não deixa escolher. */
+  .dialogo option:disabled{color:var(--texto-3)}
+  .dialogo .campo small{color:var(--texto-3);font-size:11.5px;line-height:1.4}
+  .dialogo-nota{
+    margin:0;padding:.7rem .8rem;border-radius:8px;font-size:12.5px;
+    line-height:1.45;color:#14213F;background:var(--azul-claro);
+    border:1px solid #DCE6FA;
+  }
+  .dialogo-acoes{display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap}
+  .dialogo-acoes .primario[disabled]{opacity:.65;cursor:progress}

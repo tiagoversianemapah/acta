@@ -47,6 +47,32 @@ document.addEventListener('click', function (evento) {
   }
   alvo.classList.add('selecionando');
 });
+
+// Diálogo de envio: abrir, fechar e dizer que está carregando. O #resumo é
+// trocado por inteiro a cada 5s, então nada aqui pode guardar referência a
+// um elemento — tudo é resolvido no momento do clique.
+document.addEventListener('click', function (evento) {
+  var abrir = evento.target.closest('[data-abrir]');
+  if (abrir) {
+    var alvo = document.querySelector(abrir.dataset.abrir);
+    if (alvo && alvo.showModal) alvo.showModal();
+    return;
+  }
+  if (evento.target.closest('[data-fechar]')) {
+    var aberto = evento.target.closest('dialog');
+    if (aberto) aberto.close();
+  }
+});
+
+document.addEventListener('submit', function (evento) {
+  var botao = evento.target.querySelector('[data-enviando]');
+  if (!botao) return;
+  // Uma planilha de milhares de linhas leva segundos subindo. Sem travar o
+  // botão, o segundo clique manda o arquivo de novo e cria dois lotes.
+  botao.disabled = true;
+  var texto = botao.querySelector('span');
+  if (texto) texto.textContent = botao.dataset.enviando;
+});
 </script>
 </body>
 </html>

@@ -52,6 +52,48 @@ def _rotulo_orgao(codigo: str) -> str:
     return orgao.rotulo if orgao else codigo
 
 
+def automacoes() -> list[dict]:
+    """As automações que a máquina pode rodar, e por que algumas não podem.
+
+    A planilha já diz a automação pela ABA — `RFB` é Receita PJ, `CRF` é
+    regularidade do empregador. Isso existia no importador desde sempre,
+    mas o envio mandava `["RFB"]` fixo: uma máquina só sabia fazer uma
+    coisa. Aqui a lista vira dado da tela, para quem envia escolher.
+
+    Indisponível continua aparecendo, e com o motivo. Sumir com a opção
+    faria a pessoa procurar no lugar errado por algo que não está lá —
+    ela precisa ver que existe e que falta ligar.
+    """
+    from importlib.util import find_spec
+
+    from cnd.ingestao.planilha import ABA_PARA_ORGAO
+
+    lista = []
+    for aba, (codigo, tipo) in ABA_PARA_ORGAO.items():
+        orgao = cfg.orgaos.get(codigo)
+        if orgao is None:
+            motivo = "não está no config desta máquina"
+        elif find_spec(f"cnd.adapters.{orgao.adapter}") is None:
+            # Antes de "desligada": ligar no config não constrói adapter
+            # nenhum, e dizer só que está desligada mandaria a pessoa
+            # trocar `ativo = true` para descobrir o problema de verdade.
+            motivo = "automação ainda não construída"
+        elif not orgao.ativo:
+            motivo = "desligada no config"
+        else:
+            motivo = ""
+        lista.append({
+            "aba": aba,
+            "codigo": codigo,
+            "tipo": tipo,
+            "rotulo": orgao.rotulo if orgao else codigo,
+            "disponivel": not motivo,
+            "motivo": motivo,
+        })
+    lista.sort(key=lambda a: (not a["disponivel"], a["rotulo"]))
+    return lista
+
+
 def _chave_do_css() -> str:
     """Some no endereço do CSS para o navegador buscar a folha nova.
 
@@ -72,6 +114,7 @@ def _chave_do_css() -> str:
 templates.env.globals.update(
     versao_acta=maquina.versao() or "",
     chave_do_css=_chave_do_css(),
+    automacoes=automacoes,
     rotulo_orgao=_rotulo_orgao,
 )
 
@@ -749,22 +792,51 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     return destino
 
 
-def _importar_planilha_local(caminho: Path) -> dict:
+def _importar_planilha_local(caminho: Path, aba: str = "RFB") -> dict:
     from cnd.ingestao.planilha import importar
 
     conn = conectar(cfg.banco)
     try:
         criar_schema(conn)
         lote_id, leitura = importar(
-            conn, caminho, f"Importacao de {caminho.name}", ["RFB"]
+            conn, caminho, f"Importacao de {caminho.name}", [aba]
         )
-        return {
+        resposta = {
             "lote": lote_id,
             "criados": len(leitura.itens),
+            # Os motivos vêm junto, como no envio pela rede: é deles que a
+            # mensagem da tela monta o "12× é um CPF...".
+            "rejeitados": [
+                {"linha": r.linha, "valor": r.valor_original, "motivo": r.motivo}
+                for r in leitura.rejeitados[:20]
+            ],
             "total_rejeitados": len(leitura.rejeitados),
         }
     finally:
         conn.close()
+
+    # Ver comandos.enviar_planilha: entregar a planilha não manda começar.
+    comandos._marcar_parada_manual(cfg.banco)
+    return resposta
+
+
+def _aba_valida(aba: str) -> str:
+    """Recusa automação que esta máquina não roda.
+
+    O seletor já só oferece as prontas, mas quem manda o formulário é o
+    navegador: sem esta conferência bastaria trocar o valor no HTML para
+    encher a fila de itens que nenhum adapter sabe executar — e eles só
+    dariam erro lá na frente, um a um, no worker.
+    """
+    escolhida = (aba or "").strip().upper()
+    for opcao in automacoes():
+        if opcao["aba"] == escolhida:
+            if not opcao["disponivel"]:
+                raise ValueError(
+                    f"{opcao['rotulo']}: {opcao['motivo']}."
+                )
+            return escolhida
+    raise ValueError(f"Automação desconhecida: {aba!r}.")
 
 
 def _mensagem_importacao(resposta: dict, inicio: str | None = None) -> str:
@@ -772,7 +844,22 @@ def _mensagem_importacao(resposta: dict, inicio: str | None = None) -> str:
     rejeitados = int(resposta.get("total_rejeitados") or 0)
     partes = [f"{criados} item(ns) entraram na fila"]
     if rejeitados:
-        partes.append(f"{rejeitados} rejeitado(s)")
+        # "12 rejeitado(s)" não diz o que fazer. O motivo é o que resolve —
+        # e quase sempre são poucos motivos repetidos em muitas linhas, daí
+        # contar por motivo em vez de listar linha a linha.
+        contagem: dict[str, int] = {}
+        for item in resposta.get("rejeitados") or []:
+            motivo = str(item.get("motivo") or "").strip()
+            if motivo:
+                contagem[motivo] = contagem.get(motivo, 0) + 1
+        if contagem:
+            maiores = sorted(contagem.items(), key=lambda x: -x[1])[:2]
+            detalhe = "; ".join(
+                f"{quantas}× {motivo}" for motivo, quantas in maiores
+            )
+            partes.append(f"{rejeitados} rejeitado(s) — {detalhe}")
+        else:
+            partes.append(f"{rejeitados} rejeitado(s)")
     if inicio:
         partes.append(inicio)
     return "; ".join(partes)
@@ -785,9 +872,11 @@ def _resetar_pausa_local(orgao: str) -> None:
 
 
 @app.post("/acoes/maquina/{indice}/planilha")
-async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA):
+async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA,
+                                aba: str = Form(default="RFB")):
     caminho: Path | None = None
     try:
+        aba = _aba_valida(aba)
         caminho = await _salvar_planilha_temporaria(arquivo)
         if cfg.rede.maquinas:
             if indice < 0 or indice >= len(cfg.rede.maquinas):
@@ -796,33 +885,22 @@ async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIA
                     status_code=303,
                 )
             resposta = remoto.enviar_planilha(
-                cfg.rede.maquinas[indice], caminho, cfg.rede.senha
+                cfg.rede.maquinas[indice], caminho, cfg.rede.senha, aba=aba
             )
-            inicio = None
-            try:
-                robo = remoto.comandar_robo(
-                    cfg.rede.maquinas[indice], iniciar=True,
-                    senha=cfg.rede.senha,
-                )
-                inicio = robo.get("mensagem") or robo.get("situacao") or "Robo iniciado"
-            except Exception as erro:
-                inicio = f"robo nao iniciou: {erro}"
         else:
             if indice != 0 or not cfg.rede.roda_robo:
                 return RedirectResponse(
                     _url_destino("/", erro="Maquina nao encontrada."),
                     status_code=303,
                 )
-            resposta = _importar_planilha_local(caminho)
-            ok, situacao = comandos.iniciar_robo_da_maquina(cfg, RAIZ_PROJETO)
-            inicio = situacao if ok else f"robo nao iniciou: {situacao}"
+            resposta = _importar_planilha_local(caminho, aba)
 
         destino = "/jobs"
         lote = int(resposta.get("lote") or 0) or None
         return RedirectResponse(
             _url_destino(
                 destino, indice, arquivo=lote,
-                mensagem=_mensagem_importacao(resposta, inicio),
+                mensagem=_mensagem_importacao(resposta),
             ),
             status_code=303,
         )

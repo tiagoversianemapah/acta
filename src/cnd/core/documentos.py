@@ -44,26 +44,55 @@ def _dv_cpf(digitos: list[int]) -> int:
     return 0 if resto < 2 else 11 - resto
 
 
+def _parece_cpf(digitos: str) -> bool:
+    """11 dígitos que passam no DV de CPF."""
+    if not RE_CPF.match(digitos):
+        return False
+    try:
+        validar_cpf(digitos)
+    except DocumentoInvalido:
+        return False
+    return True
+
+
 def validar_cnpj(valor) -> str:
     """Devolve o CNPJ limpo se for válido. Se não for, acusa o erro."""
     doc = _limpar(valor)
+    original = doc
 
     # O Excel guarda CNPJ como número e come os zeros da esquerda.
     if doc.isdigit() and len(doc) < 14:
         doc = doc.zfill(14)
 
+    def recusar(motivo: str) -> DocumentoInvalido:
+        """Diz "isto é um CPF" quando for, em vez de acusar CNPJ torto.
+
+        Um CPF na aba de CNPJ não é erro de digitação, é linha na aba
+        errada — e a mensagem precisa dizer isso, senão a pessoa fica
+        conferindo um número que está certo. Pior: o preenchimento com
+        zeros acima transforma 11 dígitos em 14, e a queixa saía sobre
+        um número que ninguém digitou.
+        """
+        if _parece_cpf(original):
+            return DocumentoInvalido(
+                f"{formatar(original)} é um CPF, e esta automação consulta "
+                f"CNPJ. Mova a linha para a aba CPF."
+            )
+        return DocumentoInvalido(motivo)
+
     if len(doc) != 14:
-        raise DocumentoInvalido(f"CNPJ deve ter 14 caracteres, tem {len(doc)}: {doc!r}")
+        raise recusar(
+            f"CNPJ deve ter 14 caracteres, tem {len(original)}: {original!r}")
     if not RE_CNPJ.match(doc):
-        raise DocumentoInvalido(f"CNPJ com caracteres inválidos: {doc!r}")
+        raise recusar(f"CNPJ com caracteres inválidos: {doc!r}")
     if len(set(doc)) == 1:
-        raise DocumentoInvalido(f"CNPJ com todos os caracteres iguais: {doc!r}")
+        raise recusar(f"CNPJ com todos os caracteres iguais: {doc!r}")
 
     base = [ord(c) - 48 for c in doc[:12]]
     dv1 = _dv_cnpj(base)
     dv2 = _dv_cnpj([*base, dv1])
     if doc[12:] != f"{dv1}{dv2}":
-        raise DocumentoInvalido(f"CNPJ com dígito verificador inválido: {doc!r}")
+        raise recusar(f"CNPJ com dígito verificador inválido: {doc!r}")
     return doc
 
 

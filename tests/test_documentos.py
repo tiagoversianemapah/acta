@@ -66,3 +66,30 @@ def test_formatar():
     assert formatar("11222333000181") == "11.222.333/0001-81"
     assert formatar("12ABC34501DE35") == "12.ABC.345/01DE-35"
     assert formatar("52998224725") == "529.982.247-25"
+
+
+def test_cpf_na_aba_de_cnpj_diz_que_e_cpf():
+    """A queixa não pode ser sobre um número que ninguém digitou.
+
+    O importador preenche com zeros à esquerda porque o Excel os come de
+    CNPJ — e isso transformava um CPF de 11 dígitos em '000...' de 14, com
+    o erro reclamando desse número inventado. Quem conferia achava que o
+    cadastro estava errado, quando a linha só estava na aba errada.
+    """
+    with pytest.raises(DocumentoInvalido) as erro:
+        validar_cnpj("111.444.777-35")
+    assert "é um CPF" in str(erro.value)
+    assert "aba CPF" in str(erro.value)
+    assert "000" not in str(erro.value), "não pode citar o número preenchido"
+
+
+def test_cnpj_com_zero_comido_pelo_excel_continua_passando():
+    """A melhoria acima não pode custar o caso que o zfill resolve."""
+    assert validar_cnpj("6031097000186") == "06031097000186"
+
+
+def test_onze_digitos_que_nao_sao_cpf_mantem_a_queixa_de_cnpj():
+    """Pode ser CNPJ com zeros comidos, então não se afirma que é CPF."""
+    with pytest.raises(DocumentoInvalido) as erro:
+        validar_cnpj("12345678901")
+    assert "CPF" not in str(erro.value)
