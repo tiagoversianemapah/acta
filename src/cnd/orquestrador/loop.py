@@ -37,6 +37,13 @@ PAUSA_SEM_TRABALHO_S = 5.0
 PAUSA_BREAKER_ABERTO_S = 15.0
 PAUSA_FORA_DA_JANELA_S = 60.0
 INTERVALO_HEARTBEAT_S = 60.0
+# Carência antes de o robô poder desistir por falta de trabalho. Quem
+# aperta "Iniciar robô" numa máquina sem planilha veria o processo subir e
+# morrer no mesmo segundo, e a tela voltaria ao botão como se o clique não
+# tivesse funcionado. Meio minuto dá tempo de a importação de uma planilha
+# recém-enviada aparecer no banco e, quando não há nada mesmo, de o painel
+# registrar que ele rodou e encerrou.
+CARENCIA_ANTES_DE_ENCERRAR_S = 30.0
 # Com a data junto: o código vem carimbado como "005 - 17/08/2026 12:03:32".
 # Sem exigir isso, os três dígitos do CNPJ passavam por código do portal e o
 # item ganhava (ou perdia) a micro-retentativa por acaso do número dele.
@@ -724,11 +731,45 @@ def _consumir_pedido_de_parada(cfg: Config) -> bool:
     return True
 
 
+def _falhas_a_recuperar(conn, orgao: ConfigOrgao) -> int:
+    """Falhas que o vigia ainda vai devolver para a fila.
+
+    Com a recuperação ligada, item FAILED não é assunto encerrado: por
+    decisão de operação (17/08/2026) o robô nunca desiste de item sem
+    resposta do portal — ele reenfileira de 30min em 30min, dobrando até
+    6h. Enquanto houver uma dessas, ainda há trabalho, mesmo com a fila
+    zerada. Desligada a recuperação, ninguém mais mexe nelas e elas param
+    de contar. Ver core/recuperacao.py.
+    """
+    if not orgao.recuperacao.ativa:
+        return 0
+    return conn.execute(
+        "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status = ?",
+        (orgao.codigo, Status.FAILED),
+    ).fetchone()["n"]
+
+
+def _nada_a_fazer(conn, ativos: list[ConfigOrgao]) -> bool:
+    """Acabou de verdade: nenhum item pendente e nenhuma falha a recuperar."""
+    return not any(
+        fila.ha_trabalho(conn, o.codigo) or _falhas_a_recuperar(conn, o)
+        for o in ativos
+    )
+
+
 def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
              limite: int | None = None, forcar: bool = False) -> None:
-    """Sobe o orquestrador. Bloqueia até Ctrl+C.
+    """Sobe o orquestrador. Bloqueia até acabar o trabalho ou até Ctrl+C.
 
-    `ate_esvaziar` encerra quando a fila zera (teste).
+    O robô encerra sozinho quando não sobra nada a fazer — nem item na
+    fila, nem falha esperando nova rodada de recuperação. Antes ele ficava
+    de pé indefinidamente depois do último CNPJ, segurando o navegador e
+    aparecendo como "ocioso" na tela; quem olhava não sabia dizer se o
+    lote tinha terminado ou se ele havia travado. Planilha nova sobe o
+    robô de novo (ver web/comandos.iniciar_robo_da_maquina).
+
+    `ate_esvaziar` encerra assim que a fila zera, sem esperar a
+    recuperação das falhas — é o modo dos testes.
     `limite` para depois de N jobs — é o modo piloto do roadmap, para medir
     a reação do portal com pouco a perder.
     """
@@ -789,6 +830,9 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
     })
 
     vigia = Vigia(cfg, ativos)
+    # A carência conta do início, e não da última consulta: o caso que ela
+    # protege é justamente o do robô que sobe sem nada para fazer.
+    pode_encerrar_em = time.monotonic() + CARENCIA_ANTES_DE_ENCERRAR_S
     try:
         while not parar.is_set():
             parar.wait(2.0)
@@ -801,6 +845,15 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
                 fila.ha_trabalho(conn, o.codigo) for o in ativos
             ):
                 log.info("fila_vazia_encerrando")
+                parar.set()
+                continue
+            # Depois do vigia, e não antes: é ele quem devolve as falhas
+            # para a fila, e perguntar antes veria vazio o que ele estava
+            # prestes a reabastecer.
+            if time.monotonic() >= pode_encerrar_em and _nada_a_fazer(conn, ativos):
+                log.info("trabalho_concluido_encerrando", extra={
+                    "orgaos": [o.codigo for o in ativos],
+                })
                 parar.set()
     except KeyboardInterrupt:
         parar.set()

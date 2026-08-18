@@ -320,7 +320,10 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("rodar", help="sobe o orquestrador (o robô)")
     p.add_argument("--ate-esvaziar", action="store_true",
-                   help="encerra quando a fila zerar (usado em teste)")
+                   help="encerra assim que a fila zerar, sem esperar a "
+                        "recuperação das falhas (usado em teste). Sem o flag, "
+                        "o robô já encerra sozinho quando não sobra nada — "
+                        "nem fila, nem falha a recuperar")
     p.add_argument("--config", type=Path, default=None,
                    help="outro config.toml (padrão: o da raiz do projeto)")
     p.add_argument("--limite", type=int, default=None,

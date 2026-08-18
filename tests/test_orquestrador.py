@@ -7,15 +7,18 @@ adapter pelo da Receita.
 from __future__ import annotations
 
 import threading
+from dataclasses import replace
 
 from cnd.adapters import fake
-from cnd.core import breaker, ritmo
+from cnd.core import breaker, fila, ritmo
 from cnd.core.breaker import ParametrosBreaker
 from cnd.core.modelos import CONCLUSIVOS, Desfecho, ResultadoTentativa, Status
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 from cnd.infra.db import caminho_pedido_parada
-from cnd.orquestrador.loop import Contexto, _consumir_pedido_de_parada, executar
+from cnd.orquestrador.loop import (
+    Contexto, _consumir_pedido_de_parada, _nada_a_fazer, executar,
+)
 from tests.conftest import criar_job
 
 
@@ -92,6 +95,52 @@ def test_consumir_pedido_de_parada_remove_o_sinal(tmp_path):
     assert _consumir_pedido_de_parada(cfg) is True
     assert not pedido.exists()
     assert _consumir_pedido_de_parada(cfg) is False
+
+
+def test_robo_encerra_sozinho_quando_acaba_o_trabalho(conn, lote, tmp_path,
+                                                     monkeypatch):
+    """Sem `--ate-esvaziar`, e sem nada a fazer, o processo tem de sair.
+
+    Ele ficava de pé indefinidamente depois do último CNPJ, segurando o
+    navegador e aparecendo como "ocioso" na tela — quem olhava não sabia
+    dizer se o lote havia terminado ou se o robô tinha travado. Sem este
+    teste, `executar` bloquearia para sempre e a suíte penduraria.
+    """
+    monkeypatch.setattr("cnd.orquestrador.loop.CARENCIA_ANTES_DE_ENCERRAR_S", 0.0)
+    for i in range(3):
+        criar_job(conn, lote, documento=f"{i:014d}", orgao="FAKE")
+
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+                        simulacao={"limiar_heuristica_s": 0.0,
+                                   "chance_erro_tecnico": 0.0,
+                                   "duracao_min_s": 0.0, "duracao_max_s": 0.0})
+
+    executar(cfg)   # sem ate_esvaziar: quem encerra é a falta de trabalho
+
+    situacoes = {linha["status"] for linha in conn.execute("SELECT status FROM job")}
+    assert situacoes == {Status.DONE}
+
+
+def test_falha_a_recuperar_segura_o_robo_de_pe(conn, lote, tmp_path):
+    """Fila zerada não é fim do trabalho enquanto houver falha em aberto.
+
+    Por decisão de operação (17/08/2026) o robô nunca desiste de item sem
+    resposta do portal: ele reenfileira de 30min até 6h. Encerrar com a
+    fila vazia mataria justamente quem faria isso, e os itens ficariam
+    esperando alguém lembrar de apertar "Reenviar itens com falha".
+    """
+    job = criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
+    conn.execute("UPDATE job SET status = ? WHERE id = ?", (Status.FAILED, job))
+    cfg = montar_config(tmp_path, tmp_path / "cnd.db", {})
+    orgao = cfg.orgaos["FAKE"]
+
+    assert not fila.ha_trabalho(conn, "FAKE"), "a fila está vazia"
+    assert _nada_a_fazer(conn, [orgao]) is False, "mas a falha ainda vai voltar"
+
+    # Desligada a recuperação, ninguém mais mexe nelas: aí acabou mesmo.
+    sem_recuperacao = replace(
+        orgao, recuperacao=replace(orgao.recuperacao, ativa=False))
+    assert _nada_a_fazer(conn, [sem_recuperacao]) is True
 
 
 def test_lote_inteiro_e_processado(conn, lote, tmp_path):
