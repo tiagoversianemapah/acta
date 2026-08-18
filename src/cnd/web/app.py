@@ -792,14 +792,16 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     return destino
 
 
-def _importar_planilha_local(caminho: Path, aba: str = "RFB") -> dict:
+def _importar_planilha_local(caminho: Path, aba: str = "",
+                             orgao: str = "") -> dict:
     from cnd.ingestao.planilha import importar
 
     conn = conectar(cfg.banco)
     try:
         criar_schema(conn)
         lote_id, leitura = importar(
-            conn, caminho, f"Importacao de {caminho.name}", [aba]
+            conn, caminho, f"Importacao de {caminho.name}",
+            [aba] if aba else None, orgao or None,
         )
         resposta = {
             "lote": lote_id,
@@ -820,23 +822,25 @@ def _importar_planilha_local(caminho: Path, aba: str = "RFB") -> dict:
     return resposta
 
 
-def _aba_valida(aba: str) -> str:
+def _automacao_valida(orgao: str) -> str:
     """Recusa automação que esta máquina não roda.
 
-    O seletor já só oferece as prontas, mas quem manda o formulário é o
-    navegador: sem esta conferência bastaria trocar o valor no HTML para
-    encher a fila de itens que nenhum adapter sabe executar — e eles só
-    dariam erro lá na frente, um a um, no worker.
+    Confere o ÓRGÃO, e não mais a aba: com a aba de nome livre ("Clientes
+    GO"), ela deixou de dizer o que roda. O seletor já só oferece as
+    prontas, mas quem manda o formulário é o navegador — sem esta
+    conferência bastaria editar o HTML para encher a fila de itens que
+    nenhum adapter sabe executar, e o erro só apareceria lá na frente, um
+    a um, dentro do worker.
     """
-    escolhida = (aba or "").strip().upper()
+    escolhido = (orgao or "").strip().upper()
+    if not escolhido:
+        return ""          # sem escolha: vale o atalho pelo nome da aba
     for opcao in automacoes():
-        if opcao["aba"] == escolhida:
+        if opcao["codigo"] == escolhido:
             if not opcao["disponivel"]:
-                raise ValueError(
-                    f"{opcao['rotulo']}: {opcao['motivo']}."
-                )
-            return escolhida
-    raise ValueError(f"Automação desconhecida: {aba!r}.")
+                raise ValueError(f"{opcao['rotulo']}: {opcao['motivo']}.")
+            return escolhido
+    raise ValueError(f"Automação desconhecida: {orgao!r}.")
 
 
 def _mensagem_importacao(resposta: dict, inicio: str | None = None) -> str:
@@ -873,10 +877,11 @@ def _resetar_pausa_local(orgao: str) -> None:
 
 @app.post("/acoes/maquina/{indice}/planilha")
 async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIADA,
-                                aba: str = Form(default="RFB")):
+                                aba: str = Form(default=""),
+                                orgao: str = Form(default="")):
     caminho: Path | None = None
     try:
-        aba = _aba_valida(aba)
+        orgao = _automacao_valida(orgao)
         caminho = await _salvar_planilha_temporaria(arquivo)
         if cfg.rede.maquinas:
             if indice < 0 or indice >= len(cfg.rede.maquinas):
@@ -885,7 +890,8 @@ async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIA
                     status_code=303,
                 )
             resposta = remoto.enviar_planilha(
-                cfg.rede.maquinas[indice], caminho, cfg.rede.senha, aba=aba
+                cfg.rede.maquinas[indice], caminho, cfg.rede.senha,
+                aba=aba, orgao=orgao
             )
         else:
             if indice != 0 or not cfg.rede.roda_robo:
@@ -893,7 +899,7 @@ async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIA
                     _url_destino("/", erro="Maquina nao encontrada."),
                     status_code=303,
                 )
-            resposta = _importar_planilha_local(caminho, aba)
+            resposta = _importar_planilha_local(caminho, aba, orgao)
 
         destino = "/jobs"
         lote = int(resposta.get("lote") or 0) or None

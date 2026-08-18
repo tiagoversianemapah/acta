@@ -613,7 +613,7 @@ def baixar_planilha(cfg: Config, mes: str, destino: Path,
 
 
 def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "",
-                    aba: str = "RFB") -> dict:
+                    aba: str = "", orgao: str = "") -> dict:
     """Sobe a planilha para a máquina e devolve o resumo da importação.
 
     `aba` é a automação escolhida: a mesma máquina roda mais de uma, e é a

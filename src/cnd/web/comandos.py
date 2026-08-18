@@ -268,7 +268,8 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
 
     @roteador.post("/planilha")
     async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
-                              aba: str = Form(default="RFB")):
+                              aba: str = Form(default=""),
+                              orgao: str = Form(default="")):
         """Recebe a planilha e cria o lote nesta máquina.
 
         Resolve o caminho que hoje obriga a entrar por AnyDesk em cada
@@ -302,9 +303,13 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
             conn = conectar(cfg.banco)
             try:
                 criar_schema(conn)
+                # `aba` é ONDE estão os dados; `orgao` é O QUE rodar com
+                # eles. Sem orgao vale o atalho antigo (aba RFB é Receita),
+                # que a linha de comando continua usando.
+                escolhidas = [aba.strip()] if aba.strip() else None
                 lote_id, leitura = importar(conn, destino,
                                             f"Importação de {nome}",
-                                            [(aba or "RFB").strip().upper()])
+                                            escolhidas, orgao.strip() or None)
             finally:
                 conn.close()
 
