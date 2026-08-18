@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from cnd.core import tempo
+from cnd.core import controle, tempo
 from cnd.core.modelos import (
     COM_PDF,
     CONCLUSIVOS,
@@ -29,6 +29,11 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
     Vale para item novo (`PENDING`) e retry cuja espera já venceu
     (`RETRY_WAIT`). Devolve None se não houver nada disponível agora.
 
+    Planilha estacionada ou cancelada NAQUELA automação não é entregue —
+    ver core/controle.py. A conferência entra aqui, dentro da mesma
+    transação que reivindica, e não numa checagem antes: entre um SELECT
+    de fora e o UPDATE daqui caberia outro worker.
+
     O BEGIN IMMEDIATE trava a escrita já na abertura da transação: é isso
     que impede dois workers de selecionarem a mesma linha antes de qualquer
     um marcar RUNNING.
@@ -42,13 +47,23 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
                    e.documento, e.tipo_documento, e.nome
               FROM job j
               JOIN empresa e ON e.id = j.empresa_id
+              -- LEFT JOIN, e COALESCE no lugar do NULL: quase nenhuma
+              -- planilha tem linha de controle, e exigir uma faria a fila
+              -- inteira depender de um INSERT na importação.
+              LEFT JOIN fila_controle c
+                     ON c.lote_id = j.lote_id AND c.orgao = j.orgao
              WHERE j.orgao = ?
                AND j.status IN (?, ?)
                AND j.proxima_execucao_em <= ?
-             ORDER BY j.proxima_execucao_em, j.id
+               AND COALESCE(c.situacao, ?) = ?
+             -- Prioridade primeiro: é assim que "Rodar agora" fura a fila
+             -- sem mexer nos ids, que guardam a ordem de chegada.
+             ORDER BY COALESCE(c.prioridade, 0) DESC,
+                      j.proxima_execucao_em, j.id
              LIMIT 1
             """,
-            (orgao, Status.PENDING, Status.RETRY_WAIT, agora),
+            (orgao, Status.PENDING, Status.RETRY_WAIT, agora,
+             controle.ATIVA, controle.ATIVA),
         ).fetchone()
 
         if linha is None:

@@ -36,6 +36,21 @@ CREATE TABLE IF NOT EXISTS job (
 CREATE INDEX IF NOT EXISTS idx_job_fila
     ON job (orgao, status, proxima_execucao_em);
 
+-- Controle da fila por PLANILHA e AUTOMAÇÃO, e não por lote inteiro: a
+-- carteira vem com RFB e CRF no mesmo arquivo, e estacionar um não pode
+-- parar o outro. Linha ausente significa ATIVO e prioridade zero — o
+-- estado normal, que é o de quase todo mundo, não ocupa espaço nenhum.
+CREATE TABLE IF NOT EXISTS fila_controle (
+    lote_id       INTEGER NOT NULL REFERENCES lote(id),
+    orgao         TEXT    NOT NULL,
+    situacao      TEXT    NOT NULL DEFAULT 'ATIVA',
+    -- Maior vem primeiro. É como "Rodar agora" fura a ordem de id sem
+    -- precisar mexer nos ids, que são a memória da ordem de chegada.
+    prioridade    INTEGER NOT NULL DEFAULT 0,
+    atualizado_em TEXT    NOT NULL,
+    PRIMARY KEY (lote_id, orgao)
+);
+
 CREATE TABLE IF NOT EXISTS tentativa (
     id              INTEGER PRIMARY KEY,
     job_id          INTEGER NOT NULL REFERENCES job(id),
