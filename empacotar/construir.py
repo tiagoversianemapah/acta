@@ -26,7 +26,7 @@ from cnd.desktop import marca  # noqa: E402 — depende do sys.path acima
 
 NOME = marca.NOME_PRODUTO
 DESTINO = RAIZ / "dist" / NOME
-VERSAO = (1, 1, 0, 0)
+VERSAO = (1, 1, 1, 0)
 EMPRESA = "Mapah Auditoria e Contabilidade"
 
 # Nomes que o programa já usou. Os atalhos antigos apontam para um

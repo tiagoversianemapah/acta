@@ -1,6 +1,6 @@
 [project]
 name = "cnd"
-version = "1.1.0"
+version = "1.1.1"
 description = "ACTA — RPA de emissão de certidões de regularidade fiscal em lote"
 requires-python = ">=3.12"
 dependencies = [

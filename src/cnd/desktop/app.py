@@ -48,7 +48,7 @@ def _versao() -> str:
     try:
         return version("cnd")
     except PackageNotFoundError:
-        return "1.1.0"
+        return "1.1.1"
 
 
 FONTE = "Segoe UI"

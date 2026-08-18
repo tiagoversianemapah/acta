@@ -346,13 +346,16 @@
      número à direita) e sim o de um controle — rótulo em cima, caixa
      clicável embaixo. */
   .faixa-operacao > .cartao-planilha{
-    display:block;padding:.85rem .9rem .9rem;
+    display:grid;grid-template-columns:1fr;align-content:start;align-items:stretch;
+    gap:.55rem;padding:.85rem .9rem .9rem;
   }
-  .cartao-planilha > .rotulo{display:block;margin-bottom:.5rem}
+  .cartao-planilha > .rotulo{
+    display:block;margin:0;line-height:1.15;max-width:none;
+  }
   .escolha-planilha{
     position:relative;display:grid;
     grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:.75rem;
-    padding:.6rem .7rem;border:1px solid var(--linha);border-radius:8px;
+    min-height:58px;padding:.6rem .7rem;border:1px solid var(--linha);border-radius:8px;
     background:var(--faixa);
     transition:border-color .18s ease,background-color .18s ease,box-shadow .18s ease;
   }
@@ -948,4 +951,3 @@
     .lateral-nome{font-size:24px}
     .painel-sidebar .maquina-linha{min-height:96px;padding:1rem .95rem}
   }
-

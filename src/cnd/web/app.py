@@ -52,8 +52,26 @@ def _rotulo_orgao(codigo: str) -> str:
     return orgao.rotulo if orgao else codigo
 
 
+def _chave_do_css() -> str:
+    """Some no endereço do CSS para o navegador buscar a folha nova.
+
+    É o mtime do arquivo, e não a versão do ACTA, por dois motivos. A
+    versão vem do metadado do pacote e volta VAZIA quando ele não está
+    instalado — numa pasta copiada, que é como o ACTA se instala, `?v=`
+    ficaria constante e não invalidaria nada. E conserto de CSS costuma
+    sair sem subir versão: em 18/08/2026 a tela apareceu com marcação nova
+    e estilo velho, e só não ficou assim porque a versão subiu junto, por
+    acaso. O mtime muda quando o arquivo muda, que é a pergunta certa.
+    """
+    try:
+        return str(int((app_static / "app.css").stat().st_mtime))
+    except OSError:
+        return maquina.versao() or "0"
+
+
 templates.env.globals.update(
     versao_acta=maquina.versao() or "",
+    chave_do_css=_chave_do_css(),
     rotulo_orgao=_rotulo_orgao,
 )
 

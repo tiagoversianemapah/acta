@@ -4,7 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{% block titulo %}ACTA{% endblock %}</title>
-<link rel="stylesheet" href="/static/app.css">
+{# A chave no endereço é o que faz o navegador buscar a folha nova depois
+   de uma atualização. O arquivo é servido sem Cache-Control, então o Edge
+   fica com a cópia antiga e a tela aparece com marcação nova e estilo
+   velho — foi assim que o cartão da planilha apareceu quebrado em
+   18/08/2026, com o rótulo espremido numa coluna que só o CSS antigo
+   tinha. Ver web/app._chave_do_css. #}
+<link rel="stylesheet" href="/static/app.css?v={{ chave_do_css }}">
 </head>
 <body class="{{ body_class|default('') }}">
 <header class="topo">
