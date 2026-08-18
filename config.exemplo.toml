@@ -1,0 +1,289 @@
+# Configuração do CND Bot.
+# Tudo que é ajustável em operação mora aqui — nunca no código.
+
+# ===========================================================================
+# REDE — várias máquinas, um aplicativo só
+# ===========================================================================
+# Não há banco central: cada máquina é dona do seu próprio banco e responde
+# por HTTP. O aplicativo no seu computador pergunta a todas e junta o
+# quadro. Isso dispensa servidor de banco, pasta compartilhada e qualquer
+# instalação nova — e evita o problema clássico de um arquivo SQLite aberto
+# por vários computadores, que a rede Windows não trava direito e corrompe.
+#
+# EM CADA MÁQUINA DO ROBÔ:
+#   1. defina abaixo o `nome` (como ela aparece no aplicativo)
+#   2. deixe `maquinas` vazio
+#   3. suba o painel aceitando conexões da rede:
+#        python -m cnd.cli painel --host 0.0.0.0
+#
+# NO SEU COMPUTADOR:
+#   1. liste as máquinas em `maquinas`
+#   2. abra o aplicativo:  python -m cnd.cli app
+#
+# A senha é opcional mas recomendada: rede interna não é rede segura, e sem
+# ela qualquer computador do escritório enxerga razão social e CNPJ de todos
+# os clientes só apontando o navegador para a porta. Use a mesma em todas,
+# de preferência pela variável de ambiente CND_REDE_SENHA.
+
+[rede]
+nome  = "Tiago"     # ex.: "PC Receita Federal"
+senha = ""          # a mesma em todas as máquinas
+
+# "robo" (emite certidões) ou "console" (só acompanha as outras). Vazio
+# decide sozinho: quem lista máquinas abaixo está acompanhando-as. Vale
+# preencher quando a mesma máquina faz as duas coisas — é o que decide se o
+# botão "Iniciar robô" aparece, e botão que não serve àquela máquina é
+# convite a alguém apertar por engano.
+papel = "console"
+
+# O AnyDesk DESTA máquina, para o computador que acompanha conseguir
+# acessá-la clicando no nome. Dá para cadastrar pela tela, em Ajustes.
+anydesk = ""
+
+# Preencha só no computador que roda o aplicativo.
+#
+#   orgao    o que a máquina faz — é o que aparece em destaque no cartão,
+#            em azul, e clicar nele abre o AnyDesk direto nela
+#   nome     qual computador é, para quem for acessá-lo
+#   url      onde o painel dela responde
+#   anydesk  o número do AnyDesk dela
+#
+# O número do AnyDesk fica em "Este computador", na tela inicial do próprio
+# AnyDesk instalado naquela máquina. Pode copiar com os espaços. Ele não é
+# senha: para entrar, o AnyDesk continua pedindo a senha de acesso ou a
+# confirmação de quem estiver na outra ponta.
+#
+# maquinas = [
+#   { orgao = "ACTA CND FEDERAL",    nome = "PC-CND-01", url = "http://192.168.0.21:8000", anydesk = "" },
+#   { orgao = "ACTA CND ESTADUAIS",  nome = "PC-CND-02", url = "http://192.168.0.22:8000", anydesk = "" },
+#   { orgao = "ACTA CND FGTS",       nome = "PC-CND-03", url = "http://192.168.0.23:8000", anydesk = "" },
+# ]
+maquinas = [
+  { orgao = "RECEITA FEDERAL", nome = "PC Receita Federal 01", url = "http://NOME-DA-MAQUINA:8000", anydesk = "" },
+]
+
+[geral]
+banco            = "data/cnd.db"
+pasta_certidoes  = "data/certidoes"
+pasta_evidencias = "data/evidencias"
+pasta_logs       = "data/logs"
+
+[alertas]
+# ===========================================================================
+# AVISOS NO MICROSOFT TEAMS
+# ===========================================================================
+#
+# COMO LIGAR (2 minutos, sem depender da TI):
+#
+#   1. Crie um canal dedicado, ex.: #robo-cnd
+#      (canal misturado com conversa vira ruído, e ruído esconde o aviso)
+#   2. No canal: ... (três pontos) > Fluxos de trabalho
+#   3. Modelo "Publicar no canal quando uma solicitação de webhook for recebida"
+#   4. Avançar > escolher equipe e canal > Adicionar fluxo de trabalho
+#   5. Copiar a URL gerada — ela é longa, copie inteira
+#   6. Deixe as notificações do canal LIGADAS para quem precisa ver
+#
+# Testar:  cnd testar-alerta
+#
+# Por que Teams e não e-mail: não envia mensagem nenhuma pelo domínio, então
+# não há como afetar a reputação de mapah.com.br. E fica dentro do tenant da
+# empresa — os avisos citam razão social e CNPJ de clientes, e esse dado não
+# pode sair do controle da Mapah (RNF-06).
+#
+# A URL VALE COMO CREDENCIAL: quem a tiver publica no canal. Por isso ela
+# não mora aqui — este arquivo é copiado para cada máquina, vai para o
+# controle de versão e é aberto por quem for ajustar o robô. Guarde na
+# variável de ambiente, uma vez por máquina, num prompt de comando:
+#
+#   setx CND_TEAMS_WEBHOOK "https://...cole a URL inteira..."
+#
+# Feche e reabra o terminal depois. Conferir com:  cnd testar-alerta
+
+metodo              = "teams"       # "teams" | "graph" | "relay" | "smtp"
+teams_webhook       = ""            # vem de CND_TEAMS_WEBHOOK
+
+# Endereço do painel na rede da empresa. Vira link nos avisos de lote
+# concluído, para baixar a planilha e os PDFs — o Teams não aceita anexo, e
+# o pacote de PDFs (~150 MB num lote completo) não caberia em e-mail.
+# Ex.: "http://srv-cnd:8000"
+url_painel          = ""
+
+heartbeat_timeout_s = 300           # sem sinal de vida por 5 min => robô parado
+supressao_s         = 1800          # não repetir o mesmo aviso em menos de 30 min
+limite_por_hora     = 20            # teto geral, contra defeito em laço
+
+# ---------------------------------------------------------------------------
+# Canais alternativos (desligados — deixe metodo = "teams")
+# ---------------------------------------------------------------------------
+# "graph"  e-mail por aplicativo registrado no Entra ID. Único que permite
+#          anexar a planilha na própria mensagem. Precisa de um registro de
+#          aplicativo com permissão de APLICATIVO "Mail.Send" e consentimento
+#          do administrador. Segredo vem de CND_GRAPH_SECRET.
+graph_tenant_id     = ""
+graph_client_id     = ""
+graph_client_secret = ""
+remetente           = "robo.cnd@mapah.com.br"
+destinatarios       = ["tiago.versiane@mapah.com.br"]
+
+# "relay"  Direct Send, sem credencial. EVITAR: envia de IP fora do SPF, e
+#          cada mensagem vira falha de autenticação no DMARC do domínio.
+#          Testado em 07/08/2026 nesta máquina: nem conectou — porta 25
+#          bloqueada na saída da rede.
+smtp_host           = "mapah-com-br.mail.protection.outlook.com"
+smtp_porta          = 25
+
+# "smtp"   usuário e senha. NÃO funciona com autenticação em dois fatores.
+smtp_usuario        = ""
+smtp_senha          = ""            # prefira a variável CND_SMTP_SENHA
+
+# --- Órgãos -------------------------------------------------------------
+# 'ativo = false' deixa o órgão cadastrado mas fora da fila.
+# Fase 1: só RFB_PJ ligado.
+
+# --- Receita Federal, pessoa jurídica ------------------------------------
+#
+# O órgão é um só; o que muda é o ADAPTER, ou seja, como falamos com ele:
+#
+#   adapter = "rfb_cego"  -> sem automação de navegador. Abre o Edge comum e
+#                            só mexe no mouse e no teclado do Windows por
+#                            cima. Não há nada para o portal detectar.
+#                            Exige `cnd calibrar` antes de rodar.
+#
+#   adapter = "rfb_pj"    -> Playwright. DETECTADO pelo portal: comprovado em
+#                            07/08/2026 com teste A/B — mesmo CNPJ, mesmo IP,
+#                            no mesmo minuto, a consulta manual passou e a do
+#                            robô tomou bloqueio 106. Mantido no projeto
+#                            porque o mapeamento do fluxo e a leitura do PDF
+#                            são reaproveitados pelo cego.
+
+[orgaos.RFB_PJ]
+ativo   = true
+adapter = "rfb_cego"
+workers = 1
+# Nome de exibição. Vira nome de pasta dentro do pacote de certidões, então
+# é o que o cliente lê — "RFB_PJ" não diz nada a ele. Vazio usa a tabela
+# padrão do sistema, que já conhece os órgãos das fases previstas.
+nome    = "RECEITA FEDERAL"
+# pasta_downloads = "C:/Users/tiago/Downloads"   # padrão: Downloads do usuário
+
+# Quantas emissões o robô faz por janela do Edge antes de abrir outra.
+# O portal conta as emissões da sessão: medido em 15/08/2026, a 1ª consulta
+# de cada janela passou 17 vezes em 17, e a 3ª tomou o código 023 as 12
+# vezes. Reabrir custa ~10s; descobrir pelo 023 custa a consulta perdida
+# mais 30 a 90 segundos de espera. Suba isto só com log na mão.
+emissoes_por_sessao = 1
+
+[orgaos.RFB_PJ.pacing]              # ritmo adaptativo (AIMD) — ver docs/04
+intervalo_inicial_s = 12.0          # ponto de partida moderado
+intervalo_piso_s    = 4.0           # o cego já leva ~25s por consulta
+intervalo_teto_s    = 600.0         # velocidade mínima após punições
+acelera_apos        = 20            # consultas limpas seguidas para acelerar
+fator_aceleracao    = 0.85          # -15% no intervalo ao acelerar
+fator_punicao       = 3.0           # x3 no intervalo ao ser bloqueado
+fator_punicao_bloqueio = 1.4        # bloqueio temporario recua menos que captcha
+jitter              = 0.35          # +/-35% de variação em cada espera
+# Roda o dia inteiro, por decisão de operação (17/08/2026). Fica o dado
+# medido no dia, para quem for reabrir o assunto: em 3251 consultas de 7
+# dias, das 19h às 05h o robô fez 250 a 400 por HORA com menos de 1,5% de
+# bloqueio; das 06h às 14h fez 1 a 4 por hora, com 33% a 100% de recusa.
+janela_ativa        = "00:00-24:00"
+
+[orgaos.RFB_PJ.breaker]             # freio de emergência — ver docs/04
+captchas_para_abrir = 3             # ...dentro da janela abaixo
+janela_jobs         = 10
+erros_para_abrir    = 5             # erros técnicos seguidos
+cooldown_inicial_s  = 1800          # 30 min, dobra a cada reabertura
+cooldown_maximo_s   = 9000          # teto de 2h30
+# Só para ERRO_TECNICO (foco, janela, rede). Bloqueio da Receita continua
+# usando o cooldown acima; insistir em 5s após erro 106 piora a reputação.
+cooldown_erro_inicial_s = 5
+cooldown_erro_maximo_s  = 60
+# "Retorne em alguns minutos" é o portal engasgado para TODO MUNDO, não
+# recado sobre uma empresa. Então o robô inteiro tira 30 min e depois
+# continua a fila normalmente — em vez de deixar o CNPJ de castigo.
+# Pausa FIXA: não dobra, porque o problema costuma passar sozinho.
+pendentes_para_pausar   = 3         # ...dentro da mesma janela_jobs acima
+cooldown_pendente_s     = 1800      # 30 min
+
+[orgaos.RFB_PJ.recuperacao]        # o lote fecha sozinho — ver core/recuperacao.py
+# Depois das 3 tentativas o item vira FAILED. Isso desafoga a fila, mas os
+# desfechos que levam lá (bloqueio, resultado pendente, erro técnico) são
+# todos passageiros: nenhum é a Receita respondendo sobre a empresa. Sem
+# isto, o lote terminava em 98,9% e alguém tinha de lembrar de apertar
+# "Reenviar itens com falha" — foi o que aconteceu no lote 1, com 30 itens
+# em aberto e nenhum deles resposta do portal (17/08/2026).
+#
+# Quando a fila esvazia e ainda há falhas, o vigia devolve tudo e recomeça.
+ativa            = true
+espera_inicial_s = 1800             # 30 min até a 1ª recuperação
+fator            = 2.0              # dobra a cada rodada que não resolve
+espera_maxima_s  = 21600            # teto de 6h entre rodadas
+# O robô NUNCA desiste (decisão de operação): item sem resposta é trabalho
+# não entregue. Isto é só quando chamar gente para olhar — ele segue
+# tentando depois do aviso.
+avisar_apos      = 5
+
+[orgaos.RFB_PJ.retry]
+max_tentativas     = 3              # 3 tentativas e o item vai para conferência
+                                    # manual, com aviso por e-mail
+backoff_erro_s     = [5, 30, 120]            # erro nosso: tenta de novo rápido
+backoff_captcha_s  = [3600, 14400, 43200]    # 1h, 4h, 12h
+backoff_bloqueio_s = [300, 900, 1800]        # 5min, 15min, 30min
+retentativa_bloqueio_s = [30, 90]            # 005/023/106: uma chance rapida
+# Resultado pendente (001/033) NÃO aparece aqui de propósito: não há espera
+# por CNPJ, em valor nenhum. "Retorne em alguns minutos" é o portal engasgado
+# para todo mundo, então o item volta para o FIM da fila na hora e quem
+# descansa é o ÓRGÃO — ver cooldown_pendente_s na seção do disjuntor. Se
+# alguma máquina ainda tiver a linha antiga backoff_resultado_pendente_s,
+# ela é ignorada.
+# O bloqueio temporário ("tente novamente dentro de alguns minutos", código
+# 023) recua em minutos, não em horas: o próprio portal diz o prazo.
+
+# --- Órgão de simulação, para testar o sistema sem tocar em site nenhum ---
+
+[orgaos.FAKE]
+ativo   = false                     # ligue para exercitar o sistema offline
+adapter = "fake"
+workers = 1
+
+[orgaos.FAKE.simulacao]             # como o portal falso se comporta
+limiar_heuristica_s = 3.0           # abaixo disso ele "desconfia" de robô
+captcha_maximo      = 0.75          # chance de captcha em velocidade máxima
+captcha_base        = 0.0           # piso fixo, independente do ritmo
+chance_erro_tecnico = 0.03
+duracao_min_s       = 0.05
+duracao_max_s       = 0.20
+
+[orgaos.FAKE.pacing]
+intervalo_inicial_s = 1.0
+intervalo_piso_s    = 0.05
+intervalo_teto_s    = 20.0
+acelera_apos        = 5
+fator_aceleracao    = 0.7
+fator_punicao       = 4.0
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.FAKE.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 10
+cooldown_maximo_s   = 60
+
+[orgaos.FAKE.retry]
+max_tentativas    = 3
+backoff_erro_s    = [2, 5, 10]
+backoff_captcha_s = [5, 15, 30]
+
+# --- Fases seguintes (desligados) ---------------------------------------
+
+[orgaos.CRF]
+ativo   = false
+adapter = "crf"
+workers = 1
+
+[orgaos.RFB_PF]
+ativo   = false
+adapter = "rfb_pf"
+workers = 1

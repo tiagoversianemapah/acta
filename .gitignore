@@ -18,7 +18,15 @@ data/
 *.xlsx
 *.xls
 
-# Configuração local com credenciais
+# Configuração local com credenciais.
+#
+# O config.toml de cada máquina traz a senha do painel, o endereço dela na
+# rede e o número do AnyDesk — nada disso é do programa, é da instalação.
+# Ele já esteve versionado, e a senha viajava junto: por isso saiu do
+# histórico inteiro em 18/08/2026, antes do repositório ir para o GitHub.
+# Quem for instalar copia o config.exemplo.toml e preenche; segredo mesmo
+# é melhor pela variável de ambiente (CND_REDE_SENHA, CND_SMTP_SENHA).
+config.toml
 config.local.toml
 
 # Editor / SO

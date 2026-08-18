@@ -186,9 +186,15 @@ pedindo a senha de acesso ou a confirmação de quem estiver na outra ponta.
   páginas, downloads e API. Só `/ping` fica aberto, e ele devolve apenas sinal de
   vida e tamanho da fila. Navegador entra por Basic, o aplicativo por cabeçalho
   próprio.
-- **Segredos não moram no `config.toml`**, que é copiado para cada máquina e vai
-  para o controle de versão. Vêm de variáveis de ambiente:
-  `CND_TEAMS_WEBHOOK`, `CND_REDE_SENHA`, `CND_GRAPH_SECRET`, `CND_SMTP_SENHA`.
+- **O `config.toml` não vai para o controle de versão.** Ele é da instalação, não
+  do programa: traz a senha do painel, o endereço da máquina na rede e o número
+  do AnyDesk dela. Versionado, a senha viajava junto — foi retirada do histórico
+  inteiro em 18/08/2026, antes de o repositório ir para o GitHub. O que está
+  versionado é o `config.exemplo.toml`, com os mesmos comentários e sem valor
+  nenhum preenchido: para instalar noutra máquina, copie e preencha.
+- **Segredo mesmo é melhor por variável de ambiente**, que não chega nem a ser
+  escrita em arquivo: `CND_REDE_SENHA`, `CND_TEAMS_WEBHOOK`, `CND_GRAPH_SECRET`,
+  `CND_SMTP_SENHA`. Todas têm prioridade sobre o que estiver no arquivo.
 - Planilhas de clientes e a pasta `data/` estão no `.gitignore`.
 
 ## Comandos
