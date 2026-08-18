@@ -27,8 +27,15 @@ FONTE = RAIZ / "src" / "cnd"
 # arrastar os dados junto, a janela abre sem cor nenhuma.
 ctk_datas, ctk_binarios, ctk_ocultos = collect_all("customtkinter")
 
+# O Playwright entra por causa do CRF da Caixa. Ele não traz navegador: o
+# adapter usa `channel="msedge"`, o Edge que toda máquina já tem. O que
+# vem junto é o driver dele (node + protocolo), ~100 MB, e é isso que
+# permite automação por elemento em vez de coordenada de tela.
+pw_datas, pw_binarios, pw_ocultos = collect_all("playwright")
+
 dados = [
     *ctk_datas,
+    *pw_datas,
     (str(FONTE / "infra" / "schema.sql"), "cnd/infra"),
     (str(FONTE / "web" / "templates"), "cnd/web/templates"),
     (str(FONTE / "web" / "static"), "cnd/web/static"),
@@ -39,7 +46,9 @@ ocultos = [
     # Escolhidos pelo config.toml e importados por nome — o PyInstaller não
     # tem como enxergar isso lendo o código.
     "cnd.adapters.rfb_cego",
+    "cnd.adapters.crf",
     "cnd.adapters.fake",
+    *pw_ocultos,
     # Cinto e suspensório: o painel também é alcançado por nome em alguns
     # caminhos, e sem ele o executável sobe e morre ao abrir o servidor.
     "cnd.web.app",
@@ -53,12 +62,14 @@ ocultos = [
 analise = Analysis(
     [str(FONTE / "lancador.py")],
     pathex=[str(RAIZ / "src")],
-    binaries=ctk_binarios,
+    binaries=[*ctk_binarios, *pw_binarios],
     datas=dados,
     hiddenimports=ocultos,
-    # O adapter do Playwright está desligado (o portal o detecta) e traz
-    # junto ~100 MB de navegador que não seria usado.
-    excludes=["playwright", "cnd.adapters.rfb_pj", "pytest", "matplotlib",
+    # rfb_pj é o adapter de navegador DA RECEITA, que continua desligado:
+    # aquele portal detecta automação (teste A/B em 07/08/2026) e quem
+    # atende a Receita é o rfb_cego. O Playwright em si deixou de ser
+    # excluído por causa do CRF da Caixa, que não detecta.
+    excludes=["cnd.adapters.rfb_pj", "pytest", "matplotlib",
               "numpy", "pandas"],
     noarchive=False,
 )
