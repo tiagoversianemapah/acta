@@ -219,132 +219,73 @@
         {% if selecionada.acessavel %}
           <a class="botao" href="anydesk:{{ selecionada.anydesk }}">{{ icone_acao('anydesk') }}<span>AnyDesk</span></a>
         {% endif %}
-        {% if selecionada.online %}
-          {% if usa_rede and not selecionada.local %}
-            <button class="botao"
-                    data-update-form="/acoes/maquina/{{ selecionada_idx }}/atualizar"
-                    title="Atualiza esta maquina usando o pacote publicado pelo console">
-              {{ icone_acao('atualizar') }}<span>Atualizar</span>
-            </button>
-          {% elif selecionada.local %}
-            <button class="botao"
-                    data-update-api="/api/atualizar"
-                    title="Atualiza esta maquina usando o pacote publicado pelo console">
-              {{ icone_acao('atualizar') }}<span>Atualizar</span>
-            </button>
-          {% endif %}
-        {% endif %}
-        {# Sempre visível, e não só quando há pausa: quem quer destravar
-           chega na tela por causa da pausa, e o botão que só existe
-           durante ela some justamente depois de resolvida — deixando a
-           impressão de que não dá para intervir. #}
-        {% if selecionada.online and selecionada.roda_robo %}
-          {% if usa_rede and not selecionada.local %}
-          <form method="post" action="/acoes/maquina/{{ selecionada_idx }}/breaker/retomar">
-            <button class="botao"
-                    title="Destrava o robô agora, sem esperar o fim da pausa">{{ icone_acao('retomar') }}<span>Retomar agora</span></button>
-          </form>
-          {% else %}
-          <button class="botao"
-                  data-api-action="/api/breaker/retomar"
-                  data-label="Retomar agora"
-                  title="Destrava o robô agora, sem esperar o fim da pausa">{{ icone_acao('retomar') }}<span>Retomar agora</span></button>
-          {% endif %}
-        {% endif %}
-        {% if selecionada.online %}
-          <a class="botao" href="{{ base_download }}/relatorio/{{ mes }}.xlsx">{{ icone_acao('planilha') }}<span>Planilha resultado</span></a>
-          <a class="botao" href="{{ base_download }}/certidoes/{{ mes }}.zip">{{ icone_acao('certidoes') }}<span>Certidões</span></a>
-        {% endif %}
+        {# Atualizar saiu: é manutenção mensal e DERRUBA o robô para trocar
+           arquivos — encostado no "Iniciar robô" era convite a clique errado.
+           Foi para o Diagnóstico. "Retomar agora" só faz sentido com o
+           disjuntor aberto, e agora aparece dentro do aviso que descreve o
+           bloqueio. Planilha e Certidões viraram o bloco "Entregar", no fim
+           da tela: são o fim do trabalho, não o começo. #}
       </div>
     </header>
 
-    <div class="faixa-operacao">
-      {# A planilha não é mais uma métrica entre outras: ela é o recorte a
-         que TODOS os números ao lado se referem. Por isso ganha rótulo
-         próprio e um bloco que se anuncia como controle — com ícone de
-         arquivo, nome em destaque e chevron — em vez de um texto que só
-         quem já sabia descobria ser clicável. #}
-      <div class="cartao-planilha">
-        <span class="rotulo">Planilha selecionada</span>
-        {# O select cobre a caixa inteira, invisível: o clique vale em
-           qualquer ponto dela e a lista abre nativa, sem JS de menu. #}
-        <span class="escolha-planilha{{ ' sem-troca' if lotes|length < 2 }}">
-          {{ icone_metrica('planilha') }}
-          <span class="escolha-corpo">
-            <strong>{{ lote_nome }}</strong>
-            <small>
-              {% if lote_em_execucao and lote_em_execucao == lote_id %}
-                em processamento agora
-              {% else %}
-                fila de processamento
-              {% endif %}
-            </small>
-          </span>
-          {% if lotes|length > 1 %}
-            <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-            <select class="seletor-planilha" aria-label="Planilha selecionada"
-                    onchange="location.href='/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo=' + this.value">
-              {% for lote in lotes %}
-                <option value="{{ lote.id }}" {{ 'selected' if lote.id == lote_id }}>
-                  {{ lote.nome }} · {{ lote.criado_fmt }} · {{ lote.itens }} itens
-                  {%- if lote.id == lote_em_execucao %} · em processamento{% endif %}
-                </option>
-              {% endfor %}
-            </select>
+    {# O centro da tela: QUAL planilha, QUAL automação e quanto falta, num
+       bloco só. Antes eram quatro cartões de peso igual — "Planilha", "Fila",
+       "Faltam" e "Resultado" — e os dois do meio diziam a mesma coisa de
+       duas formas ("2.829 de 2.829" e "faltam 0"). #}
+    <div class="trabalho-atual">
+      <div class="trabalho-topo">
+        <div class="trabalho-quem">
+          <span class="rotulo">Trabalho atual</span>
+          <strong>{{ lote_nome }}</strong>
+          <small>
+            {% set rodando = orgaos | selectattr('em_execucao') | list %}
+            {% if rodando %}
+              emitindo <b>{{ rodando[0].rotulo or rotulo_orgao(rodando[0].orgao) }}</b>
+            {% elif orgaos %}
+              {{ orgaos | length }} automação(ões) nesta planilha
+            {% else %}
+              nenhuma automação com fila
+            {% endif %}
+          </small>
+        </div>
+        <div class="trabalho-numeros">
+          <span><b>{{ '{:,.0f}'.format(totais.concluidos).replace(',', '.') }}</b>
+                de {{ '{:,.0f}'.format(totais.total).replace(',', '.') }}</span>
+          {% if totais.get('restantes', totais.pendentes) %}
+            <small>faltam {{ '{:,.0f}'.format(totais.get('restantes', totais.pendentes)).replace(',', '.') }}</small>
+          {% else %}
+            <small>tudo consultado</small>
+          {% endif %}
+        </div>
+      </div>
+      <div class="trabalho-barra">
+        <i style="width: {{ '%.1f' % totais.percentual }}%"></i>
+      </div>
+      <div class="trabalho-pe">
+        <span class="resultado-resumo">
+          <b>{{ negativas + cpen }}</b> em mãos
+          {% if positivas %}· <b>{{ positivas }}</b> com pendência{% endif %}
+          {% if insuficientes or inaptos %}
+            · <b>{{ insuficientes + inaptos }}</b> para conferir
           {% endif %}
         </span>
         {% if lote_em_execucao and lote_em_execucao != lote_id %}
-          {# A queixa que originou isto: a tela mostrava uma planilha
-             zerada enquanto o robô emitia certidões de outra, e parecia
-             travada. Agora ela diz onde o trabalho está, e leva lá. #}
-          <small class="aviso-outra-planilha">
-            O robô está emitindo <strong>{{ lote_em_execucao_nome }}</strong> —
-            <a href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">acompanhar essa</a>
-          </small>
-        {% endif %}
-      </div>
-      <div>
-        {{ icone_metrica('fila') }}
-        <span class="metrica-corpo">
-          <span class="rotulo">Fila</span>
-          <strong>{{ '{:,.0f}'.format(totais.concluidos).replace(',', '.') }} de {{ '{:,.0f}'.format(totais.total).replace(',', '.') }}</strong>
-          <small>{{ '%.1f' % totais.percentual }}% concluído</small>
-        </span>
-      </div>
-      <div>
-        {{ icone_metrica('pendentes') }}
-        <span class="metrica-corpo">
-          <span class="rotulo">Faltam</span>
-          <strong>{{ '{:,.0f}'.format(totais.get('restantes', totais.pendentes)).replace(',', '.') }}</strong>
-          {# A quebra explica o número, em vez de o número esconder a quebra. #}
-          <small>
-            {%- set falhados = totais.falhados or 0 -%}
-            {%- if falhados -%}
-              {{ totais.pendentes }} na fila · {{ falhados }} aguardando nova rodada
-            {%- else -%}
-              {{ totais.em_execucao }} em execução
-            {%- endif -%}
-          </small>
-        </span>
-      </div>
-      <div>
-        {{ icone_metrica('resultado') }}
-        <span class="metrica-corpo">
-          <span class="rotulo">Resultado</span>
-          <span class="resultado-geral">
-            <span><strong>{{ negativas }}</strong><small>negativas</small></span>
-            <span><strong>{{ positivas }}</strong><small>positivas</small></span>
+          <a class="aviso-outra-planilha"
+             href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">
+            O robô está emitindo {{ lote_em_execucao_nome }} — acompanhar essa
+          </a>
+        {% elif lotes|length > 1 %}
+          <span class="troca-planilha">
+            <select class="seletor-planilha"
+                    onchange="location.href='/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo=' + this.value">
+              {% for l in lotes %}
+                <option value="{{ l.id }}" {{ 'selected' if l.id == lote_id }}>
+                  {{ l.nome }} · {{ l.itens }} itens
+                </option>
+              {% endfor %}
+            </select>
           </span>
-          {# Tudo que conta como concluído aparece aqui: sem isto a soma da
-             linha não bate com o "X de Y" da fila, e quem confere fica sem
-             saber para onde foram os que faltam. #}
-          <small>
-            <span class="bolinha-texto verde">{{ cpen }} CPEN</span>
-            {% if inaptos %} · <span>{{ inaptos }} CNPJ inapto</span>{% endif %}
-            {% if aproveitadas %} · <span>{{ aproveitadas }} já emitidas no mês</span>{% endif %}
-            {% if insuficientes %} · <span>{{ insuficientes }} informações insuficientes</span>{% endif %}
-          </small>
-        </span>
+        {% endif %}
       </div>
     </div>
 
@@ -581,6 +522,23 @@
         </table>
       </div>
     </section>
+    {% if selecionada.online %}
+    <section class="entregar">
+      <div>
+        <span class="rotulo">Entregar</span>
+        <strong>O que já está pronto para sair</strong>
+        <small>Referente a {{ mes }}. A planilha traz o resultado de cada
+          empresa; o pacote traz os PDFs.</small>
+      </div>
+      <div class="acoes">
+        <a class="botao" href="{{ base_download }}/relatorio/{{ mes }}.xlsx">
+          {{ icone_acao('planilha') }}<span>Planilha resultado</span></a>
+        <a class="botao" href="{{ base_download }}/certidoes/{{ mes }}.zip">
+          {{ icone_acao('certidoes') }}<span>Certidões</span></a>
+      </div>
+    </section>
+    {% endif %}
+
   </section>
   {% else %}
     <section class="operacao">

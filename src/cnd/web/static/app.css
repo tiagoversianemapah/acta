@@ -1144,3 +1144,59 @@
   .botao.mini.perigo{color:var(--vermelho);border-color:var(--linha)}
   .botao.mini.perigo:hover{border-color:var(--vermelho);background:var(--vermelho-fundo)}
   .botao.mini[disabled],.primario.mini[disabled]{opacity:.6;cursor:progress}
+
+  /* Trabalho atual: qual planilha, qual automação e quanto falta, num bloco
+     só. A barra amarela à esquerda é o mesmo sinal de "está rodando" que a
+     linha da fila usa — o olho acha os dois de uma vez. */
+  .trabalho-atual{
+    margin:.9rem 1.35rem;padding:1.1rem 1.25rem;border-radius:10px;
+    background:var(--faixa);border:1px solid var(--linha);
+    position:relative;overflow:hidden;
+  }
+  .trabalho-atual::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:5px;
+    background:var(--amarelo);
+  }
+  .trabalho-topo{
+    display:flex;align-items:flex-start;justify-content:space-between;
+    gap:1.2rem;flex-wrap:wrap;
+  }
+  .trabalho-quem{min-width:0}
+  .trabalho-quem strong{
+    display:block;font-size:17px;font-weight:800;margin:.2rem 0 .1rem;
+    word-break:break-word;
+  }
+  .trabalho-quem small{color:var(--texto-3);font-size:12.5px}
+  .trabalho-quem small b{color:var(--texto);font-weight:800}
+  .trabalho-numeros{text-align:right;white-space:nowrap}
+  .trabalho-numeros b{
+    font-size:22px;font-weight:800;font-family:var(--mono);
+    font-variant-numeric:tabular-nums;
+  }
+  .trabalho-numeros span{font-size:13px;color:var(--texto-2)}
+  .trabalho-numeros small{display:block;font-size:12px;color:var(--texto-3)}
+  .trabalho-barra{
+    height:8px;border-radius:99px;background:var(--cinza-fundo);
+    margin:.9rem 0 .7rem;overflow:hidden;
+  }
+  .trabalho-barra i{display:block;height:100%;background:var(--verde);
+                    border-radius:99px;transition:width .45s ease}
+  .trabalho-pe{
+    display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    flex-wrap:wrap;font-size:12.5px;color:var(--texto-2);
+  }
+  .resultado-resumo b{color:var(--texto);font-weight:800}
+  .troca-planilha .seletor-planilha{
+    max-width:280px;padding:.32rem 1.8rem .32rem .6rem;font-size:12.5px;
+    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
+    appearance:none;cursor:pointer;
+  }
+
+  /* Entregar: o fim do trabalho, no fim da tela. */
+  .entregar{
+    display:flex;align-items:center;justify-content:space-between;gap:1.2rem;
+    flex-wrap:wrap;padding:1.1rem 1.35rem;border-top:1px solid var(--linha);
+    background:var(--faixa);
+  }
+  .entregar strong{display:block;font-size:15px;font-weight:800;margin:.15rem 0}
+  .entregar small{display:block;color:var(--texto-3);font-size:12.5px;max-width:52ch}
