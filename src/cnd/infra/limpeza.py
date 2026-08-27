@@ -25,8 +25,16 @@ from cnd.infra.log import obter
 log = obter("limpeza")
 
 # Ordem importa: filho antes de pai, para não esbarrar em chave estrangeira.
-TABELAS = ("tentativa", "certidao", "job", "empresa", "lote",
-           "ritmo", "breaker", "heartbeat")
+#
+# A lista é a do schema INTEIRO, e não a das tabelas lembradas na hora de
+# escrevê-la. `fila_controle` referencia `lote`, então esquecê-la não
+# deixava sobra: derrubava a zeragem com FOREIGN KEY constraint failed em
+# qualquer máquina que já tivesse estacionado uma automação — e a transação
+# volta atrás inteira, de forma que o botão simplesmente não funcionava.
+# `recuperacao` não trava nada, mas guarda contagem de rodadas do lote que
+# acabou de ser apagado, e ficaria mentindo para o robô seguinte.
+TABELAS = ("tentativa", "certidao", "job", "fila_controle", "empresa",
+           "lote", "ritmo", "breaker", "recuperacao", "heartbeat")
 
 
 @dataclass
