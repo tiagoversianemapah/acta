@@ -23,6 +23,35 @@ import pytest  # noqa: E402
 from cnd.infra.db import conectar, criar_schema  # noqa: E402
 
 
+@pytest.fixture(scope="session")
+def janela():
+    """UMA raiz do Tk para a sessão inteira de testes.
+
+    Abrir e fechar várias raízes no mesmo processo falha — o interpretador
+    Tcl não volta ao estado inicial, e a criação seguinte morre com
+    "tk wasn't installed properly", que é a mensagem de instalação
+    quebrada e manda procurar no lugar errado.
+
+    Isso já estava escrito em test_link_anydesk.py, mas como comentário de
+    UM arquivo: cada um dos três que abrem janela tinha a sua fixture de
+    módulo, então a sessão criava e destruía três raízes. O terceiro
+    quebrava — nem sempre, porque depende de quando o Tcl é coletado, e foi
+    esse "nem sempre" que fez a suíte falhar em 3 de 24 execuções medidas
+    (~12%), sempre nos mesmos 5 testes e sempre com a mesma mensagem.
+
+    Escopo de sessão resolve na raiz: nenhuma segunda janela chega a
+    existir. Reaproveitar não mistura estado porque cada teste redesenha os
+    cartões do zero — é a mesma razão que já valia dentro de um arquivo.
+    """
+    pytest.importorskip("customtkinter")
+    from cnd.desktop.app import Aplicativo
+
+    app = Aplicativo()
+    app.withdraw()          # existe, responde, mas não aparece na tela
+    yield app
+    app.destroy()
+
+
 @pytest.fixture
 def conn(tmp_path):
     conexao = conectar(tmp_path / "teste.db")
