@@ -31,7 +31,19 @@ ctk_datas, ctk_binarios, ctk_ocultos = collect_all("customtkinter")
 # adapter usa `channel="msedge"`, o Edge que toda máquina já tem. O que
 # vem junto é o driver dele (node + protocolo), ~100 MB, e é isso que
 # permite automação por elemento em vez de coordenada de tela.
-pw_datas, pw_binarios, pw_ocultos = collect_all("playwright")
+#
+# Opcional na construção porque é opcional na instalação: ele mora no
+# extra `navegador` do pyproject, e `pip install -e ".[dev]"` — o que o
+# README manda rodar — não o traz. Exigir aqui fazia a construção
+# documentada morrer num checkout limpo, com um ImportError do
+# PyInstaller que não diz o que fazer. Sem ele o pacote sai menor e roda
+# a Receita normalmente; o que não roda é o CRF, e o aviso diz isso.
+try:
+    pw_datas, pw_binarios, pw_ocultos = collect_all("playwright")
+except Exception:
+    pw_datas, pw_binarios, pw_ocultos = [], [], []
+    print("  AVISO  playwright ausente: o pacote sai SEM o adapter do CRF.")
+    print('         Para incluí-lo:  pip install -e ".[dev,navegador]"')
 
 dados = [
     *ctk_datas,
