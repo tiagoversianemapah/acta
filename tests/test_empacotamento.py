@@ -92,6 +92,14 @@ class TestSpec:
             "morre num checkout sem o extra `navegador`")
         assert "navegador" in fonte, "o aviso diz como incluir o CRF"
 
+    def test_o_metadado_do_cnd_viaja_no_pacote(self):
+        """Sem ele `importlib.metadata.version` volta vazia numa instalacao
+        por copia de pasta — que e como o ACTA se instala. A tela fica sem
+        versao, e "esta maquina pegou a atualizacao?" fica sem resposta."""
+        fonte = (RAIZ / "empacotar" / "acta.spec").read_text(encoding="utf-8")
+        assert 'copy_metadata("cnd")' in fonte
+        assert "*cnd_metadados," in fonte, "coletado mas nao incluido em `dados`"
+
     def test_o_spec_e_python_valido(self):
         """Erro de sintaxe aqui só aparece na hora de empacotar, que é o
         pior momento para descobrir."""

@@ -18,7 +18,7 @@ Rodar por:  python empacotar/construir.py
 # pelo PyInstaller no momento de ler a receita; não existem como import.
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, copy_metadata
 
 RAIZ = Path(SPECPATH).parent
 FONTE = RAIZ / "src" / "cnd"
@@ -26,6 +26,13 @@ FONTE = RAIZ / "src" / "cnd"
 # CustomTkinter carrega temas de arquivos .json em tempo de execução; sem
 # arrastar os dados junto, a janela abre sem cor nenhuma.
 ctk_datas, ctk_binarios, ctk_ocultos = collect_all("customtkinter")
+
+# O metadado do proprio `cnd`, para `importlib.metadata.version` responder
+# dentro do executavel. Sem ele a versao volta vazia numa instalacao por
+# copia de pasta - que e como o ACTA se instala -, e "qual versao esta nesta
+# maquina?" fica sem resposta justamente quando importa: depois de uma
+# atualizacao pela rede, para saber se ela pegou.
+cnd_metadados = copy_metadata("cnd")
 
 # O Playwright entra por causa do CRF da Caixa. Ele não traz navegador: o
 # adapter usa `channel="msedge"`, o Edge que toda máquina já tem. O que
@@ -47,6 +54,7 @@ except Exception:
 
 dados = [
     *ctk_datas,
+    *cnd_metadados,
     *pw_datas,
     (str(FONTE / "infra" / "schema.sql"), "cnd/infra"),
     (str(FONTE / "web" / "templates"), "cnd/web/templates"),

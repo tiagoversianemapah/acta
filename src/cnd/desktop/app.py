@@ -42,13 +42,21 @@ from cnd.web.relatorio import mes_corrente as relatorio_mes_corrente
 ctk.set_appearance_mode("light")
 
 def _versao() -> str:
-    """A versão instalada. No executável empacotado o metadado não existe."""
-    from importlib.metadata import PackageNotFoundError, version
+    """A versão instalada, de uma fonte só.
 
-    try:
-        return version("cnd")
-    except PackageNotFoundError:
-        return "1.1.1"
+    Havia um literal aqui como reserva, e literal de versão envelhece
+    calado: ficou em "1.1.1" enquanto o projeto seguia, e no executável
+    empacotado — onde o metadado costumava faltar — era SEMPRE ele que
+    aparecia. A tela dizia uma versão e a máquina rodava outra, que é
+    justamente a deriva que `maquina.versao` existe para tornar visível.
+
+    O metadado agora viaja dentro do pacote (`copy_metadata` no
+    acta.spec), então a reserva deixou de ser necessária. Vazio é
+    resposta honesta: melhor não mostrar versão do que mostrar a errada.
+    """
+    from cnd.infra.maquina import versao
+
+    return versao()
 
 
 FONTE = "Segoe UI"

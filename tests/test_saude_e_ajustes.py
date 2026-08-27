@@ -201,3 +201,20 @@ class TestBotaoAtualizarNoDiagnostico:
         for auxiliar in ("destinoComMensagem", "avisarErro", "mensagemDaApi",
                          "origemPadraoAtualizacao"):
             assert pagina.count(f"function {auxiliar}") == 1, auxiliar
+
+
+def test_a_versao_exibida_vem_de_uma_fonte_so():
+    """Havia um literal de reserva no aplicativo de mesa, e literal de
+    versao envelhece calado: ficou em 1.1.1 enquanto o projeto seguia, e no
+    executavel empacotado era SEMPRE ele que aparecia — a tela dizia uma
+    versao e a maquina rodava outra."""
+    from pathlib import Path
+
+    from cnd.desktop import app as modulo
+    from cnd.infra import maquina
+
+    assert modulo._versao() == maquina.versao()
+    fonte = Path(modulo.__file__).read_text(encoding="utf-8")
+    import re
+    assert not re.search(r'return "\d+\.\d+\.\d+"', fonte), (
+        "versao escrita a mao no codigo")
