@@ -131,3 +131,73 @@ class TestGravarNoConfig:
 
         assert dados["rede"]["anydesk"] == "123 456 789"
         assert dados["geral"]["banco"] == "data/cnd.db"
+
+
+class TestBotaoAtualizarNoDiagnostico:
+    """O botão Atualizar vive no Diagnóstico, e o tratador dele mora no
+    base.html — que é a única tela onde ele existe de verdade.
+
+    Os dois defeitos que estes testes travam moravam nessa junção: o
+    palpite de origem estava escrito no HTML, e os auxiliares que o
+    tratador chama só existiam no painel.html.
+    """
+
+    @pytest.fixture
+    def painel(self, monkeypatch, tmp_path):
+        fastapi_testclient = pytest.importorskip("fastapi.testclient")
+
+        from cnd.infra.config import carregar
+        from cnd.infra.db import garantir
+        from cnd.web import app as modulo
+
+        banco = tmp_path / "cnd.db"
+        garantir(banco)
+        monkeypatch.setattr(
+            modulo, "cfg",
+            replace(carregar(), banco=banco,
+                    rede=ConfigRede(nome="PC 01", papel="robo")))
+        with fastapi_testclient.TestClient(modulo.app) as cliente:
+            yield cliente
+
+    def test_nenhum_endereco_de_maquina_escrito_no_template(self):
+        """O IP que estava no HTML era o de UMA instalação: em qualquer
+        outra, o prompt sugeria a máquina errada — e num caso, uma que nem
+        responde.
+
+        A conferência é no FONTE do template, e não na página renderizada:
+        na página o endereço pode aparecer legitimamente, vindo do palpite
+        desta máquina (`data/ultima_origem_atualizacao.txt`). O que não
+        pode é estar escrito no arquivo.
+        """
+        import re
+        from pathlib import Path
+
+        from cnd.web import app as modulo
+
+        pasta = Path(modulo.__file__).parent / "templates"
+        for arquivo in sorted(pasta.glob("*.html")):
+            fonte = arquivo.read_text(encoding="utf-8")
+            achado = re.search(r"https?://\d+\.\d+\.\d+\.\d+", fonte)
+            assert achado is None, f"{arquivo.name}: {achado.group(0)}"
+
+    def test_o_palpite_cai_na_maquina_que_serve_a_tela(self, painel):
+        pagina = painel.get("/saude").text
+        assert "window.location.hostname" in pagina
+        assert "actaOrigemAtualizacao" in pagina
+
+    def test_os_auxiliares_do_tratador_existem_nesta_tela(self, painel):
+        """Sem eles o comando ia, a máquina obedecia, e o botão ficava em
+        'Atualizando' para sempre — o pior tipo de falha, a silenciosa."""
+        pagina = painel.get("/saude").text
+        for auxiliar in ("destinoComMensagem", "avisarErro", "mensagemDaApi",
+                         "origemPadraoAtualizacao", "pedirHashAtualizacao"):
+            assert f"function {auxiliar}" in pagina, f"falta {auxiliar}"
+
+    def test_cada_auxiliar_e_definido_uma_vez_so(self, painel):
+        """Duas definições da mesma função global é uma esperando divergir
+        da outra: foi assim que a tela de Operação ficou com um palpite de
+        origem melhor que o da tela do botão."""
+        pagina = painel.get("/").text
+        for auxiliar in ("destinoComMensagem", "avisarErro", "mensagemDaApi",
+                         "origemPadraoAtualizacao"):
+            assert pagina.count(f"function {auxiliar}") == 1, auxiliar

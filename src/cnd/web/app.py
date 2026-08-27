@@ -499,10 +499,23 @@ def _origem_atualizacao(request: Request) -> str:
 
 
 def _origem_atualizacao_salva() -> str:
+    """De onde esta máquina se atualizou da última vez.
+
+    É o melhor palpite que existe para o prompt: o console publica sempre
+    do mesmo lugar, e quem atualiza uma máquina vai atualizar as outras
+    logo em seguida.
+    """
     arquivo = RAIZ_PROJETO / "data" / "ultima_origem_atualizacao.txt"
     with contextlib.suppress(OSError):
         return arquivo.read_text(encoding="utf-8-sig").strip().rstrip("/")
     return ""
+
+
+# Global de template, e não item de contexto de UMA tela: o botão Atualizar
+# vive no Diagnóstico, cujo contexto é montado em web/diagnostico.py e não
+# passava por aqui. Enquanto o palpite era item de contexto, a tela do botão
+# ficava sem ele e caía num IP escrito no HTML.
+templates.env.globals["origem_atualizacao_salva"] = _origem_atualizacao_salva
 
 
 def _reler_com_lote(
@@ -580,10 +593,6 @@ def _contexto_painel(
         "base_download": base_download,
         "usa_rede": bool(cfg.rede.maquinas),
         "pode_controlar_local": bool(selecionada and selecionada.local),
-        "origem_atualizacao_padrao": (
-            _origem_atualizacao_salva()
-            or (_origem_atualizacao(request) if request else "")
-        ),
         "mensagem_operacao": _formatar_flash(mensagem),
         "erro_operacao": _formatar_flash(erro),
         "agora": tempo.agora_iso(),

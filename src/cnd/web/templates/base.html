@@ -78,12 +78,41 @@ document.addEventListener('change', function (evento) {
 marcarEscolhidas();
 
 
+// Onde a resposta de um comando aparece: no próprio endereço, para o
+// recado sobreviver ao recarregamento. Moram aqui, e não na tela de
+// Operação, pela mesma razão do tratador logo abaixo — ele os chama, e no
+// Diagnóstico eles não existiam: o comando ia, a máquina obedecia, e o
+// botão ficava em "Atualizando" para sempre, sem recado nenhum.
+function destinoComMensagem(texto) {
+  var destino = new URL(window.location.href);
+  destino.searchParams.set('mensagem', texto);
+  destino.searchParams.delete('erro');
+  return destino.toString();
+}
+
+function avisarErro(erro) {
+  var destino = new URL(window.location.href);
+  destino.searchParams.set('erro', erro.message || String(erro));
+  destino.searchParams.delete('mensagem');
+  window.location.href = destino.toString();
+}
+
+function mensagemDaApi(corpo, fallback) {
+  return (corpo && (corpo.mensagem || corpo.situacao)) || fallback;
+}
+
 // Atualizar o programa. Mora aqui e não na tela de Operação porque o botão
 // passou a viver no Diagnóstico — e um tratador preso a uma página faria
 // dele um botão decorativo na outra.
+// O palpite vem, nesta ordem: o que esta pessoa digitou por último, de
+// onde esta máquina se atualizou da última vez, e o endereço que ela
+// mesma está usando para ver o painel. Nenhum IP escrito aqui: o que
+// estava no HTML era o de UMA instalação, e sugeria a máquina errada em
+// qualquer outra — inclusive numa em que aquele endereço nem responde.
 function origemPadraoAtualizacao() {
-  return localStorage.getItem('actaOrigemAtualizacao') ||
-    'http://100.125.207.8:8899';
+  var salva = {{ origem_atualizacao_salva()|default('', true)|tojson }};
+  var propriaMaquina = 'http://' + window.location.hostname + ':8899';
+  return localStorage.getItem('actaOrigemAtualizacao') || salva || propriaMaquina;
 }
 function pedirOrigemAtualizacao() {
   var origem = window.prompt('Origem da atualização', origemPadraoAtualizacao());

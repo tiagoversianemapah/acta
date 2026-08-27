@@ -65,41 +65,6 @@
     });
   }
 
-  function origemPadraoAtualizacao() {
-    const salva = {{ origem_atualizacao_padrao|default('')|tojson }};
-    const propriaMaquina = 'http://' + window.location.hostname + ':8899';
-    const origemSalva = salva && salva !== propriaMaquina ? salva : '';
-    return localStorage.getItem('actaOrigemAtualizacao') ||
-      origemSalva ||
-      'http://100.125.207.8:8899';
-  }
-
-  function pedirOrigemAtualizacao() {
-    const origem = prompt('Origem da atualização', origemPadraoAtualizacao());
-    if (!origem) return '';
-    const limpa = origem.trim().replace(/\/+$/, '');
-    if (limpa) localStorage.setItem('actaOrigemAtualizacao', limpa);
-    return limpa;
-  }
-
-  function destinoComMensagem(texto) {
-    const destino = new URL(window.location.href);
-    destino.searchParams.set('mensagem', texto);
-    destino.searchParams.delete('erro');
-    return destino.toString();
-  }
-
-  function avisarErro(erro) {
-    const destino = new URL(window.location.href);
-    destino.searchParams.set('erro', erro.message || String(erro));
-    destino.searchParams.delete('mensagem');
-    window.location.href = destino.toString();
-  }
-
-  function mensagemDaApi(corpo, fallback) {
-    return (corpo && (corpo.mensagem || corpo.situacao)) || fallback;
-  }
-
   document.addEventListener('click', function (evento) {
     const botao = evento.target.closest('[data-api-action]');
     if (!botao) return;
