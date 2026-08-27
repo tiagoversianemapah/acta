@@ -5,9 +5,22 @@ no fim. Nenhum teste toca no banco de produção nem na internet.
 """
 from __future__ import annotations
 
-import pytest
+import os
+from pathlib import Path
 
-from cnd.infra.db import conectar, criar_schema
+# ANTES de importar `cnd`: o `config.toml` é da INSTALAÇÃO e não vai para o
+# controle de versão, então num checkout limpo ele não existe — e o painel
+# o lê na IMPORTAÇÃO do módulo. Sem isto, `pytest` falhava já na COLETA,
+# com FileNotFoundError, e não em um teste: a suíte inteira ficava vermelha
+# por causa de um arquivo que é correto não estar ali. O exemplo versionado
+# serve de sobra — senha vazia, papel console, caminhos padrão.
+RAIZ = Path(__file__).resolve().parent.parent
+if not (RAIZ / "config.toml").exists():
+    os.environ.setdefault("CND_CONFIG", str(RAIZ / "config.exemplo.toml"))
+
+import pytest  # noqa: E402
+
+from cnd.infra.db import conectar, criar_schema  # noqa: E402
 
 
 @pytest.fixture
