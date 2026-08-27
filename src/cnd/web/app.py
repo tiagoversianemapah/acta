@@ -311,6 +311,69 @@ async def exigir_senha(request: Request, seguir):
 
 
 # ----------------------------------------------------------------------
+# Pedidos vindos de outro site
+# ----------------------------------------------------------------------
+
+# GET e HEAD não mudam nada nesta aplicação; o resto muda.
+METODOS_QUE_MUDAM = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _mesmo_host(url: str, host: str) -> bool:
+    if not url or not host:
+        return False
+    return urllib.parse.urlparse(url).netloc.lower() == host.strip().lower()
+
+
+def _veio_de_outro_site(request: Request) -> bool:
+    """Se este POST foi disparado por uma página que não é a nossa.
+
+    A senha do painel entra por Basic, e Basic é credencial AMBIENTE: uma
+    vez digitada, o navegador a reenvia sozinho em qualquer pedido para
+    esta máquina — inclusive num formulário escondido numa página
+    qualquer da internet. Sem esta conferência, uma aba aberta noutro site
+    zerava a máquina com `POST /api/zerar`, e o navegador anexava a senha
+    por conta própria.
+
+    Vale mesmo SEM senha configurada, que é o caso pior: aí não há nem
+    senha a exigir, e `http://127.0.0.1:8000` é endereço conhecido.
+
+    Três sinais, do mais confiável ao mais antigo. Nenhum deles presente
+    significa que quem chamou não é navegador — é o aplicativo de mesa ou
+    o console pedindo pela rede, e esses não têm site de origem.
+    """
+    local = request.headers.get("sec-fetch-site", "").strip().lower()
+    if local:
+        # O navegador diz de onde veio, e não dá para forjar por script.
+        # 'none' é a barra de endereço; 'same-origin', a nossa própria tela.
+        return local not in {"same-origin", "none"}
+
+    host = request.headers.get("host", "")
+    origem = request.headers.get("origin", "")
+    if origem:
+        return not _mesmo_host(origem, host)
+    referencia = request.headers.get("referer", "")
+    if referencia:
+        return not _mesmo_host(referencia, host)
+    return False
+
+
+@app.middleware("http")
+async def recusar_pedido_de_outro_site(request: Request, seguir):
+    if request.method in METODOS_QUE_MUDAM and _veio_de_outro_site(request):
+        log.warning("pedido_de_outro_site", extra={
+            "rota": request.url.path,
+            "origem": request.headers.get("origin")
+                      or request.headers.get("referer") or "",
+        })
+        return JSONResponse(
+            {"detail": "Este comando só vale a partir da tela do próprio "
+                       "painel."},
+            status_code=403,
+        )
+    return await seguir(request)
+
+
+# ----------------------------------------------------------------------
 # Painel
 # ----------------------------------------------------------------------
 

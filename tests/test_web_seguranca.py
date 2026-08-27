@@ -82,6 +82,95 @@ def test_ping_continua_livre(painel):
     assert "itens_na_fila" in resposta.json()
 
 
+class TestPedidoDeOutroSite:
+    """Basic é credencial AMBIENTE: uma vez digitada, o navegador a reenvia
+    sozinha em QUALQUER pedido para esta máquina — inclusive num formulário
+    escondido numa página qualquer da internet.
+
+    Sem esta conferência, uma aba aberta noutro site zerava a máquina com
+    `POST /api/zerar`, e o navegador anexava a senha por conta própria.
+    """
+
+    OUTRO = "https://exemplo.invalid"
+
+    def test_post_de_outro_site_e_recusado(self, painel):
+        resposta = painel.post(
+            "/api/zerar", headers={"X-CND-Senha": "segredo",
+                                   "Origin": self.OUTRO},
+            data={"confirmar": "APAGAR TUDO"})
+
+        assert resposta.status_code == 403
+        assert "painel" in resposta.json()["detail"]
+
+    def test_referer_de_outro_site_tambem_e_recusado(self, painel):
+        """Nem todo navegador manda Origin em formulário; Referer cobre
+        esses, e é o mesmo sinal."""
+        resposta = painel.post(
+            "/api/zerar", headers={"X-CND-Senha": "segredo",
+                                   "Referer": f"{self.OUTRO}/armadilha.html"},
+            data={"confirmar": "APAGAR TUDO"})
+
+        assert resposta.status_code == 403
+
+    def test_sec_fetch_site_desmascara_o_pedido_sem_origin(self, painel):
+        """O navegador diz de onde veio num cabeçalho que script nenhum
+        consegue forjar — vale mesmo quando Origin não vem."""
+        resposta = painel.post(
+            "/api/zerar", headers={"X-CND-Senha": "segredo",
+                                   "Sec-Fetch-Site": "cross-site"},
+            data={"confirmar": "APAGAR TUDO"})
+
+        assert resposta.status_code == 403
+
+    def test_a_propria_tela_continua_comandando(self, painel):
+        """A tela do painel posta para a própria máquina: mesma origem."""
+        resposta = painel.post(
+            "/api/breaker/retomar",
+            headers={"X-CND-Senha": "segredo",
+                     "Origin": "http://testserver",
+                     "Sec-Fetch-Site": "same-origin"})
+
+        assert resposta.status_code == 200
+
+    def test_o_aplicativo_de_mesa_continua_comandando(self, painel):
+        """Ele não é navegador: não manda Origin, Referer nem Sec-Fetch-Site,
+        e recusá-lo por isso quebraria o console inteiro."""
+        resposta = painel.post("/api/breaker/retomar",
+                               headers={"X-CND-Senha": "segredo"})
+
+        assert resposta.status_code == 200
+
+    def test_leitura_de_outro_site_nao_e_barrada_aqui(self, painel):
+        """GET não muda nada; quem protege a leitura é a senha."""
+        resposta = painel.get("/api/estado",
+                              headers={"X-CND-Senha": "segredo",
+                                       "Origin": self.OUTRO})
+
+        assert resposta.status_code == 200
+
+
+def test_sem_senha_a_maquina_ainda_recusa_outro_site(monkeypatch, tmp_path):
+    """O caso PIOR, e o que passava batido: sem senha configurada não há
+    nem senha a exigir, e `http://127.0.0.1:8000` é endereço conhecido —
+    qualquer página aberta no navegador da máquina alcançaria o painel."""
+    from dataclasses import replace
+
+    from cnd.infra.config import ConfigRede, carregar
+    from cnd.infra.db import garantir
+    from cnd.web import app as modulo
+
+    banco = tmp_path / "cnd.db"
+    garantir(banco)
+    monkeypatch.setattr(modulo, "cfg",
+                        replace(carregar(), banco=banco, rede=ConfigRede()))
+    with fastapi_testclient.TestClient(modulo.app) as cliente:
+        resposta = cliente.post(
+            "/api/zerar", headers={"Origin": "https://exemplo.invalid"},
+            data={"confirmar": "APAGAR TUDO"})
+
+    assert resposta.status_code == 403
+
+
 def test_sem_senha_configurada_o_painel_fica_aberto(monkeypatch, tmp_path):
     """Instalação de máquina única, ouvindo só em 127.0.0.1: exigir senha
     ali seria atrito sem ganho."""
