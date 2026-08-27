@@ -918,16 +918,26 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     if not nome.lower().endswith((".xlsx", ".xlsm")):
         raise ValueError("Envie um arquivo .xlsx ou .xlsm.")
 
-    destino = Path(tempfile.mkdtemp(prefix="acta_upload_")) / nome
-    tamanho = 0
-    with destino.open("wb") as saida:
-        while bloco := await arquivo.read(1 << 20):
-            tamanho += len(bloco)
-            if tamanho > comandos.LIMITE_DA_PLANILHA_MB * 1024 * 1024:
-                raise ValueError(
-                    f"Planilha maior que {comandos.LIMITE_DA_PLANILHA_MB} MB."
-                )
-            saida.write(bloco)
+    # Quem chama só recebe o caminho quando dá certo — então quem falha
+    # limpa a própria pasta AQUI. Antes, estourar o limite deixava um
+    # `acta_upload_*` com o pedaço já gravado no %TEMP% para sempre: o
+    # chamador redireciona com a mensagem de erro e não tem o que apagar,
+    # porque nunca chegou a saber o nome da pasta.
+    pasta = Path(tempfile.mkdtemp(prefix="acta_upload_"))
+    destino = pasta / nome
+    try:
+        tamanho = 0
+        with destino.open("wb") as saida:
+            while bloco := await arquivo.read(1 << 20):
+                tamanho += len(bloco)
+                if tamanho > comandos.LIMITE_DA_PLANILHA_MB * 1024 * 1024:
+                    raise ValueError(
+                        f"Planilha maior que {comandos.LIMITE_DA_PLANILHA_MB} MB."
+                    )
+                saida.write(bloco)
+    except BaseException:
+        shutil.rmtree(pasta, ignore_errors=True)
+        raise
     return destino
 
 

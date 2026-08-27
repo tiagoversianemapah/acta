@@ -130,6 +130,33 @@ def test_sem_escolher_nada_nao_importa(painel, planilha):
     assert "Escolha" in r.headers["location"]
 
 
+def test_planilha_grande_demais_nao_deixa_lixo_no_temp(painel, planilha,
+                                                       monkeypatch, tmp_path):
+    """Estourar o limite abortava no meio da gravação e ia embora: quem
+    chama só recebe o caminho quando dá certo, então redirecionava com a
+    mensagem de erro sem ter o que apagar — não sabia nem o nome da pasta.
+
+    Sobrava um `acta_upload_*` com o pedaço já gravado, e planilha de
+    cliente esquecida em pasta temporária é exatamente o que o RNF-06
+    proíbe (ver test_o_arquivo_sai_do_disco_ao_confirmar).
+    """
+    import tempfile
+
+    cliente, modulo = painel
+    temporarios = tmp_path / "temp"
+    temporarios.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temporarios))
+    monkeypatch.setattr(modulo.comandos, "LIMITE_DA_PLANILHA_MB", 0)
+
+    r = cliente.post("/acoes/maquina/0/planilha",
+                     files={"arquivo": (planilha.name, planilha.read_bytes())},
+                     follow_redirects=False)
+
+    assert r.status_code == 303
+    assert "MB" in up.unquote(r.headers["location"])
+    assert list(temporarios.iterdir()) == [], "a pasta temporária ficou para trás"
+
+
 def test_token_desconhecido_nao_quebra(painel):
     """Quem volta num link velho recebe recado, não erro 500."""
     cliente, _ = painel
