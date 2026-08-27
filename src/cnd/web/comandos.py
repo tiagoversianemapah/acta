@@ -56,7 +56,7 @@ ATUALIZADOR_PS1 = r"""
 param(
     [Parameter(Mandatory = $true)][string]$Origem,
     [Parameter(Mandatory = $true)][string]$Pasta,
-    [string]$Sha256 = ""
+    [Parameter(Mandatory = $true)][string]$Sha256
 )
 
 $ErrorActionPreference = "Stop"
@@ -92,12 +92,15 @@ try {
     Registrar "baixando de $Origem"
     Invoke-WebRequest "$Origem/acta.zip" -OutFile $zip -UseBasicParsing
 
-    if ($Sha256) {
-        $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne $Sha256.ToLowerInvariant()) {
-            throw "hash do pacote nao confere: $hash"
-        }
+    # Sempre, e nao "se veio hash". O zip baixado por HTTP simples vira
+    # ACTA.exe e cnd.exe nesta maquina: conferir e a unica coisa entre o
+    # que o console publicou e o que roda aqui. Falhar aqui e barato -
+    # nada foi trocado ainda, os processos nem foram parados.
+    $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($hash -ne $Sha256.ToLowerInvariant()) {
+        throw "hash do pacote nao confere: baixei $hash, esperava $Sha256"
     }
+    Registrar "hash conferido"
 
     # Conferir que morreram, e nao dormir 2s torcendo. Em 17/08/2026 o
     # robo ainda estava encerrando quando a copia comecou, segurou
@@ -815,20 +818,123 @@ def _limpar_pedido_de_parada(banco: Path) -> None:
         caminho_pedido_parada(banco).unlink()
 
 
+def _endereco_da_rede_local(endereco: str) -> bool:
+    """Se o IP é de rede interna — inclusive a faixa da VPN da empresa.
+
+    100.64.0.0/10 entra explicitamente: é a faixa CGNAT que o Tailscale
+    usa, e é por ela que o console alcança as máquinas. O
+    `ipaddress.is_private` deixou de considerá-la privada no Python 3.12.4,
+    e confiar só nele barraria a rede que este projeto de fato usa.
+    """
+    import ipaddress
+
+    try:
+        ip = ipaddress.ip_address(endereco)
+    except ValueError:
+        return False
+    # Loopback primeiro, e não junto do resto: em IPv6 o `::1` cai dentro
+    # de `::/8` e é `is_reserved`, então a recusa abaixo barraria
+    # `localhost` — que resolve para 127.0.0.1 E ::1, e é endereço legítimo
+    # de quem atualiza a própria máquina.
+    if ip.is_loopback:
+        return True
+    # `0.0.0.0` e `255.255.255.255` são classificados como PRIVADOS pelo
+    # `ipaddress`, e passavam. Nenhum dos dois é máquina de onde se baixe
+    # coisa alguma — um é "este host, esta rede" e o outro é broadcast.
+    # Aceitá-los é aceitar um engano de digitação como se fosse endereço.
+    if ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+        return False
+    if ip in ipaddress.ip_network("100.64.0.0/10"):
+        return True
+    return bool(ip.is_private or ip.is_link_local)
+
+
 def _validar_origem_atualizacao(origem: str) -> str:
+    """A origem tem de ser um endereço da rede interna, e não qualquer URL.
+
+    Esta rota BAIXA E TROCA EXECUTÁVEIS. "É HTTP e tem host" aceitava
+    `http://qualquer-coisa.com`: bastava um erro de digitação no prompt,
+    ou um domínio parecido, para a máquina instalar o pacote de um
+    estranho. O pacote nunca sai da rede da empresa (ver empacotar/
+    publicar.py), então exigir endereço interno não tira nada de real.
+    """
+    import socket
+
     origem = (origem or "").strip().rstrip("/")
     partes = urllib.parse.urlparse(origem)
-    if partes.scheme != "http" or not partes.netloc:
+    # `hostname` e não `netloc`: em `http://:8899` o netloc é `":8899"` e
+    # passa, mas o hostname é None — e `getaddrinfo(None, ...)` resolve
+    # para o LOOPBACK, que é endereço interno. A URL sem máquina nenhuma
+    # atravessava a conferência inteira e ia baixar de si mesma.
+    if partes.scheme != "http" or not partes.hostname:
         raise HTTPException(
             status_code=400,
-            detail="A origem da atualização deve ser uma URL HTTP da rede local.",
+            detail="A origem da atualização deve ser uma URL HTTP da rede "
+                   "local, com o endereço da máquina "
+                   "(ex.: http://10.1.11.86:8899).",
         )
-    return origem
+    # Credencial no endereço não serve para nada aqui — o publicador não
+    # pede senha — e vaza: a origem é gravada em texto puro no log da
+    # atualização e em data/ultima_origem_atualizacao.txt.
+    if partes.username or partes.password:
+        raise HTTPException(
+            status_code=400,
+            detail="A origem da atualização não leva usuário nem senha.",
+        )
+    # Só máquina e porta. O script monta `$Origem/acta.zip`, então um
+    # `?x=1` viraria `...:8899?x=1/acta.zip` e um `#frag` cortaria o
+    # caminho inteiro — endereços que não baixam nada e cuja falha só
+    # aparece lá adiante, com o painel já derrubado.
+    if partes.path or partes.query or partes.fragment:
+        raise HTTPException(
+            status_code=400,
+            detail="A origem da atualização é só a máquina e a porta "
+                   "(ex.: http://10.1.11.86:8899), sem caminho depois.",
+        )
+
+    try:
+        enderecos = {
+            info[4][0] for info in socket.getaddrinfo(
+                partes.hostname, partes.port or 80, proto=socket.IPPROTO_TCP)
+        }
+    except OSError as erro:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Não resolvi o endereço {partes.hostname!r} da atualização.",
+        ) from erro
+
+    # TODOS, e não algum: um nome que resolve para um endereço interno e
+    # outro externo escolheria o de fora na hora de baixar.
+    if not enderecos or not all(_endereco_da_rede_local(e) for e in enderecos):
+        raise HTTPException(
+            status_code=400,
+            detail="A atualização só pode vir de uma máquina da rede interna "
+                   f"(ex.: http://10.1.11.86:8899). {partes.hostname} está "
+                   "fora dela.",
+        )
+    # A forma canônica, e não o texto recebido: é ela que vai para o
+    # script, para o log e para o arquivo de última origem.
+    return f"http://{partes.netloc.lower()}"
 
 
 def _validar_sha256(sha256: str) -> str:
+    """O hash do pacote, OBRIGATÓRIO.
+
+    Antes era opcional, e sem ele a máquina baixava por HTTP simples um zip
+    que vira `ACTA.exe` e `cnd.exe` — quem conseguisse responder no lugar
+    do console (ou apenas publicar na porta 8899 antes dele) trocava o
+    programa inteiro. O hash sai impresso pelo `empacotar/publicar.py` e
+    viaja por dentro do POST autenticado, que é outro caminho: é isso que
+    faz a conferência valer alguma coisa.
+    """
     valor = (sha256 or "").strip().lower()
-    if valor and (len(valor) != 64 or any(c not in "0123456789abcdef" for c in valor)):
+    if not valor:
+        raise HTTPException(
+            status_code=400,
+            detail="Informe o SHA-256 do pacote. Ele é impresso por "
+                   "`python empacotar/publicar.py` ao publicar.",
+        )
+    if len(valor) != 64 or any(c not in "0123456789abcdef" for c in valor):
         raise HTTPException(status_code=400, detail="SHA-256 inválido.")
     return valor
 

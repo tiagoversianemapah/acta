@@ -389,13 +389,149 @@ class TestComandosPelaRede:
         assert resposta.status_code == 400
         assert "HTTP" in resposta.json()["detail"]
 
+    def test_atualizar_exige_hash_do_pacote(self, monkeypatch, tmp_path):
+        """Sem hash, a máquina baixaria por HTTP simples um zip que vira
+        ACTA.exe e cnd.exe: quem respondesse na porta 8899 no lugar do
+        console trocava o programa inteiro."""
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899"},
+            )
+
+        assert resposta.status_code == 400
+        assert "SHA-256" in resposta.json()["detail"]
+
+    @pytest.mark.parametrize("hash_ruim", ["abc", "z" * 64, "a" * 63])
+    def test_atualizar_recusa_hash_malformado(self, monkeypatch, tmp_path,
+                                              hash_ruim):
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://10.1.11.86:8899", "sha256": hash_ruim},
+            )
+
+        assert resposta.status_code == 400
+
+    @pytest.mark.parametrize("origem", ["http://:8899", "http://", "http:///x"])
+    def test_atualizar_recusa_url_sem_maquina(self, monkeypatch, tmp_path,
+                                              origem):
+        """`http://:8899` tem netloc (`":8899"`) e passava na conferência
+        antiga — mas hostname nenhum, e `getaddrinfo(None, ...)` resolve
+        para o LOOPBACK, que é endereço interno. A URL sem máquina nenhuma
+        atravessava inteira e ia baixar de si mesma."""
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": origem, "sha256": "a" * 64},
+            )
+
+        assert resposta.status_code == 400
+        assert "HTTP" in resposta.json()["detail"]
+
+    @pytest.mark.parametrize("origem", [
+        "http://0.0.0.0:8899",              # "este host, esta rede"
+        "http://255.255.255.255:8899",      # broadcast
+        "http://224.0.0.1:8899",            # multicast
+    ])
+    def test_atualizar_recusa_endereco_que_nao_e_maquina(self, monkeypatch,
+                                                         tmp_path, origem):
+        """`0.0.0.0` e `255.255.255.255` são classificados como PRIVADOS
+        pelo `ipaddress` e passavam. Nenhum dos dois é máquina de onde se
+        baixe coisa alguma — aceitá-los é aceitar um erro de digitação."""
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": origem, "sha256": "a" * 64},
+            )
+
+        assert resposta.status_code == 400
+
+    def test_atualizar_recusa_credencial_no_endereco(self, monkeypatch,
+                                                     tmp_path):
+        """Não serve para nada — o publicador não pede senha — e vaza: a
+        origem é gravada em texto puro no log e em
+        data/ultima_origem_atualizacao.txt."""
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://user:pass@10.1.11.86:8899",
+                      "sha256": "a" * 64},
+            )
+
+        assert resposta.status_code == 400
+        assert "senha" in resposta.json()["detail"]
+
+    @pytest.mark.parametrize("sujo", ["/algum", "?x=1", "#frag"])
+    def test_atualizar_recusa_coisa_depois_da_porta(self, monkeypatch,
+                                                    tmp_path, sujo):
+        """O script monta `$Origem/acta.zip`: `?x=1` viraria
+        `...:8899?x=1/acta.zip` e `#frag` cortaria o caminho inteiro."""
+        monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: True)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": f"http://10.1.11.86:8899{sujo}",
+                      "sha256": "a" * 64},
+            )
+
+        assert resposta.status_code == 400
+
+    def test_a_origem_que_segue_e_a_forma_canonica(self):
+        """É ela que vai para o script, para o log e para o arquivo de
+        última origem — não o texto que chegou."""
+        assert comandos._validar_origem_atualizacao(
+            "HTTP://10.1.11.86:8899/") == "http://10.1.11.86:8899"
+
+    def test_localhost_continua_valendo(self):
+        """Atualizar a própria máquina é o caso mais comum de todos. Em
+        IPv6 o `::1` é `is_reserved` (cai em `::/8`), então a recusa de
+        endereço reservado precisa vir DEPOIS da de loopback."""
+        assert comandos._endereco_da_rede_local("::1")
+        assert comandos._validar_origem_atualizacao(
+            "http://localhost:8899") == "http://localhost:8899"
+
+    def test_atualizar_recusa_origem_fora_da_rede_interna(self, monkeypatch,
+                                                          tmp_path):
+        """"É HTTP e tem host" aceitava a internet inteira — e esta rota
+        baixa e troca executáveis."""
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/atualizar", headers={"X-CND-Senha": "segredo"},
+                data={"origem": "http://93.184.216.34:8899",
+                      "sha256": "a" * 64},
+            )
+
+        assert resposta.status_code == 400
+        assert "rede interna" in resposta.json()["detail"]
+
+    def test_atualizar_aceita_a_faixa_da_vpn(self):
+        """100.64.0.0/10 é a faixa do Tailscale, por onde o console alcança
+        as máquinas — e o `is_private` do Python 3.12.4 deixou de considerá-la
+        privada. Confiar só nele barraria a rede que o projeto usa."""
+        assert comandos._endereco_da_rede_local("100.125.207.8")
+        assert comandos._endereco_da_rede_local("10.1.11.86")
+        assert comandos._endereco_da_rede_local("127.0.0.1")
+        assert not comandos._endereco_da_rede_local("93.184.216.34")
+
     def test_atualizar_recusa_sem_pacote_publicado(self, monkeypatch, tmp_path):
         monkeypatch.setattr(comandos, "_pacote_disponivel", lambda origem: False)
 
         with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
             resposta = cliente.post(
                 "/api/atualizar", headers={"X-CND-Senha": "segredo"},
-                data={"origem": "http://10.1.11.86:8899"},
+                data={"origem": "http://10.1.11.86:8899", "sha256": "a" * 64},
             )
 
         assert resposta.status_code == 400
@@ -420,7 +556,7 @@ class TestComandosPelaRede:
 
             resposta = cliente.post(
                 "/api/atualizar", headers={"X-CND-Senha": "segredo"},
-                data={"origem": "http://10.1.11.86:8899"},
+                data={"origem": "http://10.1.11.86:8899", "sha256": "a" * 64},
             )
 
         assert resposta.status_code == 409
@@ -459,7 +595,7 @@ class TestComandosPelaRede:
 
             resposta = cliente.post(
                 "/api/atualizar", headers={"X-CND-Senha": "segredo"},
-                data={"origem": "http://10.1.11.86:8899"},
+                data={"origem": "http://10.1.11.86:8899", "sha256": "a" * 64},
             )
 
             conn = conectar(banco)
@@ -491,7 +627,7 @@ class TestComandosPelaRede:
         with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
             resposta = cliente.post(
                 "/api/atualizar", headers={"X-CND-Senha": "segredo"},
-                data={"origem": "http://10.1.11.86:8899"},
+                data={"origem": "http://10.1.11.86:8899", "sha256": "a" * 64},
             )
 
         assert resposta.status_code == 200
@@ -499,6 +635,9 @@ class TestComandosPelaRede:
         assert resposta.json()["mensagem"] == "Atualização iniciada."
         assert "powershell" in visto["comando"][0].lower()
         assert "-Origem" in visto["comando"]
+        # O hash chega ao script, que o confere antes de parar processo
+        # nenhum — falhar ali não deixa a máquina pela metade.
+        assert visto["comando"][visto["comando"].index("-Sha256") + 1] == "a" * 64
         assert "http://10.1.11.86:8899" in visto["comando"]
 
     def test_flash_polida_na_tela(self, monkeypatch, tmp_path):

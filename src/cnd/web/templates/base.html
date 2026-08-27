@@ -92,22 +92,35 @@ function pedirOrigemAtualizacao() {
   if (limpa) localStorage.setItem('actaOrigemAtualizacao', limpa);
   return limpa;
 }
+// O hash NÃO é lembrado: ele muda a cada pacote, e um valor guardado só
+// serviria para recusar a atualização seguinte com uma mensagem confusa.
+// Ele sai impresso ao publicar (python empacotar/publicar.py) — é o que
+// prova que o zip que a máquina baixou é o que o console montou.
+function pedirHashAtualizacao() {
+  var hash = window.prompt(
+    'SHA-256 do pacote (aparece ao publicar)', '');
+  return hash ? hash.trim().toLowerCase() : '';
+}
 document.addEventListener('click', function (evento) {
     const atualizar = evento.target.closest('[data-update-api], [data-update-form]');
     if (atualizar) {
       evento.preventDefault();
       const origem = pedirOrigemAtualizacao();
       if (!origem) return;
+      const sha256 = pedirHashAtualizacao();
+      if (!sha256) return;
 
       if (atualizar.dataset.updateForm) {
         const form = document.createElement('form');
         form.method = 'post';
         form.action = atualizar.dataset.updateForm;
-        const campo = document.createElement('input');
-        campo.type = 'hidden';
-        campo.name = 'origem';
-        campo.value = origem;
-        form.appendChild(campo);
+        [['origem', origem], ['sha256', sha256]].forEach(function (par) {
+          const campo = document.createElement('input');
+          campo.type = 'hidden';
+          campo.name = par[0];
+          campo.value = par[1];
+          form.appendChild(campo);
+        });
         document.body.appendChild(form);
         form.submit();
         return;
@@ -122,7 +135,7 @@ document.addEventListener('click', function (evento) {
         method: 'POST',
         credentials: 'same-origin',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({origem: origem})
+        body: new URLSearchParams({origem: origem, sha256: sha256})
       })
         .then(function (resposta) {
           if (!resposta.ok) return resposta.json().then(function (corpo) {

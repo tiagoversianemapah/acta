@@ -1264,7 +1264,8 @@ def acao_resetar_pausa_maquina(indice: int, orgao: str):
 
 @app.post("/acoes/maquina/{indice}/atualizar")
 def acao_atualizar_maquina(
-    indice: int, request: Request, origem: str = Form(default="")
+    indice: int, request: Request, origem: str = Form(default=""),
+    sha256: str = Form(default=""),
 ):
     if not cfg.rede.maquinas:
         return RedirectResponse(
@@ -1278,9 +1279,17 @@ def acao_atualizar_maquina(
         )
 
     origem = (origem or _origem_atualizacao(request)).strip()
+    sha256 = (sha256 or "").strip()
+    if not sha256:
+        return RedirectResponse(
+            _url_destino("/", indice,
+                         erro="Informe o SHA-256 do pacote. Ele sai impresso "
+                              "ao publicar (python empacotar/publicar.py)."),
+            status_code=303,
+        )
     try:
         resposta = remoto.atualizar(
-            cfg.rede.maquinas[indice], cfg.rede.senha, origem
+            cfg.rede.maquinas[indice], cfg.rede.senha, origem, sha256
         )
     except Exception as erro:
         log.warning(

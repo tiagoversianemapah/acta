@@ -11,6 +11,7 @@ têm de ficar.
 """
 from __future__ import annotations
 
+import hashlib
 import http.server
 import shutil
 import socket
@@ -41,6 +42,18 @@ def montar_pacote(destino: Path) -> Path:
     return Path(shutil.make_archive(str(destino / "acta"), "zip", area))
 
 
+def impressao_digital(pacote: Path) -> str:
+    """O SHA-256 do zip, que a máquina do outro lado exige antes de trocar
+    os executáveis. Ele viaja pelo painel (POST autenticado) ou digitado
+    por quem atualiza — outro caminho que não o do próprio download, que é
+    o que faz a conferência valer alguma coisa."""
+    digestor = hashlib.sha256()
+    with pacote.open("rb") as arquivo:
+        while bloco := arquivo.read(1 << 20):
+            digestor.update(bloco)
+    return digestor.hexdigest()
+
+
 def endereco_na_rede() -> str:
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.connect(("10.255.255.255", 1))   # não envia nada; só resolve a rota
@@ -58,13 +71,18 @@ def main() -> int:
         shutil.copy2(RAIZ / "empacotar" / "atualizar-pela-rede.ps1", area)
 
         tamanho = pacote.stat().st_size / (1024 * 1024)
+        hash_do_pacote = impressao_digital(pacote)
         ip = endereco_na_rede()
         print(f"Publicando {tamanho:.0f} MB em http://{ip}:{PORTA}")
+        print(f"\nSHA-256 do pacote:\n\n  {hash_do_pacote}\n")
+        print("É ele que o painel pede ao atualizar pela tela. Sem ele a "
+              "máquina recusa:\ntrocar executável por um download não "
+              "conferido é como a instalação inteira vira outra coisa.")
         print("\nNa máquina a atualizar, num Prompt como ADMINISTRADOR:\n")
         print(f'  powershell -ExecutionPolicy Bypass -Command "iwr '
               f'http://{ip}:{PORTA}/atualizar-pela-rede.ps1 -OutFile '
               f'$env:TEMP\\a.ps1; & $env:TEMP\\a.ps1 -Origem '
-              f'http://{ip}:{PORTA}"')
+              f'http://{ip}:{PORTA} -Sha256 {hash_do_pacote}"')
         print("\nDeixe esta janela aberta até terminar. Ctrl+C encerra.")
 
         class Servidor(http.server.SimpleHTTPRequestHandler):
