@@ -311,6 +311,69 @@ async def exigir_senha(request: Request, seguir):
 
 
 # ----------------------------------------------------------------------
+# Pedidos vindos de outro site
+# ----------------------------------------------------------------------
+
+# GET e HEAD não mudam nada nesta aplicação; o resto muda.
+METODOS_QUE_MUDAM = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _mesmo_host(url: str, host: str) -> bool:
+    if not url or not host:
+        return False
+    return urllib.parse.urlparse(url).netloc.lower() == host.strip().lower()
+
+
+def _veio_de_outro_site(request: Request) -> bool:
+    """Se este POST foi disparado por uma página que não é a nossa.
+
+    A senha do painel entra por Basic, e Basic é credencial AMBIENTE: uma
+    vez digitada, o navegador a reenvia sozinho em qualquer pedido para
+    esta máquina — inclusive num formulário escondido numa página
+    qualquer da internet. Sem esta conferência, uma aba aberta noutro site
+    zerava a máquina com `POST /api/zerar`, e o navegador anexava a senha
+    por conta própria.
+
+    Vale mesmo SEM senha configurada, que é o caso pior: aí não há nem
+    senha a exigir, e `http://127.0.0.1:8000` é endereço conhecido.
+
+    Três sinais, do mais confiável ao mais antigo. Nenhum deles presente
+    significa que quem chamou não é navegador — é o aplicativo de mesa ou
+    o console pedindo pela rede, e esses não têm site de origem.
+    """
+    local = request.headers.get("sec-fetch-site", "").strip().lower()
+    if local:
+        # O navegador diz de onde veio, e não dá para forjar por script.
+        # 'none' é a barra de endereço; 'same-origin', a nossa própria tela.
+        return local not in {"same-origin", "none"}
+
+    host = request.headers.get("host", "")
+    origem = request.headers.get("origin", "")
+    if origem:
+        return not _mesmo_host(origem, host)
+    referencia = request.headers.get("referer", "")
+    if referencia:
+        return not _mesmo_host(referencia, host)
+    return False
+
+
+@app.middleware("http")
+async def recusar_pedido_de_outro_site(request: Request, seguir):
+    if request.method in METODOS_QUE_MUDAM and _veio_de_outro_site(request):
+        log.warning("pedido_de_outro_site", extra={
+            "rota": request.url.path,
+            "origem": request.headers.get("origin")
+                      or request.headers.get("referer") or "",
+        })
+        return JSONResponse(
+            {"detail": "Este comando só vale a partir da tela do próprio "
+                       "painel."},
+            status_code=403,
+        )
+    return await seguir(request)
+
+
+# ----------------------------------------------------------------------
 # Painel
 # ----------------------------------------------------------------------
 
@@ -436,10 +499,23 @@ def _origem_atualizacao(request: Request) -> str:
 
 
 def _origem_atualizacao_salva() -> str:
+    """De onde esta máquina se atualizou da última vez.
+
+    É o melhor palpite que existe para o prompt: o console publica sempre
+    do mesmo lugar, e quem atualiza uma máquina vai atualizar as outras
+    logo em seguida.
+    """
     arquivo = RAIZ_PROJETO / "data" / "ultima_origem_atualizacao.txt"
     with contextlib.suppress(OSError):
         return arquivo.read_text(encoding="utf-8-sig").strip().rstrip("/")
     return ""
+
+
+# Global de template, e não item de contexto de UMA tela: o botão Atualizar
+# vive no Diagnóstico, cujo contexto é montado em web/diagnostico.py e não
+# passava por aqui. Enquanto o palpite era item de contexto, a tela do botão
+# ficava sem ele e caía num IP escrito no HTML.
+templates.env.globals["origem_atualizacao_salva"] = _origem_atualizacao_salva
 
 
 def _reler_com_lote(
@@ -517,10 +593,6 @@ def _contexto_painel(
         "base_download": base_download,
         "usa_rede": bool(cfg.rede.maquinas),
         "pode_controlar_local": bool(selecionada and selecionada.local),
-        "origem_atualizacao_padrao": (
-            _origem_atualizacao_salva()
-            or (_origem_atualizacao(request) if request else "")
-        ),
         "mensagem_operacao": _formatar_flash(mensagem),
         "erro_operacao": _formatar_flash(erro),
         "agora": tempo.agora_iso(),
@@ -855,16 +927,26 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     if not nome.lower().endswith((".xlsx", ".xlsm")):
         raise ValueError("Envie um arquivo .xlsx ou .xlsm.")
 
-    destino = Path(tempfile.mkdtemp(prefix="acta_upload_")) / nome
-    tamanho = 0
-    with destino.open("wb") as saida:
-        while bloco := await arquivo.read(1 << 20):
-            tamanho += len(bloco)
-            if tamanho > comandos.LIMITE_DA_PLANILHA_MB * 1024 * 1024:
-                raise ValueError(
-                    f"Planilha maior que {comandos.LIMITE_DA_PLANILHA_MB} MB."
-                )
-            saida.write(bloco)
+    # Quem chama só recebe o caminho quando dá certo — então quem falha
+    # limpa a própria pasta AQUI. Antes, estourar o limite deixava um
+    # `acta_upload_*` com o pedaço já gravado no %TEMP% para sempre: o
+    # chamador redireciona com a mensagem de erro e não tem o que apagar,
+    # porque nunca chegou a saber o nome da pasta.
+    pasta = Path(tempfile.mkdtemp(prefix="acta_upload_"))
+    destino = pasta / nome
+    try:
+        tamanho = 0
+        with destino.open("wb") as saida:
+            while bloco := await arquivo.read(1 << 20):
+                tamanho += len(bloco)
+                if tamanho > comandos.LIMITE_DA_PLANILHA_MB * 1024 * 1024:
+                    raise ValueError(
+                        f"Planilha maior que {comandos.LIMITE_DA_PLANILHA_MB} MB."
+                    )
+                saida.write(bloco)
+    except BaseException:
+        shutil.rmtree(pasta, ignore_errors=True)
+        raise
     return destino
 
 
@@ -1191,7 +1273,8 @@ def acao_resetar_pausa_maquina(indice: int, orgao: str):
 
 @app.post("/acoes/maquina/{indice}/atualizar")
 def acao_atualizar_maquina(
-    indice: int, request: Request, origem: str = Form(default="")
+    indice: int, request: Request, origem: str = Form(default=""),
+    sha256: str = Form(default=""),
 ):
     if not cfg.rede.maquinas:
         return RedirectResponse(
@@ -1205,9 +1288,17 @@ def acao_atualizar_maquina(
         )
 
     origem = (origem or _origem_atualizacao(request)).strip()
+    sha256 = (sha256 or "").strip()
+    if not sha256:
+        return RedirectResponse(
+            _url_destino("/", indice,
+                         erro="Informe o SHA-256 do pacote. Ele sai impresso "
+                              "ao publicar (python empacotar/publicar.py)."),
+            status_code=303,
+        )
     try:
         resposta = remoto.atualizar(
-            cfg.rede.maquinas[indice], cfg.rede.senha, origem
+            cfg.rede.maquinas[indice], cfg.rede.senha, origem, sha256
         )
     except Exception as erro:
         log.warning(

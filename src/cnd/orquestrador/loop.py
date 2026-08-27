@@ -21,8 +21,7 @@ from dataclasses import dataclass, field, replace
 from cnd.adapters.base import AdapterOrgao
 from cnd.adapters.base import carregar as carregar_adapter
 from cnd.core import breaker, fila, recuperacao, ritmo, tempo
-from cnd.core.modelos import CONCLUSIVOS, RETENTAVEIS, Desfecho, ResultadoTentativa
-from cnd.core.modelos import Status
+from cnd.core.modelos import CONCLUSIVOS, RETENTAVEIS, Desfecho, ResultadoTentativa, Status
 from cnd.infra import alertas, heartbeat
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.config import carregar as carregar_config

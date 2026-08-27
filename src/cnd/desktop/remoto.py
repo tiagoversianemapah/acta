@@ -673,11 +673,16 @@ def comandar_robo(maquina: Maquina, iniciar: bool, senha: str = "") -> dict:
 
 
 def atualizar(maquina: Maquina, senha: str, origem: str,
-              sha256: str = "") -> dict:
-    """Pede para a maquina baixar e aplicar o pacote publicado pelo console."""
+              sha256: str) -> dict:
+    """Pede para a maquina baixar e aplicar o pacote publicado pelo console.
+
+    `sha256` nao tem padrao de proposito: a maquina do outro lado recusa
+    sem ele, e um argumento opcional aqui so adiaria a recusa para depois
+    da ida a rede - sem dizer a quem chama que faltou o hash.
+    """
     corpo = urllib.parse.urlencode({
         "origem": origem,
-        **({"sha256": sha256} if sha256 else {}),
+        "sha256": sha256,
     }).encode()
     pedido = urllib.request.Request(
         f"{maquina.base}/api/atualizar", data=corpo, method="POST"

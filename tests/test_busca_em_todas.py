@@ -22,16 +22,6 @@ ESTADUAL = Maquina(nome="PC-02", url="http://10.0.0.2:8000",
                    orgao="SEFAZ GOIÁS")
 
 
-@pytest.fixture(scope="module")
-def janela():
-    from cnd.desktop.app import Aplicativo
-
-    app = Aplicativo()
-    app.withdraw()
-    yield app
-    app.destroy()
-
-
 def _item(job_id: int, nome: str, quando: str = "2026-08-10T10:00:00") -> dict:
     return {"id": job_id, "nome": nome, "documento": "16958497000195",
             "status": "CONCLUIDO", "desfecho": "NEGATIVA",

@@ -108,19 +108,46 @@ def lote_em_foco(conn: sqlite3.Connection,
     return todos[0]
 
 
-def orgaos_do_lote(conn: sqlite3.Connection, lote_id: int | None) -> list[str]:
-    if lote_id is None:
-        linhas = conn.execute("SELECT DISTINCT orgao FROM job ORDER BY orgao")
-    else:
-        linhas = conn.execute(
-            "SELECT DISTINCT orgao FROM job WHERE lote_id = ? ORDER BY orgao", (lote_id,)
-        )
-    return [linha["orgao"] for linha in linhas]
+def _recorte_dos_jobs(lote_id: int | None,
+                      mes: str | None) -> tuple[str, list]:
+    """O `AND ...` que restringe as contagens de job, e seus valores.
+
+    Os dois cortes que o sistema conhece: a PLANILHA (a tela de operação) e
+    o MÊS (a entrega e o relatório). O mês olha `atualizado_em`, a mesma
+    coluna que `Recorte` usa no relatório — dois recortes com nomes iguais e
+    réguas diferentes seriam pior que nenhum.
+    """
+    condicoes, args = [], []
+    if lote_id:
+        condicoes.append("lote_id = ?")
+        args.append(lote_id)
+    if mes:
+        condicoes.append("strftime('%Y-%m', atualizado_em) = ?")
+        args.append(mes)
+    return ("".join(f" AND {c}" for c in condicoes), args)
 
 
-def resumo(conn: sqlite3.Connection, orgao: str, lote_id: int | None = None) -> ResumoOrgao:
-    filtro = "AND lote_id = ?" if lote_id else ""
-    args: tuple = (orgao, lote_id) if lote_id else (orgao,)
+def orgaos_do_lote(conn: sqlite3.Connection, lote_id: int | None,
+                   mes: str | None = None) -> list[str]:
+    filtro, args = _recorte_dos_jobs(lote_id, mes)
+    onde = f"WHERE 1=1{filtro}" if filtro else ""
+    return [linha["orgao"] for linha in conn.execute(
+        f"SELECT DISTINCT orgao FROM job {onde} ORDER BY orgao", args
+    )]
+
+
+def resumo(conn: sqlite3.Connection, orgao: str, lote_id: int | None = None,
+           mes: str | None = None) -> ResumoOrgao:
+    """Os números de um órgão, opcionalmente recortados por planilha ou mês.
+
+    `mes` existe porque o relatório mensal já recortava as abas de itens e
+    pedia o resumo SEM recorte nenhum: em agosto, a linha "Total" somava
+    julho junto. Um resumo que não bate com as abas logo abaixo dele é o
+    pior defeito possível num relatório — quem confere para de confiar no
+    arquivo inteiro.
+    """
+    filtro, extras = _recorte_dos_jobs(lote_id, mes)
+    args: list = [orgao, *extras]
 
     contagens = {
         linha["status"]: linha["n"]

@@ -24,7 +24,7 @@ portal passou a responder `400 Bad Request — Request Header Or Cookie Too
 Large` (nginx recusando por cookie acumulado no perfil do Edge), e uma
 sequência inteira de empresas foi encerrada como pendência que não existia.
 Nesse caso específico o adapter cego limpa os cookies do domínio, reabre o
-navegador e refaz a consulta na hora — ver `infra/cookies.py`.
+navegador e refaz a consulta na hora — ver `infra/perfil_edge.py`.
 
 ## 2. Máquina de estados do job
 
@@ -104,9 +104,11 @@ iniciais.
 
 Complementos comportamentais no worker (inalterados pelo ritmo):
 
-- Navegador **headed** com perfil persistente por worker (cookies/fingerprint
-  estáveis de "usuário recorrente").
-- Digitação e cliques com micro-atrasos aleatórios (APIs nativas do Playwright).
+- **Edge comum**, o que a máquina já usa — e não um navegador automatizado. Na
+  Receita quem dirige é o `SendInput` do Windows: para o portal, é o mouse e o
+  teclado de alguém sentado ali. Ver [doc 02, §2.4](02-arquitetura.md).
+- Cursor em **curva de Bézier com tremor**, cliques do sistema e digitação
+  tecla por tecla, com micro-atrasos aleatórios.
 - Nunca duas consultas no mesmo instante para o mesmo órgão, mesmo com N workers.
 
 ## 4. Retry e backoff

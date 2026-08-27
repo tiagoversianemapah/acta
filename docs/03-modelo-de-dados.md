@@ -68,8 +68,13 @@ erDiagram
 - **`CERTIDAO` separada e imutável:** o PDF emitido é um fato datado. Permite a
   regra de idempotência (RNF-04): antes de executar um job, o orquestrador
   verifica se já existe certidão **emitida no mês corrente** para
-  (empresa, órgão) e, se existir, conclui o job como `APROVEITADA` sem ir ao
-  portal.
+  (empresa, órgão, **planilha**) e, se existir, conclui o job como
+  `APROVEITADA` sem ir ao portal.
+  A planilha entra na chave por decisão da operação (14/08/2026): duas
+  remessas são trabalhos separados ainda que tragam os mesmos CNPJs, e quem
+  manda a mesma lista de novo está pedindo certidões novas — não um
+  relatório de que já existem. Sem ela, a segunda remessa fechava inteira
+  como `APROVEITADA`, sem PDF novo. Ver `core/fila.certidao_do_mes`.
   O critério é `emitida_em`, **não** `valida_ate`: a certidão da RFB vale 180
   dias, mas quem a recebe exige emissão do mês. Usar a validade faria o robô
   pular empresas que precisam de certidão nova e marcá-las como concluídas —

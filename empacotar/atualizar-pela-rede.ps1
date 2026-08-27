@@ -11,6 +11,11 @@
 
 param(
     [Parameter(Mandatory = $true)][string]$Origem,   # ex: http://10.1.11.86:8899
+    # O SHA-256 sai impresso pelo publicar.py, junto com o endereco. E
+    # obrigatorio: o zip baixado por HTTP simples vira ACTA.exe e cnd.exe
+    # nesta maquina, e conferir e a unica coisa entre o que o console
+    # publicou e o que passa a rodar aqui.
+    [Parameter(Mandatory = $true)][string]$Sha256,
     [string]$Pasta = "C:\ACTA"
 )
 
@@ -33,10 +38,20 @@ function IniciarPainelDireto() {
         -ArgumentList "painel --host 0.0.0.0" -WindowStyle Minimized
 }
 
-Write-Host "1/5  Baixando de $Origem ..."
+Write-Host "1/6  Baixando de $Origem ..."
 Invoke-WebRequest "$Origem/acta.zip" -OutFile $zip -UseBasicParsing
 
-Write-Host "2/5  Parando o painel, se estiver de pe ..."
+Write-Host "2/6  Conferindo o pacote ..."
+# Antes de parar processo nenhum: falhar aqui nao deixa a maquina no meio
+# do caminho, que e o unico estado do qual nao da para sair pela rede.
+$hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($hash -ne $Sha256.ToLowerInvariant()) {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    throw "O pacote baixado nao confere: recebi $hash, esperava $Sha256. Nada foi trocado."
+}
+Write-Host "     hash confere"
+
+Write-Host "3/6  Parando o painel, se estiver de pe ..."
 # O executavel em uso nao pode ser substituido; parar antes evita um erro
 # no meio da troca, com a pasta pela metade.
 # Conferir que morreram, e nao dormir 2s torcendo: em 17/08/2026 o robo
@@ -57,11 +72,11 @@ if ($vivos.Count -gt 0) {
     Write-Host "     processos encerrados"
 }
 
-Write-Host "3/5  Abrindo o pacote ..."
+Write-Host "4/6  Abrindo o pacote ..."
 if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
 Expand-Archive $zip -DestinationPath $tmp -Force
 
-Write-Host "4/5  Trocando os arquivos em $Pasta ..."
+Write-Host "5/6  Trocando os arquivos em $Pasta ..."
 # O Windows solta o arquivo com atraso (antivirus, indexador). Insistir
 # custa menos que deixar a pasta pela metade.
 $tentativaCopia = 0
@@ -77,7 +92,7 @@ while ($true) {
     }
 }
 
-Write-Host "5/5  Subindo o painel de novo ..."
+Write-Host "6/6  Subindo o painel de novo ..."
 schtasks /Run /TN "ACTA Painel" | Out-Null
 if ($LASTEXITCODE -eq 0) {
     Write-Host "     agendador acionado"

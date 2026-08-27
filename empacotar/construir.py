@@ -126,13 +126,25 @@ def levar_arquivos_do_operador() -> None:
 
     O config existente nunca é sobrescrito: numa reconstrução, quem já
     ajustou a máquina não perde o ajuste.
+
+    Sem `config.toml` na raiz vale o exemplo versionado. Esse é o estado
+    de um checkout limpo — o config é da INSTALAÇÃO e não vai para o
+    controle de versão —, e quebrar a construção ali obrigava a inventar
+    um config só para conseguir empacotar. O exemplo sai com senha vazia e
+    nenhum órgão a emitir, então o aviso diz o que falta preencher.
     """
     destino = DESTINO / "config.toml"
     if destino.exists():
         print("  config  já existe, mantido")
     else:
-        shutil.copy2(RAIZ / "config.toml", destino)
-        print("  config  copiado")
+        origem = RAIZ / "config.toml"
+        if origem.exists():
+            shutil.copy2(origem, destino)
+            print("  config  copiado")
+        else:
+            shutil.copy2(RAIZ / "config.exemplo.toml", destino)
+            print("  config  NÃO havia config.toml na raiz; copiei o exemplo.")
+            print("          Preencha [rede] nome, senha e os órgãos na máquina.")
 
     for pasta in ("data/certidoes", "data/evidencias", "data/logs",
                   "data/calibragem"):

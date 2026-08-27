@@ -6,19 +6,7 @@ escondendo os botões — e o mínimo de 1100x660 impedia encolher para caber.
 """
 from __future__ import annotations
 
-import pytest
-
 from cnd.desktop.app import MAXIMO_A, MAXIMO_L, MINIMO_L
-
-
-@pytest.fixture(scope="module")
-def janela():
-    from cnd.desktop.app import Aplicativo
-
-    app = Aplicativo()
-    app.withdraw()
-    yield app
-    app.destroy()
 
 
 def _medir(janela, monkeypatch, largura_tela, altura_tela):

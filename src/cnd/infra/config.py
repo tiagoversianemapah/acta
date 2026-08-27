@@ -15,7 +15,15 @@ from cnd.core.recuperacao import ParametrosRecuperacao
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.db import RAIZ_PROJETO
 
-CAMINHO_PADRAO = RAIZ_PROJETO / "config.toml"
+# Normalmente o `config.toml` ao lado do programa. `CND_CONFIG` aponta para
+# outro arquivo — mesma ideia das outras variáveis `CND_*` — e é o que
+# permite rodar a suíte num checkout limpo, onde o `config.toml`
+# legitimamente não existe: ele é da INSTALAÇÃO, não do repositório.
+#
+# O arquivo continuar ausente continua sendo erro. Uma máquina sem config
+# não tem banco, nem senha, nem órgão ligado, e fingir que tem só adiaria a
+# descoberta para o meio de um lote.
+CAMINHO_PADRAO = Path(os.environ.get("CND_CONFIG") or RAIZ_PROJETO / "config.toml")
 
 
 @dataclass(frozen=True)

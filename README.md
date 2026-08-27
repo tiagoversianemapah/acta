@@ -71,10 +71,28 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-pytest                         # 258 testes, sem rede e sem portal
+pytest                         # 560 testes, sem rede e sem portal
 ruff check src tests empacotar # sem apontamentos
 python empacotar/construir.py  # gera o ACTA.exe e os atalhos
 ```
+
+O pacote gerado assim **não leva o CRF**: o Playwright vive no extra
+`navegador`, que `[dev]` não traz. É de propósito — ele acrescenta ~140 MB
+(o driver, não o navegador: o adapter usa o Edge que a máquina já tem) e o
+adapter ativo da Receita não precisa dele. Para a construção completa:
+
+```powershell
+pip install -e ".[dev,navegador]"
+```
+
+Sem `config.toml` na raiz, a construção copia o `config.exemplo.toml` e avisa
+o que falta preencher — o config é da instalação, não do repositório.
+
+A suíte roda em checkout limpo, **sem `config.toml`**: ele é da instalação e
+não é versionado, então os testes caem no `config.exemplo.toml` sozinhos
+(`CND_CONFIG` aponta para outro arquivo, se você quiser). E o `pytest` testa o
+`src/` deste repositório, e não o ACTA instalado na máquina — que é o pior tipo
+de suíte verde, a que não olhou para o código que se acabou de escrever.
 
 ## Como funciona
 
@@ -125,7 +143,9 @@ Certidão positiva é **relatada mas não baixada** — entregar uma positiva ju
 com as negativas é o erro que ninguém percebe até o cliente perceber.
 
 A idempotência olha a **data de emissão no mês corrente**, não a validade: a
-certidão vale 180 dias, mas quem recebe exige emissão do mês.
+certidão vale 180 dias, mas quem recebe exige emissão do mês. E vale **dentro
+da mesma planilha**: mandar a mesma lista de novo é pedir certidões novas, não
+um relatório de que já existem.
 
 ### Várias máquinas, sem servidor
 
@@ -186,6 +206,22 @@ pedindo a senha de acesso ou a confirmação de quem estiver na outra ponta.
   páginas, downloads e API. Só `/ping` fica aberto, e ele devolve apenas sinal de
   vida e tamanho da fila. Navegador entra por Basic, o aplicativo por cabeçalho
   próprio.
+- **Comando só vale a partir da tela do próprio painel.** Basic é credencial
+  *ambiente*: uma vez digitada, o navegador a reenvia sozinha em qualquer
+  pedido para aquela máquina — inclusive num formulário escondido numa página
+  qualquer. Por isso todo `POST` confere de onde veio (`Sec-Fetch-Site`,
+  `Origin`, `Referer`) e recusa o que vem de fora. Vale mesmo sem senha
+  configurada, que é o caso pior: aí não há nem senha a exigir, e
+  `http://127.0.0.1:8000` é endereço conhecido. O aplicativo de mesa não é
+  navegador, não manda nenhum desses cabeçalhos, e continua comandando.
+- **Atualizar pela rede exige o SHA-256 do pacote**, e só aceita origem de
+  endereço interno (incluída a faixa `100.64.0.0/10` da VPN). O fluxo baixa um
+  zip por HTTP simples e o transforma em `ACTA.exe` e `cnd.exe`: conferir o
+  hash é a única coisa entre o que o console publicou e o que passa a rodar na
+  máquina. O `empacotar/publicar.py` imprime o hash junto com o endereço, e a
+  conferência acontece **antes** de qualquer processo ser parado — falhar ali
+  não deixa a instalação pela metade, que é o único estado do qual não se sai
+  pela rede.
 - **O `config.toml` não vai para o controle de versão.** Ele é da instalação, não
   do programa: traz a senha do painel, o endereço da máquina na rede e o número
   do AnyDesk dela. Versionado, a senha viajava junto — foi retirada do histórico

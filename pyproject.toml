@@ -49,6 +49,11 @@ testpaths = ["tests"]
 # --strict-markers: marcador com nome errado vira erro, e não teste que
 # silenciosamente não roda.
 addopts = "--strict-markers"
+# O `cnd` deste repositório, e não o que estiver instalado na máquina. Sem
+# isto, `pytest` puro numa máquina que já tem o ACTA instalado testava a
+# OUTRA cópia — o pior tipo de suíte verde, a que não olhou para o código
+# que se acabou de escrever.
+pythonpath = ["src"]
 
 [tool.ruff]
 # 100 e não 88: o código já é escrito perto de 79, e as poucas linhas que
@@ -73,6 +78,12 @@ ignore = [
     # a regra que exige mensagem fora do raise atrapalha mais que ajuda.
     "EM101", "EM102",
 ]
+# Caracteres que a regra de "confundível" acusa e que aqui são o certo: o
+# travessão é pontuação portuguesa — e vem assim na faixa do portal da
+# Receita, que o adapter compara letra a letra — e o `×` é o sinal de
+# multiplicação que a tela mostra em "12× é um CPF". Trocá-los por `-` e
+# `x` estragaria texto correto para calar um aviso.
+allowed-confusables = ["–", "×"]
 
 [tool.ruff.lint.per-file-ignores]
 # Teste tem nome longo de propósito: o nome é a documentação do caso.

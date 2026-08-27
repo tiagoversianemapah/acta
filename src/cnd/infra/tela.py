@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PIL import ImageGrab
+from PIL import ImageGrab, ImageStat
 
 
 def capturar(caminho: Path | None = None):
@@ -35,12 +35,21 @@ def cor_media(imagem, x: int, y: int, raio: int = 6) -> tuple[int, int, int]:
     topo = max(0, y - raio)
     direita = min(largura, x + raio + 1)
     baixo = min(altura, y + raio + 1)
-    recorte = imagem.crop((esquerda, topo, direita, baixo)).convert("RGB")
-    pixels = list(recorte.getdata())
-    if not pixels:
+    if direita <= esquerda or baixo <= topo:
         return (0, 0, 0)
-    n = len(pixels)
-    return tuple(sum(canal[i] for canal in pixels) // n for i in range(3))
+    recorte = imagem.crop((esquerda, topo, direita, baixo)).convert("RGB")
+    # `ImageStat` e não `list(getdata())`: dá a mesma média por canal sem
+    # materializar a lista de pixels, e `Image.getdata` está marcado para
+    # sair no Pillow 14 (out/2027). O robô cego chama isto a cada leitura
+    # de tela — é o caminho quente, e é o que ele usa para enxergar.
+    # Soma inteira dividida por contagem, e não `.mean`: a média do Pillow
+    # é float, e `int()` de um 41.999999999999996 devolveria 41 onde a
+    # conta exata dá 42. O robô decide o estado da tela comparando cor com
+    # margem — um canal a menos por arredondamento é ruído desnecessário
+    # justo no sentido dele.
+    estatistica = ImageStat.Stat(recorte)
+    return tuple(int(soma) // quantos for soma, quantos
+                 in zip(estatistica.sum[:3], estatistica.count[:3], strict=True))
 
 
 def brilho(cor: tuple[int, int, int]) -> float:

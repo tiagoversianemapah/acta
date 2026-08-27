@@ -140,6 +140,72 @@ def test_sem_orgao_traz_todos(conn, lote, tmp_path):
     assert certidoes.max_row == 3, "cabeçalho + duas empresas"
 
 
+def test_o_resumo_conta_o_mesmo_que_as_abas(conn, lote, tmp_path):
+    """O Resumo pedia os números SEM recorte nenhum: em agosto, a linha
+    "Total" somava julho junto e não batia com a aba logo abaixo.
+
+    Um resumo que discorda das abas do próprio arquivo é o pior defeito
+    possível num relatório — quem confere para de confiar no arquivo
+    inteiro, inclusive na parte que estava certa.
+    """
+    for documento, quando, nome in (
+        ("11222333000181", "2026-07-20T10:00:00.000Z", "EMPRESA DE JULHO"),
+        ("11444777000161", "2026-08-20T10:00:00.000Z", "EMPRESA DE AGOSTO"),
+    ):
+        job = criar_job(conn, lote, documento=documento, orgao="RFB_PJ",
+                        nome=nome)
+        conn.execute(
+            "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? "
+            "WHERE id = ?",
+            (Status.DONE, Desfecho.NEGATIVA, quando, job))
+
+    livro = load_workbook(
+        gerar(conn, Recorte("2026-08"), tmp_path / "agosto.xlsx"))
+
+    # Linha 6 é o cabeçalho da tabela por órgão; a 7 é o primeiro órgão.
+    resumo = livro["Resumo"]
+    assert resumo["A6"].value == "Órgão" and resumo["B6"].value == "Total"
+    assert resumo["A7"].value == "RFB_PJ"
+    assert resumo["B7"].value == 1, "total do MÊS, não do banco inteiro"
+    assert resumo["C7"].value == 1
+    assert livro["Certidões"].max_row == 2, "cabeçalho + a empresa de agosto"
+
+
+def test_o_cabecalho_pintado_e_o_cabecalho(conn, lote, tmp_path):
+    """O número fixo apontava para a primeira linha de ÓRGÃO: a Receita
+    Federal saía pintada de azul escuro, como se fosse título, e o
+    cabeçalho de verdade sem destaque nenhum."""
+    job = criar_job(conn, lote, documento="11222333000181", orgao="RFB_PJ")
+    conn.execute(
+        "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? WHERE id = ?",
+        (Status.DONE, Desfecho.NEGATIVA, "2026-08-20T10:00:00.000Z", job))
+
+    resumo = load_workbook(
+        gerar(conn, Recorte("2026-08"), tmp_path / "pintura.xlsx"))["Resumo"]
+
+    assert resumo["A6"].font.color.rgb.endswith("FFFFFF"), "o cabeçalho é claro"
+    assert not resumo["A7"].font.color, "a linha do órgão é linha de dados"
+
+
+def test_o_resumo_nao_lista_orgao_que_nao_trabalhou_no_mes(conn, lote,
+                                                           tmp_path):
+    """Sem recorte, a lista de órgãos vinha do banco inteiro — e a planilha
+    de agosto trazia uma linha da SEFAZ que só rodou em julho, com os
+    números daquele mês."""
+    job = criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_GO",
+                    nome="EMPRESA ESTADUAL")
+    conn.execute(
+        "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? WHERE id = ?",
+        (Status.DONE, Desfecho.NEGATIVA, "2026-07-20T10:00:00.000Z", job))
+
+    livro = load_workbook(
+        gerar(conn, Recorte("2026-08"), tmp_path / "vazio.xlsx"))
+
+    orgaos = [linha[0] for linha in livro["Resumo"].iter_rows(
+        min_row=8, max_col=1, values_only=True)]
+    assert "SEFAZ_GO" not in orgaos
+
+
 def test_mes_anterior_fica_de_fora(conn, lote, tmp_path):
     """A emissão é mensal: a planilha de agosto não leva o que saiu em
     julho, senão o cliente recebe certidão vencida na conferência."""

@@ -20,22 +20,6 @@ SEM_ANYDESK = Maquina(nome="PC-CND-09", url="http://192.168.0.29:8000",
 LOCAL = Maquina(nome="MEU-PC", url="")
 
 
-@pytest.fixture(scope="module")
-def janela():
-    """Uma janela só para o arquivo inteiro.
-
-    Abrir e fechar várias raízes do Tk no mesmo processo falha na segunda —
-    o interpretador Tcl não volta ao estado inicial. Como cada teste começa
-    redesenhando os cartões do zero, reaproveitar não mistura nada.
-    """
-    from cnd.desktop.app import Aplicativo
-
-    app = Aplicativo()
-    app.withdraw()          # existe, responde, mas não aparece na tela
-    yield app
-    app.destroy()
-
-
 def _rotulos(janela) -> list:
     """Os rótulos clicáveis dos cartões desenhados.
 

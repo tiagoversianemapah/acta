@@ -159,7 +159,7 @@ def test_oito_workers_disputando_nao_quebram_nem_duplicam(tmp_path):
                 if job is not None:
                     pegos.append(job.job_id)
                 return
-        except Exception as erro:      # noqa: BLE001 — o teste quer ver
+        except Exception as erro:
             erros.append(erro)
         finally:
             conexao.close()

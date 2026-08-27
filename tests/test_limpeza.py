@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from cnd.core.modelos import Status
 from cnd.infra import limpeza
-
 from tests.conftest import criar_job
 
 
@@ -82,6 +81,54 @@ def test_pasta_inexistente_nao_quebra(conn, tmp_path):
     resultado = limpeza.zerar(conn, (tmp_path / "nao-existe",))
 
     assert resultado.arquivos == 0
+
+
+def test_zerar_funciona_com_automacao_estacionada(conn, tmp_path):
+    """`fila_controle` referencia `lote`: fora da lista, ela derrubava a
+    zeragem inteira com FOREIGN KEY constraint failed.
+
+    E como a limpeza é uma transação só, não sobrava meio banco apagado:
+    sobrava o banco intacto e um botão que simplesmente não funcionava,
+    em toda máquina onde alguém já tivesse estacionado uma automação.
+    """
+    from cnd.core import controle
+
+    certidoes, evidencias = _com_trabalho(conn, tmp_path)
+    lote = conn.execute("SELECT id FROM lote").fetchone()["id"]
+    controle.definir(conn, lote, "FAKE", controle.ESTACIONADA)
+
+    limpeza.zerar(conn, (certidoes, evidencias))
+
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM fila_controle").fetchone()["n"] == 0
+
+
+def test_zerar_nao_deixa_contagem_de_recuperacao_para_tras(conn, tmp_path):
+    """Ela conta rodadas do lote que acabou de ser apagado — mantida,
+    mentiria para o robô do lote seguinte."""
+    certidoes, evidencias = _com_trabalho(conn, tmp_path)
+    conn.execute(
+        "INSERT INTO recuperacao (orgao, rodadas, atualizado_em) "
+        "VALUES ('RFB_PJ', 2, '2026-08-14T10:00:00.000Z')")
+
+    limpeza.zerar(conn, (certidoes, evidencias))
+
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM recuperacao").fetchone()["n"] == 0
+
+
+def test_a_lista_cobre_o_schema_inteiro(conn):
+    """A lista foi escrita de memória uma vez e envelheceu em silêncio:
+    `fila_controle` e `recuperacao` nasceram depois dela, e ninguém tinha
+    como perceber. Tabela nova sem decisão explícita quebra este teste."""
+    do_banco = {
+        linha["name"] for linha in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name NOT LIKE 'sqlite_%'")
+    }
+    assert do_banco - set(limpeza.TABELAS) == set(), (
+        "tabela no schema e fora de limpeza.TABELAS: ou ela some ao zerar, "
+        "ou é sobrevivente de propósito — e aí entra na exceção aqui")
 
 
 def test_o_proximo_lote_volta_a_ser_o_numero_1(conn, tmp_path):
