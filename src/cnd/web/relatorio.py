@@ -215,9 +215,13 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
         [],
         ["Órgão", "Total", "Concluídos", "Falhados", "Pendentes", "% concluído"],
     ]
+    linha_dos_orgaos = len(resumo_linhas)      # 1-indexado, como no Excel
+    # O MESMO recorte das abas de cima. Sem o mês aqui, a planilha de agosto
+    # trazia as abas com agosto e a linha de total com o ano inteiro — e
+    # listava órgão que não trabalhou no mês, com números de outro.
     for orgao in ([recorte.orgao] if recorte.orgao
-                  else consultas.orgaos_do_lote(conn, None)):
-        r = consultas.resumo(conn, orgao, None)
+                  else consultas.orgaos_do_lote(conn, None, recorte.mes)):
+        r = consultas.resumo(conn, orgao, None, recorte.mes)
         resumo_linhas.append([orgao, r.total, r.concluidos, r.falhados,
                               r.pendentes, f"{r.percentual:.1f}%"])
 
@@ -244,12 +248,12 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     for celula in planilha["A"]:
         if celula.value and not isinstance(celula.value, (int, float)):
             celula.font = Font(bold=True)
-    # As duas linhas de cabeçalho de tabela ganham fundo e texto claro. A
-    # segunda tem de ser guardada antes de listar os desfechos: contada
-    # pelo tamanho final da lista, ela só calhava de acertar quando havia
-    # exatamente um desfecho, e nos outros casos pintava uma linha de
-    # dados no meio da tabela.
-    for numero_da_linha in (7, linha_dos_desfechos):
+    # As duas linhas de cabeçalho de tabela ganham fundo e texto claro. As
+    # DUAS são contadas na hora em que são escritas, e nenhuma é chutada:
+    # o número fixo 7 apontava para a primeira linha de ÓRGÃO — a tabela
+    # começa na 6 —, então o cabeçalho ficava sem destaque e a Receita
+    # Federal aparecia pintada de azul escuro como se fosse título.
+    for numero_da_linha in (linha_dos_orgaos, linha_dos_desfechos):
         for celula in planilha[numero_da_linha]:
             if celula.value:
                 celula.font = CABECALHO
@@ -259,7 +263,8 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     for coluna, largura in zip("ABCDEF", (34, 30, 14, 14, 14, 14),
                                strict=False):
         planilha.column_dimensions[coluna].width = largura
-    for linha_de_dados in planilha.iter_rows(min_row=8, min_col=3):
+    for linha_de_dados in planilha.iter_rows(min_row=linha_dos_orgaos + 1,
+                                             min_col=3):
         for celula in linha_de_dados:
             celula.alignment = Alignment(horizontal="center")
     planilha.freeze_panes = "A2"
