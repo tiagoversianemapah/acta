@@ -2,14 +2,29 @@
 
 ## 1. Visão em um parágrafo
 
-Um **monólito modular** em Python num único servidor: a ingestão lê a planilha e
-materializa *jobs* num banco SQLite que também funciona como fila; um
-**orquestrador** distribui jobs a **workers** de browser (Playwright), cada um
-executando o **adapter** do órgão correspondente; o resultado de cada tentativa
-atualiza a máquina de estados do job; um processo web (FastAPI) serve o
-**dashboard** e o **relatório de saída** lendo o mesmo banco. Não há broker de
-mensagens, nem microserviços, nem dependência externa de infraestrutura — ver
+Um **monólito modular** em Python, numa estação Windows comum: a ingestão lê a
+planilha e materializa *jobs* num banco SQLite que também funciona como fila; um
+**orquestrador** distribui jobs a **workers**, cada um executando o **adapter**
+do órgão correspondente; o resultado de cada tentativa atualiza a máquina de
+estados do job; um processo web (FastAPI) serve o **painel** e o **relatório de
+saída** lendo o mesmo banco. Não há broker de mensagens, nem microserviços, nem
+dependência externa de infraestrutura — ver
 [ADR-002](adr/ADR-002-sqlite-fila-no-banco.md).
+
+**Como o worker toca o portal é decisão de cada adapter, não da arquitetura** —
+é justamente o que a fronteira do adapter isola. Hoje há duas técnicas em uso, e
+a diferença nasceu do portal e não de preferência: a Receita **detecta**
+automação de navegador (teste A/B em 07/08/2026, mesmo CNPJ e mesmo IP — a
+consulta manual passou e a do robô tomou bloqueio 106), então o `rfb_cego` abre
+o Edge comum e mexe no **mouse e no teclado do Windows** por cima, via
+`SendInput`, lendo a tela por pixel. O CRF da Caixa usa ShieldSquare/Radware,
+que barra `urllib` mas **não** barrou o Playwright dirigindo o Edge, então o
+`crf` é **por elemento** — sem calibragem e sem coordenada de tela. Ver
+[ADR-001](adr/ADR-001-python-playwright.md) e [ADR-003](adr/ADR-003-adapter-por-orgao.md).
+
+Consequência prática: **não é servidor**. O robô cego assume o mouse e o teclado
+de verdade, e por isso a máquina precisa de sessão gráfica logada e destravada —
+ninguém pode usá-la enquanto ele roda.
 
 ## 2. Componentes
 
@@ -18,12 +33,15 @@ flowchart LR
     XLSX[Planilha Excel] --> ING[Ingestão]
     ING --> DB[(SQLite\njobs + tentativas + certidões)]
     DB <--> ORQ[Orquestrador\npacing + circuit breaker]
-    ORQ --> W1[Worker browser 1\nPlaywright + perfil persistente]
-    ORQ --> W2[Worker browser N]
+    ORQ --> W1[Worker 1]
+    ORQ --> W2[Worker N]
     W1 --> AD[Adapter do órgão\nRFB / CRF / ...]
-    AD --> SITE[Portal do órgão]
+    AD --> CEGO[rfb_cego\nEdge + mouse e teclado reais]
+    AD --> CRF[crf\nPlaywright no Edge instalado]
+    CEGO --> SITE[Portal do órgão]
+    CRF --> SITE
     AD --> PDF[Storage de PDFs\nsistema de arquivos]
-    DB --> WEB[FastAPI\ndashboard + relatório Excel]
+    DB --> WEB[FastAPI\npainel + relatório Excel]
     WEB --> USER([Operador])
 ```
 
@@ -56,13 +74,22 @@ Processo único, dono de todas as decisões de **quando** e **o quê** executar:
 - Recupera jobs órfãos (`RUNNING` sem worker vivo) na subida (RNF-08).
 - Aplica a política de retry/backoff da [doc 04](04-ciclo-de-vida-retry-captcha.md).
 
-### 2.4 Workers de browser
+### 2.4 Workers
 
-- Playwright + Chromium **headed** rodando em display virtual (xvfb no Linux) —
-  headless puro tem fingerprint mais detectável.
-- **Um perfil persistente por worker** (`user-data-dir` próprio): cookies e
-  storage sobrevivem entre jobs e execuções, imitando um usuário recorrente.
-- Concorrência inicial: **1 worker por órgão** (config `workers_por_orgao`).
+- Concorrência inicial: **1 worker por órgão** (`[orgaos.*] workers`).
+- **Receita Federal (`rfb_cego`)** — sem navegador automatizado. O Edge comum é
+  dirigido por `SendInput`: cursor em curva de Bézier com tremor, cliques do
+  sistema, digitação tecla por tecla (a máscara do campo de CNPJ é acionada por
+  tecla, e preencher de uma vez faz o portal recusar documento válido). Enxerga
+  por cor de pixel — véu do modal, faixa amarela de aviso, faixa rosa de erro —
+  e a calibragem é guardada em **proporções da janela** (0..1), o que a faz
+  servir em telas de resolução diferente.
+- **CRF da Caixa (`crf`)** — Playwright dirigindo o **Edge instalado**
+  (`channel="msedge"`), não um Chromium baixado: por elemento, sem calibragem.
+- **Perfil do Edge**: a Receita devolve cookies a cada emissão, eles se acumulam
+  no perfil e, passado o limite do nginx, TODA requisição ao domínio volta
+  `400 Request Header Or Cookie Too Large`. O adapter apaga os cookies daquele
+  domínio e refaz a consulta — ver `infra/perfil_edge.py`.
   Escalar só com dados do dashboard mostrando taxa de captcha baixa.
 - O worker não conhece regra de negócio: recebe um job, invoca o adapter, devolve
   um `ResultadoTentativa`.
@@ -135,36 +162,51 @@ sequenceDiagram
     O->>O: acompanha no dashboard; exporta Excel ao final
 ```
 
-## 4. Estrutura de diretórios proposta
+## 4. Estrutura de diretórios
 
 ```
-cnd-app/
+acta/
 ├── pyproject.toml
-├── config.toml                # pacing, workers, limites de retry — sem segredo em código
+├── config.exemplo.toml        # o que É versionado: os comentários, sem valor preenchido
+├── config.toml                # o da INSTALAÇÃO — senha, endereço, AnyDesk (fora do git)
 ├── src/cnd/
 │   ├── ingestao/              # leitura Excel, validação de documentos
-│   ├── core/                  # domínio: entidades, máquina de estados, fila
-│   ├── orquestrador/          # loop principal, pacing, circuit breaker
+│   ├── core/                  # domínio: entidades, máquina de estados, fila, controle
+│   ├── orquestrador/          # loop principal, pacing, circuit breaker, vigilância
 │   ├── adapters/
 │   │   ├── base.py            # Protocol + ResultadoTentativa
-│   │   ├── rfb_pj.py          # Fase 1
+│   │   ├── rfb_cego.py        # Receita Federal PJ, por mouse e teclado reais ← ativo
+│   │   ├── rfb_pj.py          # o mesmo portal por Playwright — DETECTADO, desligado
+│   │   ├── calibragem.py      # ensina ao robô cego onde ficam os campos
 │   │   └── ...                # crf.py, rfb_pf.py, sefaz_go.py, ... (fases 2+)
-│   ├── web/                   # FastAPI: dashboard, export Excel
-│   └── infra/                 # db, logging, storage de arquivos
-├── tests/
-│   ├── unit/                  # validação de documentos, máquina de estados, fila
-│   └── adapters/              # testes contra HTML gravado (fixtures), sem rede
-└── data/                      # cnd.db, certidoes/, evidencias/  (fora do git)
+│   ├── web/                   # FastAPI: painel, API, relatório Excel, ZIP
+│   ├── desktop/               # o aplicativo de mesa e o acesso remoto
+│   ├── infra/                 # db, config, logging, tela, entrada, Teams, arquivos
+│   └── lancador.py            # ponto de entrada do ACTA.exe
+├── empacotar/                 # construir.py (PyInstaller) e publicar.py (rede local)
+├── tests/                     # tudo num nível só, sem rede e sem portal
+└── data/                      # cnd.db, certidoes/, evidencias/, calibragem/ (fora do git)
 ```
 
 ## 5. Execução e deploy
 
-- **Processos:** `cnd orquestrador` e `cnd web` (dois serviços). No Linux:
-  systemd units ou Docker Compose; no Windows Server: serviços via NSSM ou
-  Task Scheduler com restart automático.
-- **Configuração:** `config.toml` versionado com defaults + overrides locais;
-  nada sensível no repositório.
-- **Backup:** o estado inteiro é `data/` (banco + PDFs) — copiar o diretório é o
-  backup completo.
-- **Atualização de adapter quebrado:** deploy é `git pull` + restart; o circuit
-  breaker já terá pausado o órgão afetado, os demais seguem rodando.
+- **Processos:** `cnd rodar` (o robô) e `cnd painel` (o painel web), separados de
+  propósito — reiniciar um não para o outro. Windows comum, não Windows Server:
+  o robô cego move o mouse de verdade e precisa de uma sessão gráfica logada e
+  destravada. Quem sobe o painel na inicialização é o Agendador de Tarefas
+  (tarefa `ACTA Painel`), e não um serviço.
+- **Configuração:** o `config.toml` **não** vai para o controle de versão. Ele é
+  da instalação, não do programa: traz a senha do painel, o endereço da máquina
+  e o número do AnyDesk dela. Versionado, a senha viajava junto — foi retirada
+  do histórico inteiro em 18/08/2026, antes de o repositório ir para o GitHub.
+  O que se versiona é o `config.exemplo.toml`, com os mesmos comentários e nenhum
+  valor preenchido. Segredo mesmo vai por variável de ambiente (`CND_REDE_SENHA`,
+  `CND_TEAMS_WEBHOOK`, `CND_GRAPH_SECRET`, `CND_SMTP_SENHA`), que têm prioridade
+  sobre o arquivo.
+- **Backup:** o estado inteiro é `data/` (banco + PDFs + calibragem) — copiar o
+  diretório é o backup completo.
+- **Atualização de adapter quebrado:** não há `git pull` na máquina do robô, que
+  roda a pasta empacotada. O console publica o pacote na rede local
+  (`empacotar/publicar.py`) e o painel de cada máquina o baixa e troca os
+  arquivos, conferindo o SHA-256 antes — ver docs/07. O circuit breaker já terá
+  pausado o órgão afetado; os demais seguem rodando.

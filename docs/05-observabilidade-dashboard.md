@@ -90,15 +90,26 @@ primário de incidente; o dashboard é para acompanhamento ativo.
 ### Detecção de "parou de funcionar" (heartbeat)
 
 O orquestrador grava um timestamp na tabela `heartbeat` a cada 60 s. O processo
-`cnd web` verifica a cada minuto: heartbeat parado há mais de 5 min ⇒ e-mail de
-"orquestrador fora do ar" + banner vermelho no dashboard. Como são dois
+do painel (`cnd painel`) verifica a cada minuto: heartbeat parado há mais de
+5 min ⇒ aviso de "o robô parou" + banner vermelho na tela. Como são dois
 processos independentes, um vigia o outro; para o caso de a máquina inteira
-cair, os dois serviços sobem automaticamente com o boot (systemd/NSSM) e o
-primeiro e-mail após a subida informa o reinício.
+cair, o painel sobe com o boot pelo Agendador de Tarefas (`ACTA Painel`).
+
+O aviso só sai **se houver trabalho na fila**. O robô não é um serviço de pé o
+ano inteiro: é tarefa mensal, e ficar parado é o estado normal em uns 28 dias
+de cada 30 — cobrar sinal de vida sempre produziria alarme falso quase todo
+dia. Parada pedida por uma pessoa também não é incidente, e não é desfeita
+sozinha (ver `web/comandos.parada_manual_ativa`).
 
 Anti-spam: cada tipo de alerta tem supressão de repetição (não reenviar o mesmo
-alerta em menos de 30 min) e e-mail de "normalizado" quando a condição se
-resolve.
+alerta em menos de 30 min), teto geral de envios por hora e aviso de
+"normalizado" quando a condição se resolve.
 
-E-mail via SMTP simples configurado no `config.toml` (destinatários em lista);
-sem dependência de serviço externo de alerta.
+O canal padrão é **webhook de canal do Microsoft Teams**, e não e-mail: fica
+dentro do tenant da empresa, não exige credencial nem cadastro na TI, e nenhum
+dado de cliente sai do controle dela (RNF-06). Há três alternativas por
+`[alertas] metodo` — `graph` (e-mail por aplicativo no Entra ID), `smtp`
+(usuário e senha; não funciona com dois fatores) e `relay` (Direct Send, que
+falha o SPF do domínio e a Microsoft vem desativando: evitar). Os segredos vão
+por variável de ambiente (`CND_TEAMS_WEBHOOK`, `CND_GRAPH_SECRET`,
+`CND_SMTP_SENHA`), que têm prioridade sobre o `config.toml`.

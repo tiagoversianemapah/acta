@@ -118,7 +118,7 @@ FRASES_BLOQUEIO_TEXTO = (
 # Página do nginx, servida antes de a aplicação do portal rodar. Não é
 # recado da Receita sobre a empresa: é o cabeçalho de cookies da NOSSA
 # sessão passando do limite do servidor. Some ao apagar os cookies do
-# domínio — ver infra/cookies.py.
+# domínio — ver infra/perfil_edge.py.
 FRASES_COOKIE_GRANDE = (
     "request header or cookie too large",
     "400 bad request",
