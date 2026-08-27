@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from cnd.core.modelos import Status
 from cnd.web import consultas
-
 from tests.conftest import criar_job
 
 

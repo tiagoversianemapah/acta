@@ -98,7 +98,7 @@ def test_aba_de_nome_livre_roda_a_automacao_escolhida(painel, planilha):
     from cnd.infra.db import conectar_leitura
     with conectar_leitura(modulo.cfg.banco) as conn:
         linhas = conn.execute("SELECT orgao FROM job").fetchall()
-    assert [l["orgao"] for l in linhas] == ["RFB_PJ"]
+    assert [linha["orgao"] for linha in linhas] == ["RFB_PJ"]
 
 
 def test_o_arquivo_sai_do_disco_ao_confirmar(painel, planilha):

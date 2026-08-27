@@ -94,8 +94,8 @@ def listar(conn: sqlite3.Connection,
             "SELECT lote_id, orgao, situacao, prioridade FROM fila_controle"
             " WHERE lote_id = ?", (lote_id,),
         ).fetchall()
-    return [Controle(l["lote_id"], l["orgao"], l["situacao"],
-                     int(l["prioridade"])) for l in linhas]
+    return [Controle(linha["lote_id"], linha["orgao"], linha["situacao"],
+                     int(linha["prioridade"])) for linha in linhas]
 
 
 def _gravar(conn: sqlite3.Connection, lote_id: int, orgao: str,

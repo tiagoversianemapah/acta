@@ -108,8 +108,7 @@ class TestVigia:
     def _montar(self, tmp_path, banco, p):
         from cnd.core.breaker import ParametrosBreaker
         from cnd.core.ritmo import ParametrosRitmo
-        from cnd.infra.config import (Config, ConfigAlertas, ConfigOrgao,
-                                      ParametrosRetry)
+        from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 
         orgao = ConfigOrgao(
             codigo="RFB_PJ", ativo=True, adapter="fake", workers=1,

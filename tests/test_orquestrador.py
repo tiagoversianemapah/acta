@@ -17,7 +17,10 @@ from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 from cnd.infra.db import caminho_pedido_parada
 from cnd.orquestrador.loop import (
-    Contexto, _consumir_pedido_de_parada, _nada_a_fazer, executar,
+    Contexto,
+    _consumir_pedido_de_parada,
+    _nada_a_fazer,
+    executar,
 )
 from tests.conftest import criar_job
 
