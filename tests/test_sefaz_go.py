@@ -448,3 +448,82 @@ class TestFerramentaDeConferencia:
 
         assert cfg is not None
         assert "SEFAZ_GO" in cfg.orgaos
+
+
+# Transcrito de uma certidao REAL emitida em 28/08/2026, conferida contra o
+# PDF. Vale mais que qualquer exemplo inventado: foi ela que derrubou a
+# suposicao de que existia um titulo "... DIVIDA ATIVA - NEGATIVA". Nao
+# existe — o que o documento tem e um bloco DESPACHO.
+CERTIDAO_REAL_NEGATIVA = """NOME:                                     CNPJ
+EMPRESA DE TESTE LTDA                     11.222.333/0001-81
+
+DESPACHO (Certidao valida para a matriz e suas filiais):
+
+                          NAO CONSTA DEBITO
+
+FUNDAMENTO LEGAL:
+Esta certidao e expedida nos termos do Paragrafo 2 do artigo 1, combinado com a
+alinea 'b' do inciso II do artigo 2, ambos da IN nr. 405/1999-GSF, de 16 de de
+dezembro de 1999, alterada pela IN nr. 828/2006-GSF, de 13 de novembro de 2006 e
+constitui documento habil para comprovar a regularidade fiscal perante a Fazenda
+Publica Estadual, nos termos do inciso III do art. 68 da Leinr. 14.133, de 2021.
+
+SEGURANCA:
+Certidao VALIDA POR 120 DIAS.
+A autenticidade pode ser verificada pela INTERNET, no endereco:
+https://goias.gov.br/economia/
+Fica ressalvado o direito de a Fazenda Publica Estadual inscrever na divida
+ativa e COBRAR EVENTUAIS DEBITOS QUE VIEREM A SER APURADOS.
+
+VALIDADOR:  5.555.451.586.243                      EMITIDA VIA INTERNET
+
+SGTI-SEFAZ:   LOCAL E DATA: GOIANIA, 28 AGOSTO DE 2026      HORA: 17:1:40:2
+"""
+
+
+class TestCertidaoReal:
+    """Contra o documento de verdade, e nao contra o que eu supunha.
+
+    O rodape desta certidao NEGATIVA fala em "inscrever na divida ativa" e
+    em "COBRAR EVENTUAIS DEBITOS" — texto que aparece em toda certidao,
+    inclusive nesta. Classificar pelo documento inteiro era conviver com
+    isso; classificar pelo DESPACHO resolve na origem.
+    """
+
+    def _resultado(self, texto, tmp_path, monkeypatch):
+        monkeypatch.setattr(sefaz_go, "_texto_pdf", lambda _c: texto)
+        alvo = tmp_path / "real.pdf"
+        alvo.write_bytes(b"%PDF-1.4")
+        return sefaz_go.ler_pdf(alvo, "conferencia")
+
+    def test_o_despacho_e_isolado_do_rodape(self):
+        normalizado = " ".join(
+            sefaz_go._sem_acento(CERTIDAO_REAL_NEGATIVA).split())
+        achado = sefaz_go.RE_DESPACHO.search(normalizado)
+
+        assert achado is not None, "o bloco DESPACHO precisa ser encontrado"
+        assert achado.group(1) == "nao consta debito"
+        assert "divida ativa" not in achado.group(1), "rodape entrou no escopo"
+
+    def test_a_certidao_real_e_negativa_e_entregavel(self, tmp_path, monkeypatch):
+        r = self._resultado(CERTIDAO_REAL_NEGATIVA, tmp_path, monkeypatch)
+
+        assert r.desfecho == Desfecho.NEGATIVA
+        assert r.desfecho in COM_PDF
+        assert r.caminho_pdf is not None, "o PDF tem de ser guardado"
+
+    def test_extrai_validade_de_120_dias_e_o_validador(self, tmp_path,
+                                                       monkeypatch):
+        r = self._resultado(CERTIDAO_REAL_NEGATIVA, tmp_path, monkeypatch)
+
+        assert r.validade == date(2026, 12, 26), "28/08 + 120 dias"
+        assert r.codigo_controle == "5.555.451.586.243"
+
+    def test_nao_ha_titulo_de_negativa_neste_documento(self):
+        """Registra a suposicao derrubada: o marcador de titulo nao casa
+        com o documento real, e quem decide e o DESPACHO."""
+        normalizado = " ".join(
+            sefaz_go._sem_acento(CERTIDAO_REAL_NEGATIVA).split())
+
+        assert not sefaz_go.RE_TITULO_NEGATIVA.search(normalizado)
+        assert not sefaz_go.RE_TITULO_POSITIVA.search(normalizado)

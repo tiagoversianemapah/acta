@@ -66,6 +66,17 @@ RE_TITULO_POSITIVA = re.compile(
     r"divida ativa\s*[-–]\s*positiva|certidao positiva")
 # "consta debito" que NAO seja o final de "nao consta debito".
 RE_CONSTA_DEBITO = re.compile(r"(?<!nao )consta debito")
+# O DESPACHO e a linha operativa da certidao - o que o Estado esta
+# afirmando sobre aquele contribuinte. Conferido num documento real em
+# 28/08/2026: entre "DESPACHO (Certidao valida para a matriz e suas
+# filiais):" e "FUNDAMENTO LEGAL:" vem so "NAO CONSTA DEBITO".
+#
+# Classificar por ele, e nao pelo texto inteiro, evita a armadilha do
+# rodape: "Fica ressalvado o direito de a Fazenda ... inscrever na divida
+# ativa e COBRAR EVENTUAIS DEBITOS QUE VIEREM A SER APURADOS" aparece em
+# TODA certidao, inclusive na negativa.
+RE_DESPACHO = re.compile(r"despacho[^:]*:\s*(.*?)\s*fundamento legal",
+                         re.DOTALL)
 RE_NUMERO_CERTIDAO = re.compile(r"NR\.\s*CERTID[AÃA]O:\s*N[ºO]\s*([0-9.]+)",
                                 re.IGNORECASE)
 RE_VALIDA_ATE = re.compile(r"V[AÁ]LID[AO]\s+AT[EÉ]\s+(\d{2}/\d{2}/\d{4})",
@@ -217,12 +228,13 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
         mensagem_portal=texto_tela.strip()[:500],
     )
 
-    # O TITULO manda. As frases "nao consta debito" e "consta debito" sao
-    # prosa do corpo, e uma certidao POSITIVA pode citar as duas ("nao
-    # consta debito de ICMS, porem consta de IPVA"). Como "consta debito" e
-    # substring de "nao consta debito", decidir pela prosa fazia uma
-    # positiva virar NEGATIVA - e negativa VAI no pacote do cliente, que e
-    # o erro que ninguem percebe ate o cliente perceber.
+    # A ordem e: DESPACHO, depois titulo, depois o texto inteiro. O
+    # DESPACHO e o que o Estado afirma sobre o contribuinte; o resto e
+    # cabecalho e rodape, e o rodape fala de divida ativa e de debitos em
+    # TODA certidao, inclusive na negativa.
+    despacho = RE_DESPACHO.search(normalizado)
+    escopo = despacho.group(1) if despacho else normalizado
+
     if "positiva com efeito" in normalizado:
         return ResultadoTentativa(Desfecho.CPEN, caminho_pdf=caminho, **comuns)
     if RE_TITULO_NEGATIVA.search(normalizado):
@@ -230,11 +242,10 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
     if RE_TITULO_POSITIVA.search(normalizado):
         return ResultadoTentativa(Desfecho.POSITIVA, evidencia=caminho, **comuns)
 
-    # Sem titulo reconhecido, a prosa decide - mas so quando ela e
-    # inequivoca. `(?<!nao )` impede que o "consta debito" de dentro de "nao
-    # consta debito" conte como debito.
-    nega = "nao consta debito" in normalizado
-    afirma = bool(RE_CONSTA_DEBITO.search(normalizado))
+    # `(?<!nao )` impede que o "consta debito" de dentro de "nao consta
+    # debito" conte como debito - um e substring do outro.
+    nega = "nao consta debito" in escopo
+    afirma = bool(RE_CONSTA_DEBITO.search(escopo))
     if nega and not afirma:
         return ResultadoTentativa(Desfecho.NEGATIVA, caminho_pdf=caminho, **comuns)
     if afirma and not nega:
@@ -244,7 +255,8 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
     # nao entregar do que entregar a positiva de alguem como negativa.
     log.warning("pdf_sefaz_go_nao_reconhecido",
                 extra={"arquivo": str(caminho), "ambiguo": nega and afirma,
-                       "trecho": normalizado[:250]})
+                       "achou_despacho": bool(despacho),
+                       "trecho": (escopo or normalizado)[:250]})
     return ResultadoTentativa(
         Desfecho.ERRO_TECNICO,
         mensagem_portal=("PDF da SEFAZ-GO diz negativa E positiva ao mesmo "
