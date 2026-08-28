@@ -304,3 +304,56 @@ class TestClassificacaoDoPdf:
     def test_pdf_irreconhecivel_nao_vira_certidao(self, tmp_path, monkeypatch):
         assert self._classificar("documento qualquer", tmp_path,
                                  monkeypatch) == Desfecho.ERRO_TECNICO
+
+
+class TestFerramentaDeConferencia:
+    """A ferramenta de subida do adapter (ferramentas/conferir_sefaz_go.py).
+
+    Ela existe para mostrar a PROVA por trás do desfecho, e não só o
+    desfecho. Se a tabela de marcadores divergir do que o classificador de
+    fato usa, ela passa a mentir justamente na hora em que alguém confia
+    nela para consertar um marcador.
+    """
+
+    @pytest.fixture
+    def ferramenta(self):
+        import importlib.util
+        import sys
+
+        raiz = Path(__file__).resolve().parent.parent
+        caminho = raiz / "ferramentas" / "conferir_sefaz_go.py"
+        spec = importlib.util.spec_from_file_location("conferir_sefaz_go", caminho)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["conferir_sefaz_go"] = modulo
+        spec.loader.exec_module(modulo)
+        return modulo
+
+    def test_a_prova_bate_com_a_decisao_na_positiva_ambigua(self, ferramenta):
+        """O caso que encontrou o defeito: as duas prosas acendem, e quem
+        decide é o título."""
+        texto = ("CERTIDAO DE DEBITO INSCRITO EM DIVIDA ATIVA - POSITIVA\n"
+                 "Nao consta debito de ICMS, porem CONSTA DEBITO de IPVA.")
+
+        marcados = dict(ferramenta._marcadores(texto))
+
+        assert marcados["titulo POSITIVA"] is True
+        assert marcados["titulo NEGATIVA"] is False
+        assert marcados["prosa 'nao consta debito'"] is True
+        assert marcados["prosa 'consta debito'"] is True
+
+    def test_a_prosa_negativa_nao_acende_o_marcador_de_debito(self, ferramenta):
+        """`consta debito` é substring de `nao consta debito` — se acendesse
+        aqui, a tabela sugeriria um débito que não existe."""
+        marcados = dict(ferramenta._marcadores("Nao consta debito inscrito"))
+
+        assert marcados["prosa 'nao consta debito'"] is True
+        assert marcados["prosa 'consta debito'"] is False
+
+    def test_mostra_a_linha_do_titulo_como_ela_veio(self, ferramenta):
+        texto = "GOVERNO DE GOIAS\nCERTIDAO DE DEBITO ... - NEGATIVA\nrodape"
+        assert "NEGATIVA" in ferramenta._trecho_do_titulo(texto)
+
+    def test_pdf_sem_texto_diz_isso_em_vez_de_ficar_mudo(self, ferramenta):
+        """PDF que é imagem escaneada não tem texto extraível, e o desfecho
+        vira "não reconhecido" sem explicar por quê."""
+        assert "CERTID" in ferramenta._trecho_do_titulo("pagina sem titulo")

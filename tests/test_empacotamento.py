@@ -107,6 +107,16 @@ class TestSpec:
         compile(fonte, "acta.spec", "exec")
 
 
+def test_o_ruff_documentado_cobre_todo_o_codigo_do_repositorio():
+    """Pasta fora do comando do README é pasta que ninguém confere: o
+    apontamento só aparece para quem rodar o comando completo por acaso."""
+    raiz = RAIZ
+    texto = (raiz / "README.md").read_text(encoding="utf-8")
+    linha = next(li for li in texto.splitlines() if li.startswith("ruff check"))
+    for pasta in ("src", "tests", "empacotar", "ferramentas"):
+        assert pasta in linha, f"{pasta} fora do ruff documentado"
+
+
 def test_o_readme_manda_instalar_o_extra_para_o_pacote_completo():
     texto = (RAIZ / "README.md").read_text(encoding="utf-8")
     assert '".[dev,navegador]"' in texto
