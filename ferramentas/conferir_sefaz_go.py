@@ -91,6 +91,12 @@ def _trecho_do_titulo(texto_pdf: str) -> str:
     return "(nenhuma linha com 'CERTID' — o PDF pode estar sem texto extraível)"
 
 
+def _linha(indice: int, total: int, documento: str, resultado) -> None:
+    """Uma linha por CNPJ. Numa rodada de centenas, o bloco detalhado de
+    cada um vira parede de texto e esconde justamente o que se procura."""
+    print(f"  [{indice:>3}/{total}] {formatar(documento):20} {resultado.desfecho}")
+
+
 def _relatar(rotulo: str, resultado, texto_pdf: str | None) -> None:
     _regua(rotulo)
     print(f"  desfecho ........ {resultado.desfecho}")
@@ -142,7 +148,7 @@ def _resumir(vistos: list[tuple[str, object]], ja_pulados: int = 0) -> None:
         print("  os tres tipos apareceram.")
 
 
-def _documentos_da_planilha(caminho: Path, aba: str, limite: int,
+def _documentos_da_planilha(caminho: Path, aba: str, limite: int | None,
                             pular: int = 0) -> list[str]:
     """Uma amostra da carteira, sem tocar no banco.
 
@@ -156,7 +162,8 @@ def _documentos_da_planilha(caminho: Path, aba: str, limite: int,
     if leitura.rejeitados:
         print(f"  ({len(leitura.rejeitados)} linha(s) rejeitada(s) na leitura, "
               f"ignoradas aqui)")
-    fatia = leitura.itens[pular:pular + limite]
+    fatia = (leitura.itens[pular:] if limite is None
+             else leitura.itens[pular:pular + limite])
     print(f"  (aba {aba}: {len(leitura.itens)} CNPJs; "
           f"consultando do {pular + 1} ao {pular + len(fatia)})")
     return [item.documento for item in fatia]
@@ -191,7 +198,19 @@ def _cfg_de_conferencia(cfg):
                    pasta_evidencias=base / "evidencias")
 
 
-def conferir_cnpj(documento: str, cfg):
+def _texto_do_resultado(resultado) -> str | None:
+    """O texto do PDF que o resultado aponta, se houver PDF legivel."""
+    caminho = resultado.caminho_pdf or resultado.evidencia
+    if not (caminho and caminho.suffix.lower() == ".pdf" and caminho.exists()):
+        return None
+    try:
+        return sefaz_go._texto_pdf(caminho)
+    except Exception:
+        return None
+
+
+def conferir_cnpj(documento: str, cfg, detalhar: bool = True,
+                  posicao: tuple[int, int] | None = None):
     limpo = limpar(documento)
     cfg = _cfg_de_conferencia(cfg)
     adapter = sefaz_go.criar(cfg.orgaos["SEFAZ_GO"], cfg)
@@ -203,14 +222,15 @@ def conferir_cnpj(documento: str, cfg):
     finally:
         adapter.encerrar()
 
-    caminho = resultado.caminho_pdf or resultado.evidencia
-    texto = None
-    if caminho and caminho.suffix.lower() == ".pdf" and caminho.exists():
-        try:
-            texto = sefaz_go._texto_pdf(caminho)
-        except Exception:
-            texto = None
-    _relatar(f"CNPJ {formatar(limpo)}", resultado, texto)
+    # O PDF so e aberto quando o texto vai ser mostrado. Numa rodada de
+    # centenas, abrir cada um para jogar fora e o grosso do tempo gasto
+    # fora da rede.
+    if detalhar:
+        _relatar(f"CNPJ {formatar(limpo)}", resultado,
+                 _texto_do_resultado(resultado))
+    else:
+        indice, total = posicao or (0, 0)
+        _linha(indice, total, limpo, resultado)
     return resultado
 
 
@@ -263,6 +283,51 @@ def _carregar_config(caminho: Path | None):
     return cfg
 
 
+def _rodar(documentos: list[str], cfg, intervalo: float):
+    """Consulta a lista e devolve o que foi visto, e se parou no meio.
+
+    Fora de `main` porque e aqui que moram as duas decisoes que precisam de
+    teste: quando mostrar o bloco detalhado, e quando PARAR.
+    """
+    total = len(documentos)
+    print(f"Consultando o portal da SEFAZ-GO — {total} consulta(s), "
+          f"~{intervalo:.0f}s entre elas.")
+    print("Os PDFs caem em data/conferencia/. Nada vai para o banco,")
+    print("e nada entra em data/certidoes/, que e a pasta de entrega.")
+
+    # Numa rodada longa o bloco detalhado de cada CNPJ vira parede de texto.
+    # Detalhe fica para o que ensina algo: a PRIMEIRA vez de cada desfecho
+    # (que e o exemplo de positiva ou CPEN que se esta procurando) e tudo
+    # que nao for negativa.
+    compacto = total > 8
+    ja_vistos: set[str] = set()
+    vistos: list[tuple[str, object]] = []
+
+    for indice, documento in enumerate(documentos):
+        if indice:
+            _esperar(intervalo, JITTER_PADRAO)
+        limpo = limpar(documento)
+        resultado = conferir_cnpj(documento, cfg, detalhar=not compacto,
+                                  posicao=(indice + 1, total))
+        vistos.append((limpo, resultado))
+
+        desfecho = str(resultado.desfecho)
+        if compacto and (desfecho not in ja_vistos or desfecho != "NEGATIVA"):
+            _relatar(f"CNPJ {formatar(limpo)} — primeiro {desfecho}",
+                     resultado, _texto_do_resultado(resultado))
+        ja_vistos.add(desfecho)
+
+        # Insistir depois de uma recusa e como se ganha uma recusa maior. A
+        # rodada para aqui; nada se perde, porque os PDFs ja baixados
+        # continuam em data/conferencia/ e a retomada e por --pular.
+        if desfecho == "BLOQUEIO_TEMPORARIO":
+            print()
+            print("  O PORTAL RECUSOU. Parando para nao insistir.")
+            return vistos, True
+
+    return vistos, False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Confere o que o adapter da SEFAZ-GO enxerga.")
@@ -276,6 +341,8 @@ def main() -> int:
                         help="aba da planilha com os CNPJs de Goias (padrao: GO)")
     parser.add_argument("--limite", type=int, default=10,
                         help="quantos CNPJs consultar da planilha (padrao: 10)")
+    parser.add_argument("--todos", action="store_true",
+                        help="a aba inteira, ignorando --limite")
     parser.add_argument("--config", type=Path, default=None,
                         help="outro arquivo de config (ex.: config.exemplo.toml)")
     parser.add_argument("--pular", type=int, default=0,
@@ -300,8 +367,9 @@ def main() -> int:
         if not args.planilha.exists():
             print(f"nao achei {args.planilha}")
             return 1
+        limite = None if args.todos else args.limite
         documentos += _documentos_da_planilha(
-            args.planilha, args.aba, args.limite, args.pular)
+            args.planilha, args.aba, limite, args.pular)
     if not documentos:
         parser.print_help()
         return 2
@@ -309,16 +377,12 @@ def main() -> int:
     intervalo = (args.intervalo if args.intervalo is not None
                  else INTERVALO_PADRAO_S)
 
-    print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s), "
-          f"~{intervalo:.0f}s entre elas.")
-    print("Os PDFs caem em data/conferencia/. Nada vai para o banco,")
-    print("e nada entra em data/certidoes/, que e a pasta de entrega.")
-    vistos = []
-    for indice, documento in enumerate(documentos):
-        if indice:
-            _esperar(intervalo, JITTER_PADRAO)
-        vistos.append((limpar(documento), conferir_cnpj(documento, cfg)))
+    vistos, interrompido = _rodar(documentos, cfg, intervalo)
     _resumir(vistos, args.pular)
+    if interrompido:
+        print()
+        print("  espere alguns minutos e retome de onde parou:")
+        print(f"     ... --pular {args.pular + len(vistos)}")
     _regua()
     return 0
 

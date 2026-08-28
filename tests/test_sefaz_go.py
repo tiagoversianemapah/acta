@@ -464,6 +464,57 @@ class TestFerramentaDeConferencia:
 
         assert "--pular 3" in capsys.readouterr().out
 
+    def _rodar(self, ferramenta, monkeypatch, desfechos, quantos):
+        """Roda `_rodar` contra um adapter falso, sem tocar na rede."""
+        from cnd.core.modelos import ResultadoTentativa
+
+        chamadas = {"n": 0}
+
+        class Falso:
+            orgao = "SEFAZ_GO"
+
+            def preparar(self): pass
+            def encerrar(self): pass
+            def emitir(self, _doc):
+                chamadas["n"] += 1
+                return ResultadoTentativa(
+                    desfechos.get(chamadas["n"], Desfecho.NEGATIVA))
+
+        monkeypatch.setattr(ferramenta.sefaz_go, "criar", lambda *_a: Falso())
+        monkeypatch.setattr(ferramenta, "_esperar", lambda *_a: None)
+        documentos = [f"{i:014d}" for i in range(1, quantos + 1)]
+        vistos, parou = ferramenta._rodar(documentos, carregar(), 0.0)
+        return vistos, parou, chamadas["n"]
+
+    def test_para_quando_o_portal_recusa(self, ferramenta, monkeypatch, capsys):
+        """Insistir depois de uma recusa é como se ganha uma recusa maior.
+        Numa rodada de centenas, seguir em frente seria o pior caminho."""
+        vistos, parou, chamadas = self._rodar(
+            ferramenta, monkeypatch,
+            {5: Desfecho.BLOQUEIO_TEMPORARIO}, quantos=300)
+
+        assert parou is True
+        assert chamadas == 5, f"insistiu depois da recusa ({chamadas} consultas)"
+        assert len(vistos) == 5
+        assert "PORTAL RECUSOU" in capsys.readouterr().out
+
+    def test_sem_recusa_vai_ate_o_fim(self, ferramenta, monkeypatch):
+        vistos, parou, chamadas = self._rodar(ferramenta, monkeypatch, {}, 12)
+
+        assert parou is False
+        assert chamadas == 12 and len(vistos) == 12
+
+    def test_rodada_longa_detalha_so_o_que_ensina(self, ferramenta, monkeypatch,
+                                                  capsys):
+        """Uma parede de blocos esconde justamente a positiva que se procura."""
+        self._rodar(ferramenta, monkeypatch,
+                    {4: Desfecho.POSITIVA}, quantos=20)
+
+        saida = capsys.readouterr().out
+        assert saida.count("marcadores:") == 0 or "primeiro" in saida
+        assert "primeiro POSITIVA" in saida, "a positiva tem de aparecer inteira"
+        assert saida.count("primeiro NEGATIVA") == 1, "so a primeira negativa"
+
     def test_intervalo_zero_nao_dorme(self, ferramenta, monkeypatch):
         dormiu = []
         monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)
@@ -638,3 +689,105 @@ class TestCamposDoFormulario:
         dados = self._dados()
         assert dados["Certidao.TipoDocumento"] == "2"
         assert dados["Certidao.NumeroDocumentoCNPJ"] == CNPJ
+
+
+class TestAmostraDaPlanilha:
+    def _planilha(self, tmp_path, quantas):
+        from openpyxl import Workbook
+
+        livro = Workbook()
+        aba = livro.active
+        aba.title = "GO"
+        aba.append(["Empresa", "CNPJ"])
+        for i in range(quantas):
+            aba.append([f"EMPRESA {i}", f"11.222.333/{i:04d}-81"])
+        caminho = tmp_path / "carteira.xlsx"
+        livro.save(caminho)
+        return caminho
+
+    @pytest.fixture
+    def ferramenta(self):
+        import importlib.util
+        import sys
+
+        raiz = Path(__file__).resolve().parent.parent
+        caminho = raiz / "ferramentas" / "conferir_sefaz_go.py"
+        spec = importlib.util.spec_from_file_location("conferir_sefaz_go", caminho)
+        modulo = importlib.util.module_from_spec(spec)
+        sys.modules["conferir_sefaz_go"] = modulo
+        spec.loader.exec_module(modulo)
+        return modulo
+
+    def test_sem_limite_traz_a_aba_inteira(self, ferramenta, tmp_path,
+                                           monkeypatch):
+        """`--todos` passa limite=None. Antes o jeito de pedir tudo era
+        chutar um número grande, e chute errado corta a lista em silêncio."""
+        from cnd.ingestao.planilha import Item, Leitura
+
+        itens = [Item(orgao="SEFAZ_GO", tipo_documento="CNPJ",
+                      documento=f"{i:014d}", nome=f"E{i}") for i in range(50)]
+        import cnd.ingestao.planilha as planilha
+        monkeypatch.setattr(planilha, "ler", lambda *_a, **_k: Leitura(itens=itens))
+
+        todos = ferramenta._documentos_da_planilha(tmp_path, "GO", None, 0)
+        limitado = ferramenta._documentos_da_planilha(tmp_path, "GO", 10, 0)
+
+        assert len(todos) == 50
+        assert len(limitado) == 10
+
+    def _limite_que_main_usa(self, ferramenta, monkeypatch, argv):
+        """Roda `main` de verdade e captura o limite que ele repassa.
+
+        Sem rede: o falso devolve lista vazia, e `main` sai pelo caminho de
+        "nenhum documento". Testar `_documentos_da_planilha` direto nao
+        provava nada sobre a LIGACAO com --todos, que e o que pode quebrar.
+        """
+        import sys
+
+        visto = {}
+
+        def falso(caminho, aba, limite, pular=0):
+            visto["limite"] = limite
+            visto["pular"] = pular
+            return []
+
+        monkeypatch.setattr(ferramenta, "_documentos_da_planilha", falso)
+        monkeypatch.setattr(sys, "argv", ["conferir", *argv])
+        ferramenta.main()
+        return visto
+
+    def test_todos_desliga_o_limite_de_verdade(self, ferramenta, monkeypatch,
+                                               tmp_path):
+        raiz = Path(__file__).resolve().parent.parent
+        planilha = tmp_path / "c.xlsx"
+        planilha.write_bytes(b"x")
+
+        visto = self._limite_que_main_usa(ferramenta, monkeypatch, [
+            "--config", str(raiz / "config.exemplo.toml"),
+            "--planilha", str(planilha), "--todos"])
+
+        assert visto["limite"] is None, "--todos precisa desligar o corte"
+
+    def test_sem_todos_o_limite_vale(self, ferramenta, monkeypatch, tmp_path):
+        raiz = Path(__file__).resolve().parent.parent
+        planilha = tmp_path / "c.xlsx"
+        planilha.write_bytes(b"x")
+
+        visto = self._limite_que_main_usa(ferramenta, monkeypatch, [
+            "--config", str(raiz / "config.exemplo.toml"),
+            "--planilha", str(planilha), "--limite", "7"])
+
+        assert visto["limite"] == 7
+
+    def test_sem_limite_respeita_o_pular(self, ferramenta, tmp_path, monkeypatch):
+        from cnd.ingestao.planilha import Item, Leitura
+
+        itens = [Item(orgao="SEFAZ_GO", tipo_documento="CNPJ",
+                      documento=f"{i:014d}", nome=f"E{i}") for i in range(50)]
+        import cnd.ingestao.planilha as planilha
+        monkeypatch.setattr(planilha, "ler", lambda *_a, **_k: Leitura(itens=itens))
+
+        resto = ferramenta._documentos_da_planilha(tmp_path, "GO", None, 16)
+
+        assert len(resto) == 34
+        assert resto[0] == f"{16:014d}", "tem de continuar do 17o"
