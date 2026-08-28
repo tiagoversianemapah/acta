@@ -59,6 +59,13 @@ RE_CHARSET = re.compile(r"charset=([A-Za-z0-9_-]+)", re.IGNORECASE)
 RE_TAG = re.compile(r"<[^>]+>")
 RE_SCRIPT = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
 RE_VALIDADOR = re.compile(r"VALIDADOR:\s*([0-9.]+)", re.IGNORECASE)
+# O titulo da certidao e o unico sinal que nao e prosa. O portal escreve
+# "CERTIDAO DE DEBITO INSCRITO EM DIVIDA ATIVA - NEGATIVA" (ou POSITIVA).
+RE_TITULO_NEGATIVA = re.compile(r"divida ativa\s*[-–]\s*negativa")
+RE_TITULO_POSITIVA = re.compile(
+    r"divida ativa\s*[-–]\s*positiva|certidao positiva")
+# "consta debito" que NAO seja o final de "nao consta debito".
+RE_CONSTA_DEBITO = re.compile(r"(?<!nao )consta debito")
 RE_NUMERO_CERTIDAO = re.compile(r"NR\.\s*CERTID[AÃA]O:\s*N[ºO]\s*([0-9.]+)",
                                 re.IGNORECASE)
 RE_VALIDA_ATE = re.compile(r"V[AÁ]LID[AO]\s+AT[EÉ]\s+(\d{2}/\d{2}/\d{4})",
@@ -200,28 +207,49 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
             evidencia=caminho,
         )
 
-    normalizado = _sem_acento(conteudo)
+    # Espacos colapsados antes de comparar: o texto extraido do PDF vem com
+    # quebra de linha no meio das frases, e uma quebra entre "nao" e
+    # "consta debito" nao casaria com nenhum dos marcadores abaixo.
+    normalizado = " ".join(_sem_acento(conteudo).split())
     comuns = dict(
         validade=_extrair_validade(conteudo),
         codigo_controle=_extrair_codigo(conteudo),
         mensagem_portal=texto_tela.strip()[:500],
     )
 
+    # O TITULO manda. As frases "nao consta debito" e "consta debito" sao
+    # prosa do corpo, e uma certidao POSITIVA pode citar as duas ("nao
+    # consta debito de ICMS, porem consta de IPVA"). Como "consta debito" e
+    # substring de "nao consta debito", decidir pela prosa fazia uma
+    # positiva virar NEGATIVA - e negativa VAI no pacote do cliente, que e
+    # o erro que ninguem percebe ate o cliente perceber.
     if "positiva com efeito" in normalizado:
         return ResultadoTentativa(Desfecho.CPEN, caminho_pdf=caminho, **comuns)
-
-    if ("certidao de debito inscrito em divida ativa - negativa" in normalizado
-            or "nao consta debito" in normalizado):
+    if RE_TITULO_NEGATIVA.search(normalizado):
         return ResultadoTentativa(Desfecho.NEGATIVA, caminho_pdf=caminho, **comuns)
-
-    if "consta debito" in normalizado or "certidao positiva" in normalizado:
+    if RE_TITULO_POSITIVA.search(normalizado):
         return ResultadoTentativa(Desfecho.POSITIVA, evidencia=caminho, **comuns)
 
+    # Sem titulo reconhecido, a prosa decide - mas so quando ela e
+    # inequivoca. `(?<!nao )` impede que o "consta debito" de dentro de "nao
+    # consta debito" conte como debito.
+    nega = "nao consta debito" in normalizado
+    afirma = bool(RE_CONSTA_DEBITO.search(normalizado))
+    if nega and not afirma:
+        return ResultadoTentativa(Desfecho.NEGATIVA, caminho_pdf=caminho, **comuns)
+    if afirma and not nega:
+        return ResultadoTentativa(Desfecho.POSITIVA, evidencia=caminho, **comuns)
+
+    # Diz as duas coisas, ou nenhuma. Chutar aqui e que seria o erro: melhor
+    # nao entregar do que entregar a positiva de alguem como negativa.
     log.warning("pdf_sefaz_go_nao_reconhecido",
-                extra={"arquivo": str(caminho), "trecho": normalizado[:250]})
+                extra={"arquivo": str(caminho), "ambiguo": nega and afirma,
+                       "trecho": normalizado[:250]})
     return ResultadoTentativa(
         Desfecho.ERRO_TECNICO,
-        mensagem_portal="PDF da SEFAZ-GO nao reconhecido - conferir manualmente",
+        mensagem_portal=("PDF da SEFAZ-GO diz negativa E positiva ao mesmo "
+                         "tempo - conferir manualmente") if nega and afirma
+                        else "PDF da SEFAZ-GO nao reconhecido - conferir manualmente",
         evidencia=caminho,
     )
 

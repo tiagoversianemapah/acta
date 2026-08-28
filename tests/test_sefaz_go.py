@@ -231,3 +231,76 @@ class TestContrato:
         raiz = Path(__file__).resolve().parent.parent
         spec = (raiz / "empacotar" / "acta.spec").read_text(encoding="utf-8")
         assert '"cnd.adapters.sefaz_go"' in spec
+
+
+class TestClassificacaoDoPdf:
+    """O título manda; a prosa só decide quando é inequívoca.
+
+    "consta debito" é substring de "nao consta debito". Enquanto a prosa
+    decidia, uma certidão POSITIVA que citasse "não consta débito de ICMS,
+    porém consta de IPVA" era classificada como NEGATIVA — e negativa VAI no
+    pacote do cliente.
+    """
+
+    def _classificar(self, texto_pdf: str, tmp_path, monkeypatch) -> Desfecho:
+        monkeypatch.setattr(sefaz_go, "_texto_pdf", lambda _c: texto_pdf)
+        alvo = tmp_path / "c.pdf"
+        alvo.write_bytes(b"%PDF-1.4")
+        return sefaz_go.ler_pdf(alvo, "tela").desfecho
+
+    def test_titulo_negativo(self, tmp_path, monkeypatch):
+        assert self._classificar(
+            "CERTIDAO DE DEBITO INSCRITO EM DIVIDA ATIVA - NEGATIVA",
+            tmp_path, monkeypatch) == Desfecho.NEGATIVA
+
+    def test_titulo_positivo(self, tmp_path, monkeypatch):
+        assert self._classificar(
+            "CERTIDAO DE DEBITO INSCRITO EM DIVIDA ATIVA - POSITIVA",
+            tmp_path, monkeypatch) == Desfecho.POSITIVA
+
+    def test_positiva_com_efeito_de_negativa(self, tmp_path, monkeypatch):
+        assert self._classificar("CERTIDAO POSITIVA COM EFEITO DE NEGATIVA",
+                                 tmp_path, monkeypatch) == Desfecho.CPEN
+
+    def test_positiva_que_cita_nao_consta_debito_nao_vira_negativa(
+        self, tmp_path, monkeypatch
+    ):
+        """O caso que encontrou o defeito. Entregar isto como negativa é o
+        erro que ninguém percebe até o cliente perceber."""
+        desfecho = self._classificar(
+            "CERTIDAO POSITIVA. Nao consta debito de ICMS, "
+            "porem CONSTA DEBITO de IPVA",
+            tmp_path, monkeypatch)
+
+        assert desfecho == Desfecho.POSITIVA
+        assert desfecho not in COM_PDF, "iria para o pacote do cliente"
+
+    def test_prosa_ambigua_sem_titulo_vai_para_conferencia(
+        self, tmp_path, monkeypatch
+    ):
+        """Diz as duas coisas e não tem título: chutar é que seria o erro."""
+        desfecho = self._classificar(
+            "Nao consta debito de ICMS. Consta debito de IPVA.",
+            tmp_path, monkeypatch)
+
+        assert desfecho == Desfecho.ERRO_TECNICO
+        assert desfecho not in COM_PDF
+
+    def test_quebra_de_linha_no_meio_da_frase_nao_engana(
+        self, tmp_path, monkeypatch
+    ):
+        """O texto extraído do PDF vem com quebra no meio das frases."""
+        assert self._classificar("NAO\nCONSTA DEBITO inscrito",
+                                 tmp_path, monkeypatch) == Desfecho.NEGATIVA
+
+    def test_prosa_negativa_sozinha_vale(self, tmp_path, monkeypatch):
+        assert self._classificar("Nao consta debito inscrito em divida ativa",
+                                 tmp_path, monkeypatch) == Desfecho.NEGATIVA
+
+    def test_prosa_positiva_sozinha_vale(self, tmp_path, monkeypatch):
+        assert self._classificar("Consta debito inscrito em divida ativa",
+                                 tmp_path, monkeypatch) == Desfecho.POSITIVA
+
+    def test_pdf_irreconhecivel_nao_vira_certidao(self, tmp_path, monkeypatch):
+        assert self._classificar("documento qualquer", tmp_path,
+                                 monkeypatch) == Desfecho.ERRO_TECNICO
