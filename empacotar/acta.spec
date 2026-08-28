@@ -67,6 +67,7 @@ ocultos = [
     # tem como enxergar isso lendo o código.
     "cnd.adapters.rfb_cego",
     "cnd.adapters.crf",
+    "cnd.adapters.sefaz_go",
     "cnd.adapters.fake",
     *pw_ocultos,
     # Cinto e suspensório: o painel também é alcançado por nome em alguns

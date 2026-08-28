@@ -283,6 +283,38 @@ ativo   = false
 adapter = "crf"
 workers = 1
 
+[orgaos.SEFAZ_GO]
+ativo   = false
+adapter = "sefaz_go"
+workers = 1
+nome    = "SEFAZ GOIAS"
+
+[orgaos.SEFAZ_GO.http]
+timeout_s = 30.0
+
+[orgaos.SEFAZ_GO.pacing]
+intervalo_inicial_s = 15.0
+intervalo_piso_s    = 6.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+jitter              = 0.35
+janela_ativa        = "00:00-24:00"
+
+[orgaos.SEFAZ_GO.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.SEFAZ_GO.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+
 [orgaos.RFB_PF]
 ativo   = false
 adapter = "rfb_pf"
