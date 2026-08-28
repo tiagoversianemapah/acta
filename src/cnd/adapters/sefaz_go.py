@@ -337,12 +337,29 @@ class AdapterSEFAZGO:
         return self._abrir(urllib.request.Request(URL_CERTIDAO, data=corpo, headers=headers))
 
     def _dados(self, doc: Documento) -> dict[str, str]:
+        """Os campos do formulario, TODOS eles.
+
+        Conferido contra o formulario real em 28/08/2026. Montamos o POST a
+        mao, entao nao herdamos os `checked` do HTML: campo que nao vai
+        explicito simplesmente nao chega ao servidor.
+
+        `Render` e o que decide o FORMATO da resposta - pdf, html ou xml. O
+        formulario nasce com pdf marcado, e nos nao mandavamos o campo: a
+        resposta podia voltar como pagina, e o adapter so entrega o que vem
+        como PDF de verdade.
+
+        `ValidarEmissao_Emitir` separa emitir (0) de validar (1). Sem ele,
+        depender do padrao do servidor era apostar em algo que ninguem
+        prometeu.
+        """
         return {
-            "Certidao.Tipo": "01",
-            "Certidao.TipoDocumento": "2",
+            "Certidao.Tipo": "01",              # Divida Ativa
+            "Certidao.TipoDocumento": "2",      # 1 = CPF, 2 = CNPJ
             "Certidao.NumeroDocumento": doc.documento,
             "Certidao.NumeroDocumentoCNPJ": doc.documento,
             "Certidao.Espolio": "N",
+            "Certidao.Render": "pdf",
+            "Certidao.ValidarEmissao_Emitir": "0",
         }
 
     def _consultar(self, doc: Documento) -> ResultadoTentativa:

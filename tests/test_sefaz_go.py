@@ -527,3 +527,48 @@ class TestCertidaoReal:
 
         assert not sefaz_go.RE_TITULO_NEGATIVA.search(normalizado)
         assert not sefaz_go.RE_TITULO_POSITIVA.search(normalizado)
+
+
+class TestCamposDoFormulario:
+    """Conferidos contra o formulário real do portal em 28/08/2026.
+
+    O POST é montado à mão, então nenhum `checked` do HTML é herdado: campo
+    que não vai explícito não chega ao servidor.
+    """
+
+    def _dados(self):
+        cfg = carregar()
+        adapter = sefaz_go.criar(cfg.orgaos["SEFAZ_GO"], cfg)
+        doc = Documento(empresa_id=1, documento=CNPJ, tipo="CNPJ",
+                        nome="X", lote_id=1)
+        return adapter._dados(doc)
+
+    def test_pede_o_pdf_explicitamente(self):
+        """`Certidao.Render` decide o FORMATO: pdf, html ou xml. Sem ele, a
+        resposta podia voltar como página — e o adapter só entrega o que vem
+        como PDF de verdade, então a certidão simplesmente não sairia."""
+        assert self._dados()["Certidao.Render"] == "pdf"
+
+    def test_pede_emissao_e_nao_validacao(self):
+        assert self._dados()["Certidao.ValidarEmissao_Emitir"] == "0"
+
+    def test_manda_todos_os_campos_do_formulario(self):
+        """A lista veio do HTML do portal. Campo novo que apareça lá e não
+        aqui é exatamente o tipo de coisa que falha em silêncio."""
+        esperados = {
+            "Certidao.Tipo",
+            "Certidao.TipoDocumento",
+            "Certidao.NumeroDocumento",
+            "Certidao.NumeroDocumentoCNPJ",
+            "Certidao.Espolio",
+            "Certidao.Render",
+            "Certidao.ValidarEmissao_Emitir",
+        }
+        assert set(self._dados()) == esperados
+
+    def test_consulta_como_cnpj_e_nao_como_cpf(self):
+        """No formulário, CPF nasce marcado (`value="1"`). Mandar o CNPJ sem
+        trocar o tipo consultaria o documento errado."""
+        dados = self._dados()
+        assert dados["Certidao.TipoDocumento"] == "2"
+        assert dados["Certidao.NumeroDocumentoCNPJ"] == CNPJ
