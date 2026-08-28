@@ -284,7 +284,7 @@ adapter = "crf"
 workers = 1
 
 [orgaos.SEFAZ_GO]
-ativo   = false
+ativo   = true                      # ligado: o adapter esta pronto e conferido
 adapter = "sefaz_go"
 workers = 1
 nome    = "SEFAZ GOIAS"
@@ -292,14 +292,23 @@ nome    = "SEFAZ GOIAS"
 [orgaos.SEFAZ_GO.http]
 timeout_s = 30.0
 
+# Ritmo bem mais solto que o da Receita, e o motivo e o portal, nao a
+# pressa. Este e um formulario ASP simples que devolve o PDF no proprio
+# POST: nao ha navegador, nao ha tela para ler, nao ha captcha. Em 17
+# consultas seguidas conferidas em 28/08/2026 nao houve uma recusa.
+#
+# Piso IGUAL ao inicial de proposito: o AIMD nao tem por que acelerar
+# contra um portal que nao empurra de volta, e 3s constante e previsivel.
+# A punicao continua valendo — se um dia ele recusar, o intervalo sobe e
+# depois volta para os mesmos 3s.
 [orgaos.SEFAZ_GO.pacing]
-intervalo_inicial_s = 15.0
-intervalo_piso_s    = 6.0
+intervalo_inicial_s = 3.0
+intervalo_piso_s    = 3.0
 intervalo_teto_s    = 600.0
 acelera_apos        = 20
 fator_aceleracao    = 0.85
 fator_punicao       = 3.0
-jitter              = 0.35
+jitter              = 0.3
 janela_ativa        = "00:00-24:00"
 
 [orgaos.SEFAZ_GO.breaker]

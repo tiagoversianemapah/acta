@@ -24,7 +24,8 @@ Fase 1: Receita Federal, pessoa jurídica — ~2.850 CNPJs por rodada.
 | Avisos no Microsoft Teams | ✅ em produção |
 | Adapter da Receita Federal — leitura do PDF | ✅ validada contra certidão real |
 | **Adapter da Receita Federal — emissão de ponta a ponta** | ✅ **em produção desde 10/08/2026** |
-| Adapters CRF, RFB-PF e estaduais | ⬜ fases 2 a 4 |
+| **Adapter SEFAZ-GO — Certidão de Dívida Ativa** | ✅ **conferido contra o portal em 28/08/2026** |
+| Adapters CRF, RFB-PF e demais estaduais | ⬜ fases 2 a 4 |
 
 Em produção na máquina `PC Receita Federal 01`: 2.829 CNPJs importados,
 emissões saindo com zero falhas, PDFs conferidos contra certidão real.
@@ -71,7 +72,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-pytest                         # 628 testes, sem rede e sem portal
+pytest                         # 641 testes, sem rede e sem portal
 ruff check src tests empacotar ferramentas   # sem apontamentos
 python empacotar/construir.py  # gera o ACTA.exe e os atalhos
 ```
@@ -281,6 +282,7 @@ src/cnd/
 │   ├── base.py         o contrato que todos seguem
 │   ├── rfb_cego.py     Receita Federal PJ, por mouse e teclado reais  ← ativo
 │   ├── rfb_pj.py       o mesmo portal por Playwright — DETECTADO, desligado
+│   ├── sefaz_go.py     SEFAZ Goiás, por HTTP — o portal devolve o PDF no POST
 │   ├── calibragem.py   ensina ao robô cego onde ficam os campos
 │   └── fake.py         simulador para teste offline
 ├── ingestao/      única camada que conhece Excel

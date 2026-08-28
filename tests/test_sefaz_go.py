@@ -435,14 +435,44 @@ class TestFerramentaDeConferencia:
         assert "conferencia" in str(usada.pasta_certidoes)
         assert cfg.pasta_certidoes not in usada.pasta_certidoes.parents
 
-    def test_o_intervalo_padrao_e_curto_e_nao_o_do_robo(self, ferramenta):
-        """São coisas diferentes: o robô atravessa a carteira inteira e usa
-        o pacing conservador do config; aqui são poucas consultas na mão."""
-        cfg = carregar()
-        do_robo = cfg.orgaos["SEFAZ_GO"].pacing.intervalo_inicial_s
+    def test_o_intervalo_e_da_ferramenta_e_nao_do_config(self, ferramenta,
+                                                        monkeypatch):
+        """A ferramenta tem intervalo PRÓPRIO. Hoje ele calha de ser igual
+        ao do órgão (3s nos dois), mas são decisões separadas: mexer no
+        ritmo do robô não pode mudar a conferência por tabela, nem o
+        contrário.
+        """
+        import sys
 
-        assert do_robo > ferramenta.INTERVALO_PADRAO_S
+        recebido = {}
+        monkeypatch.setattr(ferramenta, "_rodar",
+                            lambda _docs, _cfg, intervalo: (
+                                recebido.update(intervalo=intervalo) or ([], False)))
+        monkeypatch.setattr(sys, "argv",
+                            ["conferir", "--config",
+                             str(Path(__file__).resolve().parent.parent
+                                 / "config.exemplo.toml"),
+                             "11222333000181"])
+        ferramenta.main()
+
+        assert recebido["intervalo"] == ferramenta.INTERVALO_PADRAO_S
         assert ferramenta.INTERVALO_PADRAO_S > 0, "sem espaçamento nenhum, não"
+
+    def test_intervalo_da_linha_de_comando_ganha(self, ferramenta, monkeypatch):
+        import sys
+
+        recebido = {}
+        monkeypatch.setattr(ferramenta, "_rodar",
+                            lambda _docs, _cfg, intervalo: (
+                                recebido.update(intervalo=intervalo) or ([], False)))
+        monkeypatch.setattr(sys, "argv",
+                            ["conferir", "--config",
+                             str(Path(__file__).resolve().parent.parent
+                                 / "config.exemplo.toml"),
+                             "--intervalo", "0", "11222333000181"])
+        ferramenta.main()
+
+        assert recebido["intervalo"] == 0.0
 
     def test_a_dica_de_continuar_soma_o_pular_ja_usado(self, ferramenta, capsys):
         """Quem rodou com --pular 12 recebia a sugestão de pular 12 de novo,
@@ -596,6 +626,54 @@ VALIDADOR:  5.555.451.586.243                      EMITIDA VIA INTERNET
 
 SGTI-SEFAZ:   LOCAL E DATA: GOIANIA, 28 AGOSTO DE 2026      HORA: 17:1:40:2
 """
+
+
+class TestDocumentoDeOutroTipo:
+    """O formulário aceita CPF e CNPJ; este adapter só monta o de CNPJ.
+
+    Mandar um CPF nos campos de CNPJ não daria erro — o portal consultaria
+    OUTRO documento e devolveria a certidão de alguém. Falhar é melhor.
+    """
+
+    def _adapter(self, tmp_path):
+        cfg = replace(carregar(), pasta_certidoes=tmp_path / "c",
+                      pasta_evidencias=tmp_path / "e")
+        return sefaz_go.AdapterSEFAZGO(orgao="SEFAZ_GO", cfg=cfg)
+
+    def test_cpf_nao_vira_consulta_de_cnpj(self, tmp_path, monkeypatch):
+        def nao_deveria(*_a, **_k):
+            raise AssertionError("chegou a consultar o portal com um CPF")
+
+        adapter = self._adapter(tmp_path)
+        monkeypatch.setattr(adapter, "_consultar", nao_deveria)
+        doc = Documento(empresa_id=1, documento="21360146172", tipo="CPF",
+                        nome="FULANO", lote_id=1)
+
+        resultado = adapter.emitir(doc)
+
+        assert resultado.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert "CNPJ" in resultado.mensagem_portal
+
+    def test_cnpj_segue_normalmente(self, tmp_path, monkeypatch):
+        from cnd.core.modelos import ResultadoTentativa
+
+        adapter = self._adapter(tmp_path)
+        monkeypatch.setattr(
+            adapter, "_consultar",
+            lambda _doc: ResultadoTentativa(Desfecho.NEGATIVA))
+        doc = Documento(empresa_id=1, documento=CNPJ, tipo="CNPJ",
+                        nome="EMPRESA", lote_id=1)
+
+        assert adapter.emitir(doc).desfecho == Desfecho.NEGATIVA
+
+    def test_sessao_nao_preparada_explica(self, tmp_path):
+        """`assert` some com `python -O`, e o erro viraria um AttributeError
+        sem explicação lá dentro do urllib."""
+        import urllib.request
+
+        adapter = self._adapter(tmp_path)
+        with pytest.raises(RuntimeError, match="preparar"):
+            adapter._abrir(urllib.request.Request("http://x.invalid"))
 
 
 class TestCertidaoReal:

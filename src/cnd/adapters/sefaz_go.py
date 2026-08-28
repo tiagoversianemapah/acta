@@ -285,6 +285,20 @@ class AdapterSEFAZGO:
         self._opener = None
 
     def emitir(self, doc: Documento) -> ResultadoTentativa:
+        # O formulario tem CPF e CNPJ (TipoDocumento 1 e 2), mas este
+        # adapter so monta o POST de CNPJ. Mandar um CPF nos campos de CNPJ
+        # nao daria erro: o portal consultaria OUTRO documento e devolveria
+        # uma certidao de alguem, que e pior do que falhar.
+        #
+        # A ingestao ja recusa CPF para este orgao com recado proprio; isto
+        # aqui e a segunda porta, para quando o job chega por outro caminho.
+        if doc.tipo != "CNPJ":
+            return ResultadoTentativa(
+                Desfecho.PENDENCIA_MANUAL,
+                mensagem_portal=f"A SEFAZ-GO deste robo consulta CNPJ, e "
+                                f"{doc.documento} e {doc.tipo}.",
+            )
+
         if self._opener is None:
             self.preparar()
 
@@ -310,7 +324,10 @@ class AdapterSEFAZGO:
         return headers
 
     def _abrir(self, request: urllib.request.Request) -> RespostaPortal:
-        assert self._opener is not None
+        # `raise` e nao `assert`: assert some com `python -O`, e ai o erro
+        # viraria um AttributeError sem explicacao la dentro do urllib.
+        if self._opener is None:
+            raise RuntimeError("sessao nao preparada: chame preparar() antes")
         try:
             with self._opener.open(request, timeout=self.timeout_s) as resposta:
                 return RespostaPortal(
