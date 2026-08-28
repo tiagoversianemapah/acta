@@ -357,3 +357,29 @@ class TestFerramentaDeConferencia:
         """PDF que é imagem escaneada não tem texto extraível, e o desfecho
         vira "não reconhecido" sem explicar por quê."""
         assert "CERTID" in ferramenta._trecho_do_titulo("pagina sem titulo")
+
+    def test_o_resumo_diz_quais_tipos_faltam(self, ferramenta, capsys):
+        """É o que responde "já consegui um de cada?" sem ler linha a linha."""
+        from cnd.core.modelos import ResultadoTentativa
+
+        ferramenta._resumir([
+            ("11222333000181", ResultadoTentativa(Desfecho.NEGATIVA)),
+            ("22333444000195", ResultadoTentativa(Desfecho.ERRO_TECNICO)),
+        ])
+
+        saida = capsys.readouterr().out
+        assert "ainda sem exemplo de" in saida
+        assert "POSITIVA" in saida and "CPEN" in saida
+
+    def test_o_resumo_confirma_quando_os_tres_apareceram(self, ferramenta, capsys):
+        from cnd.core.modelos import ResultadoTentativa
+
+        ferramenta._resumir([
+            ("11222333000181", ResultadoTentativa(Desfecho.NEGATIVA)),
+            ("22333444000195", ResultadoTentativa(Desfecho.POSITIVA)),
+            ("33444555000106", ResultadoTentativa(Desfecho.CPEN)),
+        ])
+
+        saida = capsys.readouterr().out
+        assert "os tres tipos apareceram" in saida
+        assert "ainda sem exemplo" not in saida

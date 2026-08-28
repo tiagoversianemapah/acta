@@ -12,8 +12,13 @@ que permite consertar o marcador sem ter de adivinhar o que o portal
 mandou.
 
     python ferramentas/conferir_sefaz_go.py 11222333000181
-    python ferramentas/conferir_sefaz_go.py 11222333000181 22333444000195
+    python ferramentas/conferir_sefaz_go.py --planilha CARTEIRA.xlsx --aba GO --limite 15
     python ferramentas/conferir_sefaz_go.py --pdf data/certidoes/1/SEFAZ_GO/x.pdf
+
+Caçar "um CNPJ de cada tipo" antes de rodar não funciona: ninguém sabe quem
+tem débito estadual até perguntar. Com `--planilha` você manda uma AMOSTRA da
+sua própria lista, e negativa, positiva e CPEN aparecem sozinhas — o resumo
+do fim agrupa por desfecho e mostra qual CNPJ deu o quê.
 
 Com `--pdf` não há rede: reclassifica um PDF já baixado, que é como se
 confere uma mudança de marcador sem gastar consulta no portal.
@@ -86,6 +91,46 @@ def _relatar(rotulo: str, resultado, texto_pdf: str | None) -> None:
         print(f"    [{'x' if casou else ' '}] {nome}")
 
 
+def _resumir(vistos: list[tuple[str, object]]) -> None:
+    """Agrupa por desfecho. É o que responde "consegui um de cada tipo?"."""
+    if not vistos:
+        return
+    _regua("RESUMO")
+    por_desfecho: dict[str, list[str]] = {}
+    for documento, resultado in vistos:
+        por_desfecho.setdefault(str(resultado.desfecho), []).append(documento)
+
+    for desfecho, documentos in sorted(por_desfecho.items()):
+        print(f"  {desfecho:20} {len(documentos):>3}  "
+              f"{', '.join(formatar(d) for d in documentos[:4])}"
+              f"{' ...' if len(documentos) > 4 else ''}")
+
+    faltando = [d for d in ("NEGATIVA", "POSITIVA", "CPEN")
+                if d not in por_desfecho]
+    print()
+    if faltando:
+        print(f"  ainda sem exemplo de: {', '.join(faltando)}"
+              f" - rode mais alguns CNPJs")
+    else:
+        print("  os tres tipos apareceram.")
+
+
+def _documentos_da_planilha(caminho: Path, aba: str, limite: int) -> list[str]:
+    """Uma amostra da carteira, sem tocar no banco.
+
+    `ler` devolve válidos e rejeitados e não grava nada — é a mesma leitura
+    que a importação usa, então o que chega aqui é exatamente o que entraria
+    na fila.
+    """
+    from cnd.ingestao.planilha import ler
+
+    leitura = ler(caminho, [aba] if aba else None, "SEFAZ_GO")
+    if leitura.rejeitados:
+        print(f"  ({len(leitura.rejeitados)} linha(s) rejeitada(s) na leitura, "
+              f"ignoradas aqui)")
+    return [item.documento for item in leitura.itens[:limite]]
+
+
 def conferir_pdf(caminho: Path) -> int:
     if not caminho.exists():
         print(f"nao achei {caminho}")
@@ -99,7 +144,7 @@ def conferir_pdf(caminho: Path) -> int:
     return 0
 
 
-def conferir_cnpj(documento: str, cfg) -> int:
+def conferir_cnpj(documento: str, cfg):
     limpo = limpar(documento)
     adapter = sefaz_go.criar(cfg.orgaos["SEFAZ_GO"], cfg)
     adapter.preparar()
@@ -118,7 +163,7 @@ def conferir_cnpj(documento: str, cfg) -> int:
         except Exception:
             texto = None
     _relatar(f"CNPJ {formatar(limpo)}", resultado, texto)
-    return 0
+    return resultado
 
 
 def main() -> int:
@@ -128,11 +173,23 @@ def main() -> int:
                         help="um ou mais CNPJs (uma consulta cada)")
     parser.add_argument("--pdf", type=Path,
                         help="reclassifica um PDF ja baixado, sem tocar na rede")
+    parser.add_argument("--planilha", type=Path,
+                        help="tira a amostra da sua carteira, sem tocar no banco")
+    parser.add_argument("--aba", default="GO",
+                        help="aba da planilha com os CNPJs de Goias (padrao: GO)")
+    parser.add_argument("--limite", type=int, default=10,
+                        help="quantos CNPJs consultar da planilha (padrao: 10)")
     args = parser.parse_args()
 
     if args.pdf:
         return conferir_pdf(args.pdf)
-    if not args.documentos:
+    documentos = list(args.documentos)
+    if args.planilha:
+        if not args.planilha.exists():
+            print(f"nao achei {args.planilha}")
+            return 1
+        documentos += _documentos_da_planilha(args.planilha, args.aba, args.limite)
+    if not documentos:
         parser.print_help()
         return 2
 
@@ -142,10 +199,12 @@ def main() -> int:
               "Copie a secao [orgaos.SEFAZ_GO] do config.exemplo.toml.")
         return 1
 
-    print(f"Consultando o portal da SEFAZ-GO — {len(args.documentos)} consulta(s).")
+    print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s).")
     print("Os PDFs caem em data/evidencias/SEFAZ_GO/. Nada vai para o banco.")
-    for documento in args.documentos:
-        conferir_cnpj(documento, cfg)
+    vistos = []
+    for documento in documentos:
+        vistos.append((limpar(documento), conferir_cnpj(documento, cfg)))
+    _resumir(vistos)
     _regua()
     return 0
 
