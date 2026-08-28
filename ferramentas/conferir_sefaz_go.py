@@ -117,13 +117,15 @@ def _resumir(vistos: list[tuple[str, object]]) -> None:
                 if d not in por_desfecho]
     print()
     if faltando:
-        print(f"  ainda sem exemplo de: {', '.join(faltando)}"
-              f" - rode mais alguns CNPJs")
+        print(f"  ainda sem exemplo de: {', '.join(faltando)}")
+        print("  continue de onde parou com --pular, para nao repetir consulta:")
+        print(f"     ... --limite {len(vistos)} --pular {len(vistos)}")
     else:
         print("  os tres tipos apareceram.")
 
 
-def _documentos_da_planilha(caminho: Path, aba: str, limite: int) -> list[str]:
+def _documentos_da_planilha(caminho: Path, aba: str, limite: int,
+                            pular: int = 0) -> list[str]:
     """Uma amostra da carteira, sem tocar no banco.
 
     `ler` devolve válidos e rejeitados e não grava nada — é a mesma leitura
@@ -136,7 +138,10 @@ def _documentos_da_planilha(caminho: Path, aba: str, limite: int) -> list[str]:
     if leitura.rejeitados:
         print(f"  ({len(leitura.rejeitados)} linha(s) rejeitada(s) na leitura, "
               f"ignoradas aqui)")
-    return [item.documento for item in leitura.itens[:limite]]
+    fatia = leitura.itens[pular:pular + limite]
+    print(f"  (aba {aba}: {len(leitura.itens)} CNPJs; "
+          f"consultando do {pular + 1} ao {pular + len(fatia)})")
+    return [item.documento for item in fatia]
 
 
 def conferir_pdf(caminho: Path) -> int:
@@ -200,6 +205,9 @@ def main() -> int:
                         help="aba da planilha com os CNPJs de Goias (padrao: GO)")
     parser.add_argument("--limite", type=int, default=10,
                         help="quantos CNPJs consultar da planilha (padrao: 10)")
+    parser.add_argument("--pular", type=int, default=0,
+                        help="quantos CNPJs do inicio ignorar, para uma segunda "
+                             "rodada continuar de onde a primeira parou")
     parser.add_argument("--intervalo", type=float, default=None,
                         help="segundos entre consultas "
                              "(padrao: o pacing do orgao no config)")
@@ -212,7 +220,8 @@ def main() -> int:
         if not args.planilha.exists():
             print(f"nao achei {args.planilha}")
             return 1
-        documentos += _documentos_da_planilha(args.planilha, args.aba, args.limite)
+        documentos += _documentos_da_planilha(
+            args.planilha, args.aba, args.limite, args.pular)
     if not documentos:
         parser.print_help()
         return 2

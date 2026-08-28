@@ -403,3 +403,22 @@ class TestFerramentaDeConferencia:
         monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)
         ferramenta._esperar(0, jitter=0.3)
         assert dormiu == []
+
+    def test_a_segunda_rodada_nao_repete_a_primeira(self, ferramenta, tmp_path,
+                                                    monkeypatch):
+        """Sem `--pular`, aumentar o `--limite` reconsultava os primeiros —
+        consulta gasta a toa num portal que a gente quer nao incomodar."""
+        from cnd.ingestao.planilha import Item, Leitura
+
+        itens = [Item(orgao="SEFAZ_GO", tipo_documento="CNPJ",
+                      documento=f"{i:014d}", nome=f"E{i}") for i in range(20)]
+        monkeypatch.setattr(ferramenta, "ler",
+                            lambda *_a, **_k: Leitura(itens=itens), raising=False)
+        import cnd.ingestao.planilha as planilha
+        monkeypatch.setattr(planilha, "ler", lambda *_a, **_k: Leitura(itens=itens))
+
+        primeira = ferramenta._documentos_da_planilha(tmp_path, "GO", 5, 0)
+        segunda = ferramenta._documentos_da_planilha(tmp_path, "GO", 5, 5)
+
+        assert len(primeira) == len(segunda) == 5
+        assert not set(primeira) & set(segunda), "reconsultaria os mesmos CNPJs"
