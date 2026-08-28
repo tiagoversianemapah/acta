@@ -24,7 +24,9 @@ Com `--pdf` não há rede: reclassifica um PDF já baixado, que é como se
 confere uma mudança de marcador sem gastar consulta no portal.
 
 Uma consulta por CNPJ, e nada é gravado no banco — isto não cria lote nem
-job. Os PDFs caem em `data/evidencias/SEFAZ_GO/`.
+job. Os PDFs caem todos em `data/conferencia/`, e NÃO em `data/certidoes/`:
+conferência não é entrega, e arquivo de teste na pasta de onde sai o pacote
+do cliente é o tipo de coisa que alguém acaba mandando por engano.
 
 As consultas saem ESPAÇADAS. Quem espaça no sistema é o orquestrador, e
 esta ferramenta não passa por ele: chamar `emitir` em laço dispararia tudo
@@ -157,8 +159,25 @@ def conferir_pdf(caminho: Path) -> int:
     return 0
 
 
+def _cfg_de_conferencia(cfg):
+    """Manda tudo para `data/conferencia/`, longe da pasta de entrega.
+
+    O adapter move a negativa para `pasta_certidoes` — e faz certo, porque
+    e de la que o pacote do cliente e montado. So que aqui nao ha lote, nao
+    ha banco e nao ha entrega: o arquivo ficava em `data/certidoes/0/` com
+    o nome CONFERENCIA, no meio das certidoes de verdade.
+    """
+    from dataclasses import replace
+
+    base = cfg.banco.parent / "conferencia"
+    return replace(cfg,
+                   pasta_certidoes=base / "certidoes",
+                   pasta_evidencias=base / "evidencias")
+
+
 def conferir_cnpj(documento: str, cfg):
     limpo = limpar(documento)
+    cfg = _cfg_de_conferencia(cfg)
     adapter = sefaz_go.criar(cfg.orgaos["SEFAZ_GO"], cfg)
     adapter.preparar()
     try:
@@ -277,7 +296,8 @@ def main() -> int:
 
     print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s), "
           f"~{intervalo:.0f}s entre elas.")
-    print("Os PDFs caem em data/evidencias/SEFAZ_GO/. Nada vai para o banco.")
+    print("Os PDFs caem em data/conferencia/. Nada vai para o banco,")
+    print("e nada entra em data/certidoes/, que e a pasta de entrega.")
     vistos = []
     for indice, documento in enumerate(documentos):
         if indice:

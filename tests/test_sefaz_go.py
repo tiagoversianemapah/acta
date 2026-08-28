@@ -398,6 +398,43 @@ class TestFerramentaDeConferencia:
         assert len(set(dormiu)) > 1, "intervalo fixo vira assinatura"
         assert all(7.0 <= s <= 13.0 for s in dormiu), dormiu
 
+    def test_a_conferencia_nao_escreve_na_pasta_de_entrega(self, ferramenta,
+                                                           monkeypatch):
+        """O adapter move a negativa para `pasta_certidoes`, e faz certo —
+        é de lá que o pacote do cliente é montado. Mas aqui não há lote,
+        nem banco, nem entrega: o arquivo ficava em `data/certidoes/0/`
+        chamado CONFERENCIA, no meio das certidões de verdade.
+
+        A conferência é no CAMINHO REAL, e não na função isolada: testar só
+        o ajudante deixava passar o defeito de verdade, que era não chamá-lo
+        — apagar a chamada mantinha o teste verde.
+        """
+        from cnd.core.modelos import Desfecho, ResultadoTentativa
+
+        cfg = carregar()
+        recebido = {}
+
+        class AdapterFalso:
+            orgao = "SEFAZ_GO"
+
+            def preparar(self): pass
+            def encerrar(self): pass
+            def emitir(self, _doc):
+                return ResultadoTentativa(Desfecho.ERRO_TECNICO)
+
+        def criar(_orgao, cfg_recebida):
+            recebido["cfg"] = cfg_recebida
+            return AdapterFalso()
+
+        monkeypatch.setattr(ferramenta.sefaz_go, "criar", criar)
+        ferramenta.conferir_cnpj("11222333000181", cfg)
+
+        usada = recebido["cfg"]
+        assert usada.pasta_certidoes != cfg.pasta_certidoes, (
+            "o adapter recebeu a pasta de ENTREGA")
+        assert "conferencia" in str(usada.pasta_certidoes)
+        assert cfg.pasta_certidoes not in usada.pasta_certidoes.parents
+
     def test_intervalo_zero_nao_dorme(self, ferramenta, monkeypatch):
         dormiu = []
         monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)
