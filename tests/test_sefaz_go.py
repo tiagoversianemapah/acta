@@ -422,3 +422,29 @@ class TestFerramentaDeConferencia:
 
         assert len(primeira) == len(segunda) == 5
         assert not set(primeira) & set(segunda), "reconsultaria os mesmos CNPJs"
+
+    def test_config_ausente_explica_em_vez_de_estourar(self, ferramenta,
+                                                       tmp_path, capsys):
+        """Traceback de FileNotFoundError nao ajuda ninguem: config.toml e
+        da INSTALACAO e num checkout do repositorio ele legitimamente nao
+        existe."""
+        assert ferramenta._carregar_config(tmp_path / "nao-existe.toml") is None
+
+        saida = capsys.readouterr().out
+        assert "Nao achei o config" in saida
+        assert "config.exemplo.toml" in saida, "precisa dizer o que fazer"
+
+    def test_config_sem_a_secao_do_orgao_tambem_explica(self, ferramenta,
+                                                        tmp_path, capsys):
+        magro = tmp_path / "config.toml"
+        magro.write_text('[rede]\nnome = "x"\n', encoding="utf-8")
+
+        assert ferramenta._carregar_config(magro) is None
+        assert "[orgaos.SEFAZ_GO]" in capsys.readouterr().out
+
+    def test_config_bom_e_aceito(self, ferramenta):
+        raiz = Path(__file__).resolve().parent.parent
+        cfg = ferramenta._carregar_config(raiz / "config.exemplo.toml")
+
+        assert cfg is not None
+        assert "SEFAZ_GO" in cfg.orgaos

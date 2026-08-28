@@ -192,6 +192,42 @@ def _esperar(segundos: float, jitter: float) -> None:
     time.sleep(max(0.0, real))
 
 
+def _carregar_config(caminho: Path | None):
+    """O config, ou um recado que diz o que fazer.
+
+    Traceback de FileNotFoundError nao ajuda ninguem: `config.toml` e da
+    INSTALACAO e nao vai para o controle de versao, entao num checkout do
+    repositorio ele legitimamente nao existe. Para esta conferencia, que
+    nao toca no banco, o exemplo versionado serve.
+    """
+    from cnd.infra.config import CAMINHO_PADRAO
+
+    # CAMINHO_PADRAO ja resolve CND_CONFIG, mas na IMPORTACAO do modulo:
+    # `--config` chega depois disso, entao ele vai por argumento para
+    # `carregar`, que aceita um caminho explicito.
+    alvo = caminho or CAMINHO_PADRAO
+    if not alvo.exists():
+        exemplo = CAMINHO_PADRAO.parent / "config.exemplo.toml"
+        print(f"Nao achei o config em {alvo}.")
+        print()
+        print("Ele e da INSTALACAO e nao vai para o controle de versao, entao")
+        print("num checkout do repositorio ele nao existe mesmo. Para esta")
+        print("conferencia, que nao toca no banco, o exemplo serve:")
+        print()
+        print(f"    python ferramentas/conferir_sefaz_go.py --config {exemplo.name} ...")
+        print()
+        print("ou copie de vez:  copy config.exemplo.toml config.toml")
+        return None
+
+    cfg = carregar(alvo)
+    if "SEFAZ_GO" not in cfg.orgaos:
+        print(f"{alvo} nao tem a secao [orgaos.SEFAZ_GO].")
+        print("Copie-a do config.exemplo.toml. Nao precisa ficar ativo = true:")
+        print("esta ferramenta nao passa pelo orquestrador.")
+        return None
+    return cfg
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Confere o que o adapter da SEFAZ-GO enxerga.")
@@ -205,6 +241,8 @@ def main() -> int:
                         help="aba da planilha com os CNPJs de Goias (padrao: GO)")
     parser.add_argument("--limite", type=int, default=10,
                         help="quantos CNPJs consultar da planilha (padrao: 10)")
+    parser.add_argument("--config", type=Path, default=None,
+                        help="outro arquivo de config (ex.: config.exemplo.toml)")
     parser.add_argument("--pular", type=int, default=0,
                         help="quantos CNPJs do inicio ignorar, para uma segunda "
                              "rodada continuar de onde a primeira parou")
@@ -215,6 +253,13 @@ def main() -> int:
 
     if args.pdf:
         return conferir_pdf(args.pdf)
+
+    # O config vem ANTES de ler a planilha: descobrir que falta configuracao
+    # depois de abrir um arquivo de 2.600 linhas e trabalho jogado fora.
+    cfg = _carregar_config(args.config)
+    if cfg is None:
+        return 1
+
     documentos = list(args.documentos)
     if args.planilha:
         if not args.planilha.exists():
@@ -225,12 +270,6 @@ def main() -> int:
     if not documentos:
         parser.print_help()
         return 2
-
-    cfg = carregar()
-    if "SEFAZ_GO" not in cfg.orgaos:
-        print("SEFAZ_GO nao esta no config.toml desta maquina. "
-              "Copie a secao [orgaos.SEFAZ_GO] do config.exemplo.toml.")
-        return 1
 
     pacing = cfg.orgaos["SEFAZ_GO"].pacing
     intervalo = (args.intervalo if args.intervalo is not None
