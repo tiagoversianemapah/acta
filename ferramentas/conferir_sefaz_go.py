@@ -25,11 +25,19 @@ confere uma mudança de marcador sem gastar consulta no portal.
 
 Uma consulta por CNPJ, e nada é gravado no banco — isto não cria lote nem
 job. Os PDFs caem em `data/evidencias/SEFAZ_GO/`.
+
+As consultas saem ESPAÇADAS. Quem espaça no sistema é o orquestrador, e
+esta ferramenta não passa por ele: chamar `emitir` em laço dispararia tudo
+colado contra um portal que tem resposta pronta para isso ("a requisição
+foi bloqueada pela política de segurança"). O intervalo padrão é o mesmo
+`pacing.intervalo_inicial_s` do config do órgão.
 """
 from __future__ import annotations
 
 import argparse
+import random
 import sys
+import time
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
@@ -166,6 +174,19 @@ def conferir_cnpj(documento: str, cfg):
     return resultado
 
 
+def _esperar(segundos: float, jitter: float) -> None:
+    """Mesma ideia do ritmo do orquestrador: intervalo com variação.
+
+    Espera igualzinha a cada consulta é padrão de robô — o jitter existe
+    para o intervalo não virar assinatura.
+    """
+    if segundos <= 0:
+        return
+    real = segundos * (1 + random.uniform(-jitter, jitter))
+    print(f"  (aguardando {real:.0f}s antes da proxima)")
+    time.sleep(max(0.0, real))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Confere o que o adapter da SEFAZ-GO enxerga.")
@@ -179,6 +200,9 @@ def main() -> int:
                         help="aba da planilha com os CNPJs de Goias (padrao: GO)")
     parser.add_argument("--limite", type=int, default=10,
                         help="quantos CNPJs consultar da planilha (padrao: 10)")
+    parser.add_argument("--intervalo", type=float, default=None,
+                        help="segundos entre consultas "
+                             "(padrao: o pacing do orgao no config)")
     args = parser.parse_args()
 
     if args.pdf:
@@ -199,10 +223,17 @@ def main() -> int:
               "Copie a secao [orgaos.SEFAZ_GO] do config.exemplo.toml.")
         return 1
 
-    print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s).")
+    pacing = cfg.orgaos["SEFAZ_GO"].pacing
+    intervalo = (args.intervalo if args.intervalo is not None
+                 else pacing.intervalo_inicial_s)
+
+    print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s), "
+          f"~{intervalo:.0f}s entre elas.")
     print("Os PDFs caem em data/evidencias/SEFAZ_GO/. Nada vai para o banco.")
     vistos = []
-    for documento in documentos:
+    for indice, documento in enumerate(documentos):
+        if indice:
+            _esperar(intervalo, pacing.jitter)
         vistos.append((limpar(documento), conferir_cnpj(documento, cfg)))
     _resumir(vistos)
     _regua()

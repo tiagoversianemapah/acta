@@ -383,3 +383,23 @@ class TestFerramentaDeConferencia:
         saida = capsys.readouterr().out
         assert "os tres tipos apareceram" in saida
         assert "ainda sem exemplo" not in saida
+
+    def test_espera_entre_consultas_tem_variacao(self, ferramenta, monkeypatch):
+        """Espera igual a cada consulta é padrão de robô. E sem espera
+        nenhuma, 15 consultas coladas ganham o "Acesso Negado" do portal —
+        quem espaça no sistema é o orquestrador, e a ferramenta não passa
+        por ele."""
+        dormiu = []
+        monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)
+
+        for _ in range(12):
+            ferramenta._esperar(10.0, jitter=0.3)
+
+        assert len(set(dormiu)) > 1, "intervalo fixo vira assinatura"
+        assert all(7.0 <= s <= 13.0 for s in dormiu), dormiu
+
+    def test_intervalo_zero_nao_dorme(self, ferramenta, monkeypatch):
+        dormiu = []
+        monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)
+        ferramenta._esperar(0, jitter=0.3)
+        assert dormiu == []
