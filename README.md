@@ -71,7 +71,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -e ".[dev]"
 
-pytest                         # 618 testes, sem rede e sem portal
+pytest                         # 621 testes, sem rede e sem portal
 ruff check src tests empacotar ferramentas   # sem apontamentos
 python empacotar/construir.py  # gera o ACTA.exe e os atalhos
 ```

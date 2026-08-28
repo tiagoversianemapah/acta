@@ -435,6 +435,35 @@ class TestFerramentaDeConferencia:
         assert "conferencia" in str(usada.pasta_certidoes)
         assert cfg.pasta_certidoes not in usada.pasta_certidoes.parents
 
+    def test_o_intervalo_padrao_e_curto_e_nao_o_do_robo(self, ferramenta):
+        """São coisas diferentes: o robô atravessa a carteira inteira e usa
+        o pacing conservador do config; aqui são poucas consultas na mão."""
+        cfg = carregar()
+        do_robo = cfg.orgaos["SEFAZ_GO"].pacing.intervalo_inicial_s
+
+        assert do_robo > ferramenta.INTERVALO_PADRAO_S
+        assert ferramenta.INTERVALO_PADRAO_S > 0, "sem espaçamento nenhum, não"
+
+    def test_a_dica_de_continuar_soma_o_pular_ja_usado(self, ferramenta, capsys):
+        """Quem rodou com --pular 12 recebia a sugestão de pular 12 de novo,
+        e reconsultaria exatamente os mesmos CNPJs."""
+        from cnd.core.modelos import ResultadoTentativa
+
+        vistos = [(f"{i:014d}", ResultadoTentativa(Desfecho.NEGATIVA))
+                  for i in range(5)]
+        ferramenta._resumir(vistos, ja_pulados=12)
+
+        assert "--pular 17" in capsys.readouterr().out, "12 ja pulados + 5 vistos"
+
+    def test_sem_pular_anterior_a_dica_continua_certa(self, ferramenta, capsys):
+        from cnd.core.modelos import ResultadoTentativa
+
+        vistos = [(f"{i:014d}", ResultadoTentativa(Desfecho.NEGATIVA))
+                  for i in range(3)]
+        ferramenta._resumir(vistos, ja_pulados=0)
+
+        assert "--pular 3" in capsys.readouterr().out
+
     def test_intervalo_zero_nao_dorme(self, ferramenta, monkeypatch):
         dormiu = []
         monkeypatch.setattr(ferramenta.time, "sleep", dormiu.append)

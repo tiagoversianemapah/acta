@@ -28,11 +28,13 @@ job. Os PDFs caem todos em `data/conferencia/`, e NÃO em `data/certidoes/`:
 conferência não é entrega, e arquivo de teste na pasta de onde sai o pacote
 do cliente é o tipo de coisa que alguém acaba mandando por engano.
 
-As consultas saem ESPAÇADAS. Quem espaça no sistema é o orquestrador, e
-esta ferramenta não passa por ele: chamar `emitir` em laço dispararia tudo
-colado contra um portal que tem resposta pronta para isso ("a requisição
-foi bloqueada pela política de segurança"). O intervalo padrão é o mesmo
-`pacing.intervalo_inicial_s` do config do órgão.
+As consultas saem ESPAÇADAS, mas por um intervalo PRÓPRIO desta ferramenta
+— não o do robô. São coisas diferentes: o robô atravessa centenas de itens
+e o `pacing.intervalo_inicial_s` do config é conservador por causa disso;
+aqui são poucas consultas conferidas na mão. `--intervalo` ajusta.
+
+O espaçamento existe porque quem espaça no sistema é o orquestrador, e esta
+ferramenta não passa por ele: `emitir` em laço dispararia tudo colado.
 """
 from __future__ import annotations
 
@@ -51,6 +53,17 @@ from cnd.core.modelos import COM_PDF, Documento  # noqa: E402
 from cnd.infra.config import carregar  # noqa: E402
 
 LARGURA = 78
+
+# Intervalo entre consultas, em segundos. Baixo de propósito: são poucas
+# consultas, conferidas na mão. O robô é outra conversa — ele atravessa a
+# carteira inteira e usa o `pacing` do config, que é bem mais folgado.
+#
+# Nunca vimos este portal bloquear: as evidências que existem são duas
+# emissões por HTTP que deram certo e uma tentativa por Playwright que
+# devolveu o visualizador de PDF do Edge (e não uma recusa). O adapter trata
+# "Acesso Negado" por precaução, não por ter visto acontecer.
+INTERVALO_PADRAO_S = 3.0
+JITTER_PADRAO = 0.3
 
 
 def _regua(titulo: str = "") -> None:
@@ -101,7 +114,7 @@ def _relatar(rotulo: str, resultado, texto_pdf: str | None) -> None:
         print(f"    [{'x' if casou else ' '}] {nome}")
 
 
-def _resumir(vistos: list[tuple[str, object]]) -> None:
+def _resumir(vistos: list[tuple[str, object]], ja_pulados: int = 0) -> None:
     """Agrupa por desfecho. É o que responde "consegui um de cada tipo?"."""
     if not vistos:
         return
@@ -120,8 +133,11 @@ def _resumir(vistos: list[tuple[str, object]]) -> None:
     print()
     if faltando:
         print(f"  ainda sem exemplo de: {', '.join(faltando)}")
+        # `ja_pulados` entra na conta: sem ele, quem rodou com --pular 12
+        # recebia a sugestao de pular 12 de novo, reconsultando os mesmos.
+        proximo = ja_pulados + len(vistos)
         print("  continue de onde parou com --pular, para nao repetir consulta:")
-        print(f"     ... --limite {len(vistos)} --pular {len(vistos)}")
+        print(f"     ... --limite {len(vistos)} --pular {proximo}")
     else:
         print("  os tres tipos apareceram.")
 
@@ -267,7 +283,7 @@ def main() -> int:
                              "rodada continuar de onde a primeira parou")
     parser.add_argument("--intervalo", type=float, default=None,
                         help="segundos entre consultas "
-                             "(padrao: o pacing do orgao no config)")
+                             "(padrao: 3)")
     args = parser.parse_args()
 
     if args.pdf:
@@ -290,9 +306,8 @@ def main() -> int:
         parser.print_help()
         return 2
 
-    pacing = cfg.orgaos["SEFAZ_GO"].pacing
     intervalo = (args.intervalo if args.intervalo is not None
-                 else pacing.intervalo_inicial_s)
+                 else INTERVALO_PADRAO_S)
 
     print(f"Consultando o portal da SEFAZ-GO — {len(documentos)} consulta(s), "
           f"~{intervalo:.0f}s entre elas.")
@@ -301,9 +316,9 @@ def main() -> int:
     vistos = []
     for indice, documento in enumerate(documentos):
         if indice:
-            _esperar(intervalo, pacing.jitter)
+            _esperar(intervalo, JITTER_PADRAO)
         vistos.append((limpar(documento), conferir_cnpj(documento, cfg)))
-    _resumir(vistos)
+    _resumir(vistos, args.pular)
     _regua()
     return 0
 
