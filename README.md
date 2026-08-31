@@ -265,6 +265,7 @@ o ritmo adaptativo convergindo de verdade, sem gastar consulta no portal.
 | [06 — Roadmap](docs/06-roadmap.md) | Fases e critérios de aceite |
 | [07 — Instalação nas máquinas](docs/07-instalacao-nas-maquinas.md) | Empacotamento, atalhos, AnyDesk |
 | [Fluxo do portal RFB PJ](docs/fluxos/rfb-pj.md) | O caminho real na tela — fonte da verdade do adapter |
+| [Fluxo do portal SEFAZ-GO](docs/fluxos/sefaz-go.md) | O caminho por HTTP, os campos do formulário e como o PDF é classificado |
 | [ADRs](docs/adr/) | As decisões de arquitetura e por que foram tomadas |
 
 ## Como o código está organizado
