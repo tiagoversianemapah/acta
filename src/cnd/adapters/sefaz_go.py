@@ -221,15 +221,41 @@ def _extrair_validade(conteudo: str) -> date | None:
     return None
 
 
+# O que a planilha do cliente mostra quando algo deu errado. Curto e
+# sempre igual, de proposito: quem le o relatorio quer saber que aquele
+# item nao fechou, nao qual excecao do Python apareceu. Antes ia o
+# `HTTPError: HTTP Error 500` cru, ou a pagina inteira do portal, dentro
+# de uma celula do Excel.
+#
+# O detalhe NAO se perde: ele vai para o log, que e onde se diagnostica.
+ERRO_GENERICO = "Erro na consulta. Ver o Registro para o detalhe."
+ERRO_BLOQUEIO = "O portal recusou a consulta."
+
+
+def _mensagem(desfecho: Desfecho, texto: str) -> str:
+    """A mensagem que vai para o relatorio.
+
+    Resultado de NEGOCIO leva o texto do portal, que e informacao util a
+    quem trata o caso ("CNPJ invalido" diz o que fazer). ERRO leva frase
+    fixa: o "erro especifico" e assunto do log, nao da entrega.
+    """
+    if desfecho == Desfecho.BLOQUEIO_TEMPORARIO:
+        return ERRO_BLOQUEIO
+    if desfecho == Desfecho.ERRO_TECNICO:
+        return ERRO_GENERICO
+    return texto.strip()[:500]
+
+
 def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
     """Classifica a certidao pelo PDF, que e a unica resposta entregavel."""
     try:
         conteudo = _texto_pdf(caminho)
     except Exception as erro:
-        log.warning("pdf_ilegivel", extra={"arquivo": str(caminho), "erro": str(erro)})
+        log.warning("pdf_ilegivel", extra={"arquivo": str(caminho),
+                                          "erro": str(erro)[:300]})
         return ResultadoTentativa(
             Desfecho.ERRO_TECNICO,
-            mensagem_portal=f"PDF baixado mas ilegivel: {erro}"[:300],
+            mensagem_portal=ERRO_GENERICO,
             evidencia=caminho,
         )
 
@@ -274,9 +300,7 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
                        "trecho": (escopo or normalizado)[:250]})
     return ResultadoTentativa(
         Desfecho.ERRO_TECNICO,
-        mensagem_portal=("PDF da SEFAZ-GO diz negativa E positiva ao mesmo "
-                         "tempo - conferir manualmente") if nega and afirma
-                        else "PDF da SEFAZ-GO nao reconhecido - conferir manualmente",
+        mensagem_portal=ERRO_GENERICO,
         evidencia=caminho,
     )
 
@@ -320,11 +344,13 @@ class AdapterSEFAZGO:
         try:
             return self._consultar(doc)
         except Exception as erro:
+            # O tipo e o texto da excecao ficam AQUI, no log.
             log.warning("falha_na_consulta", extra={
-                "documento": doc.documento, "erro": str(erro)[:200]})
+                "documento": doc.documento,
+                "erro": f"{type(erro).__name__}: {erro}"[:300]})
             return ResultadoTentativa(
                 Desfecho.ERRO_TECNICO,
-                mensagem_portal=f"{type(erro).__name__}: {erro}"[:500],
+                mensagem_portal=ERRO_GENERICO,
             )
 
     def _headers(self, referer: str = "") -> dict[str, str]:
@@ -399,9 +425,12 @@ class AdapterSEFAZGO:
         texto_inicial = texto_da_resposta(inicial)
         desfecho_inicial = classificar_texto(texto_inicial)
         if inicial.status >= 400 or desfecho_inicial == Desfecho.BLOQUEIO_TEMPORARIO:
+            log.warning("tela_inicial_recusada", extra={
+                "desfecho": str(desfecho_inicial),
+                "trecho": texto_inicial[:300]})
             return ResultadoTentativa(
                 desfecho_inicial,
-                mensagem_portal=texto_inicial[:500],
+                mensagem_portal=_mensagem(desfecho_inicial, texto_inicial),
             )
 
         dados = self._dados(doc)
@@ -427,9 +456,13 @@ class AdapterSEFAZGO:
                 )
             texto = texto_da_resposta(confirmada)
 
+        desfecho = classificar_texto(texto)
+        if desfecho in (Desfecho.ERRO_TECNICO, Desfecho.BLOQUEIO_TEMPORARIO):
+            log.warning("resposta_sem_pdf", extra={"desfecho": str(desfecho),
+                                                   "trecho": texto[:300]})
         return ResultadoTentativa(
-            classificar_texto(texto),
-            mensagem_portal=texto[:500],
+            desfecho,
+            mensagem_portal=_mensagem(desfecho, texto),
         )
 
     def _salvar_pdf(self, conteudo: bytes, doc: Documento,

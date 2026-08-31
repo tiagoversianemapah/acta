@@ -969,3 +969,94 @@ class TestPositivaECpenReais:
             normalizado = " ".join(sefaz_go._sem_acento(texto).split())
             assert sefaz_go.RE_TITULO_POSITIVA.search(normalizado)
             assert not sefaz_go.RE_TITULO_NEGATIVA.search(normalizado)
+
+
+class TestMensagemDeErro:
+    """O relatório do cliente diz QUE deu erro, não QUAL exceção do Python.
+
+    Antes ia o `HTTPError: HTTP Error 500` cru — ou a página inteira do
+    portal — para dentro de uma célula do Excel. O detalhe não se perde:
+    vai para o log, que é onde se diagnostica.
+    """
+
+    def _adapter(self, tmp_path):
+        cfg = replace(carregar(), pasta_certidoes=tmp_path / "c",
+                      pasta_evidencias=tmp_path / "e")
+        return sefaz_go.AdapterSEFAZGO(orgao="SEFAZ_GO", cfg=cfg)
+
+    def test_excecao_nao_vaza_para_o_relatorio(self, tmp_path, monkeypatch):
+        def explodir(_doc):
+            raise ConnectionResetError("Connection aborted by peer 10054")
+
+        adapter = self._adapter(tmp_path)
+        monkeypatch.setattr(adapter, "_consultar", explodir)
+        doc = Documento(empresa_id=1, documento=CNPJ, tipo="CNPJ",
+                        nome="X", lote_id=1)
+
+        resultado = adapter.emitir(doc)
+
+        assert resultado.desfecho == Desfecho.ERRO_TECNICO
+        assert resultado.mensagem_portal == sefaz_go.ERRO_GENERICO
+        assert "ConnectionResetError" not in resultado.mensagem_portal
+        assert "10054" not in resultado.mensagem_portal
+
+    def test_o_detalhe_vai_para_o_log(self, tmp_path, monkeypatch):
+        """Handler preso ao logger `cnd`, e não `caplog`.
+
+        `infra.log.configurar` põe `propagate = False` na raiz `cnd`, então
+        o caplog — que escuta o logger raiz do Python — não vê nada depois
+        que qualquer outro teste configura o log. Isolado passava; na suíte
+        inteira, não.
+        """
+        import logging
+
+        def explodir(_doc):
+            raise ConnectionResetError("Connection aborted by peer 10054")
+
+        capturado = []
+
+        class Espiao(logging.Handler):
+            def emit(self, registro):
+                capturado.append(registro)
+
+        espiao = Espiao()
+        logger = logging.getLogger("cnd")
+        logger.addHandler(espiao)
+        nivel = logger.level
+        logger.setLevel(logging.WARNING)
+        try:
+            adapter = self._adapter(tmp_path)
+            monkeypatch.setattr(adapter, "_consultar", explodir)
+            adapter.emitir(Documento(empresa_id=1, documento=CNPJ,
+                                     tipo="CNPJ", nome="X", lote_id=1))
+        finally:
+            logger.removeHandler(espiao)
+            logger.setLevel(nivel)
+
+        detalhe = " ".join(str(getattr(r, "erro", "")) for r in capturado)
+        assert "ConnectionResetError" in detalhe, "perdeu o diagnóstico"
+        assert "10054" in detalhe
+
+    def test_pdf_ilegivel_tambem_e_generico(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(sefaz_go, "_texto_pdf",
+                            lambda _c: (_ for _ in ()).throw(ValueError("EOF marker")))
+        alvo = tmp_path / "c.pdf"
+        alvo.write_bytes(b"nao sou pdf")
+
+        resultado = sefaz_go.ler_pdf(alvo, "x")
+
+        assert resultado.mensagem_portal == sefaz_go.ERRO_GENERICO
+        assert "EOF" not in resultado.mensagem_portal
+
+    def test_resultado_de_negocio_mantem_o_texto_do_portal(self):
+        """"CNPJ invalido" diz a quem trata o caso o que fazer. Apagar isso
+        junto com os erros técnicos seria jogar fora informação útil."""
+        texto = "CNPJ invalido para emissao"
+
+        assert sefaz_go._mensagem(Desfecho.PENDENCIA_MANUAL, texto) == texto
+        assert sefaz_go._mensagem(Desfecho.POSITIVA, "Consta debito") == "Consta debito"
+
+    def test_bloqueio_tem_recado_proprio(self):
+        assert sefaz_go._mensagem(Desfecho.BLOQUEIO_TEMPORARIO,
+                                  "<html>Acesso Negado ...</html>") == \
+            sefaz_go.ERRO_BLOQUEIO
