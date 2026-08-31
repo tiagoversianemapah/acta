@@ -308,8 +308,21 @@ intervalo_teto_s    = 600.0
 acelera_apos        = 20
 fator_aceleracao    = 0.85
 fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4        # bloqueio temporario recua menos que captcha
 jitter              = 0.3
 janela_ativa        = "00:00-24:00"
+
+# Mesma politica da Receita: o lote fecha sozinho. Aqui os desfechos que
+# levam a FAILED sao todos passageiros - erro de rede, 5xx do portal,
+# resposta sem PDF. Nenhum deles e a SEFAZ respondendo sobre a empresa,
+# entao deixar o item parado seria trabalho nao entregue esperando alguem
+# lembrar de apertar "Reenviar itens com falha".
+[orgaos.SEFAZ_GO.recuperacao]
+ativa            = true
+espera_inicial_s = 1800             # 30 min ate a 1a recuperacao
+fator            = 2.0              # dobra a cada rodada que nao resolve
+espera_maxima_s  = 21600            # teto de 6h entre rodadas
+avisar_apos      = 5                # so entao chamar gente; o robo segue tentando
 
 [orgaos.SEFAZ_GO.breaker]
 captchas_para_abrir = 3
