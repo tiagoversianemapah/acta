@@ -90,7 +90,13 @@ document.addEventListener('change', function (evento) {
 marcarEscolhidas();
 
 function atualizarExportacao(raiz) {
-  (raiz || document).querySelectorAll('[data-exportar-form]').forEach(function (form) {
+  var formularios = [];
+  if (raiz && raiz.matches && raiz.matches('[data-exportar-form]')) {
+    formularios = [raiz];
+  } else {
+    formularios = Array.from((raiz || document).querySelectorAll('[data-exportar-form]'));
+  }
+  formularios.forEach(function (form) {
     var todas = form.querySelector('[data-exportar-todas]');
     var escolhendo = todas && !todas.checked;
     var lista = form.querySelector('[data-exportar-opcoes]');
