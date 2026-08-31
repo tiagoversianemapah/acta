@@ -64,8 +64,23 @@ RE_VALIDADOR = re.compile(r"VALIDADOR:\s*([0-9.]+)", re.IGNORECASE)
 RE_TITULO_NEGATIVA = re.compile(r"divida ativa\s*[-–]\s*negativa")
 RE_TITULO_POSITIVA = re.compile(
     r"divida ativa\s*[-–]\s*positiva|certidao positiva")
-# "consta debito" que NAO seja o final de "nao consta debito".
-RE_CONSTA_DEBITO = re.compile(r"(?<!nao )consta debito")
+
+# CPEN. O portal NAO escreve "positiva com efeito de negativa": o titulo e
+# "... - POSITIVA" e a linha seguinte e "COM EFEITO NEGATIVO(PARCELAMENTO)".
+# Antes so havia "positiva com efeito", que casava por acidente - o colapso
+# de espacos juntava "positiva" da linha de cima com "com efeito negativo"
+# da de baixo. Bastava o PDF quebrar a linha noutro ponto para uma CPEN
+# virar POSITIVA, e CPEN VALE como regularidade: o cliente perderia uma
+# certidao que tinha direito de receber.
+RE_CPEN = re.compile(r"positiva com efeito|com efeito negativo|parcelamento")
+
+# O que o DESPACHO escreve quando ha debito. "possui debito inscrito na
+# divida ativa, relativo a N processo(s)" e a forma real, conferida em 299
+# certidoes de 28/08/2026; "consta debito" fica como rede, porque o adapter
+# foi escrito com ela e nao custa manter.
+# O `(?<!nao )` impede que o "consta debito" de dentro de "nao consta
+# debito" conte como debito - um e substring do outro.
+RE_CONSTA_DEBITO = re.compile(r"(?<!nao )consta debito|possui debito")
 # O DESPACHO e a linha operativa da certidao - o que o Estado esta
 # afirmando sobre aquele contribuinte. Conferido num documento real em
 # 28/08/2026: entre "DESPACHO (Certidao valida para a matriz e suas
@@ -235,7 +250,7 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
     despacho = RE_DESPACHO.search(normalizado)
     escopo = despacho.group(1) if despacho else normalizado
 
-    if "positiva com efeito" in normalizado:
+    if RE_CPEN.search(normalizado):
         return ResultadoTentativa(Desfecho.CPEN, caminho_pdf=caminho, **comuns)
     if RE_TITULO_NEGATIVA.search(normalizado):
         return ResultadoTentativa(Desfecho.NEGATIVA, caminho_pdf=caminho, **comuns)

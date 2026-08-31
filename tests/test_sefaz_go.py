@@ -869,3 +869,103 @@ class TestAmostraDaPlanilha:
 
         assert len(resto) == 34
         assert resto[0] == f"{16:014d}", "tem de continuar do 17o"
+
+
+# Transcritas de certidoes REAIS de 28/08/2026, com nome e CNPJ trocados.
+# Foram elas que mostraram que o portal nao escreve o que eu supunha.
+CERTIDAO_REAL_POSITIVA = """ESTADO DE GOIAS
+SECRETARIA DE ESTADO DA ECONOMIA
+CERTIDAO DE DEBITO EM DIVIDA ATIVA - POSITIVA
+NR. CERTIDAO: N 74798818
+NOME: CNPJ
+EMPRESA DE TESTE LTDA                     11.222.333/0001-81
+DESPACHO (Certidao valida para a matriz e suas filiais):
+POSSUI DEBITO INSCRITO NA DIVIDA ATIVA, RELATIVO A
+30 PROCESSO(S).
+PROCESSOS:
+2013359911156 2007530811160 4012300917703
+FUNDAMENTO LEGAL:
+Esta certidao e expedida nos termos da alinea 'a' do inciso II do artigo 2.
+SEGURANCA:
+Certidao VALIDA POR 120 DIAS.
+Fica ressalvado o direito de a Fazenda Publica Estadual inscrever na divida
+ativa e COBRAR EVENTUAIS DEBITOS QUE VIEREM A SER APURADOS.
+VALIDADOR: 5.555.581.482.162                    EMITIDA VIA INTERNET
+SGTI-SEFAZ:  LOCAL E DATA: GOIANIA, 28 AGOSTO DE 2026     HORA: 18:43:5:8
+"""
+
+CERTIDAO_REAL_CPEN = """ESTADO DE GOIAS
+SECRETARIA DE ESTADO DA ECONOMIA
+CERTIDAO DE DEBITO EM DIVIDA ATIVA - POSITIVA
+COM EFEITO NEGATIVO(PARCELAMENTO)
+NR. CERTIDAO: N 74798740
+NOME: CNPJ
+EMPRESA DE TESTE LTDA                     11.222.333/0001-81
+DESPACHO (Certidao valida para a matriz e suas filiais):
+POR FORCA DO PARAG. UNICO, ART.195, LEI 11651/91, DE
+26 DE DEZEMBRO DE 1991, ESTA CERTIDAO NAO DA DIREITO
+A ALIENACAO DE QUALQUER BEM PATRIMONIAL DO SUJEITO
+PASSIVO, ESPECIALMENTE BEM IMOVEL.
+PROCESSOS:
+2564428922235
+FUNDAMENTO LEGAL:
+Esta certidao e expedida nos termos do inciso IV do artigo 3.
+SEGURANCA:
+Certidao VALIDA POR 120 DIAS.
+VALIDADOR: 5.555.386.714.165                    EMITIDA VIA INTERNET
+SGTI-SEFAZ:  LOCAL E DATA: GOIANIA, 28 AGOSTO DE 2026     HORA: 18:40:25:9
+"""
+
+
+class TestPositivaECpenReais:
+    """Os dois documentos que o portal so mostrou depois de 299 consultas.
+
+    Eles derrubaram duas suposicoes: a positiva nao diz "consta debito", diz
+    "POSSUI DEBITO INSCRITO"; e a CPEN nao diz "positiva com efeito de
+    negativa", diz "- POSITIVA" numa linha e "COM EFEITO NEGATIVO
+    (PARCELAMENTO)" na seguinte.
+    """
+
+    def _classificar(self, texto, tmp_path, monkeypatch) -> Desfecho:
+        monkeypatch.setattr(sefaz_go, "_texto_pdf", lambda _c: texto)
+        alvo = tmp_path / "c.pdf"
+        alvo.write_bytes(b"%PDF-1.4")
+        return sefaz_go.ler_pdf(alvo, "conferencia").desfecho
+
+    def test_a_positiva_real(self, tmp_path, monkeypatch):
+        assert self._classificar(CERTIDAO_REAL_POSITIVA, tmp_path,
+                                 monkeypatch) == Desfecho.POSITIVA
+
+    def test_a_cpen_real(self, tmp_path, monkeypatch):
+        assert self._classificar(CERTIDAO_REAL_CPEN, tmp_path,
+                                 monkeypatch) == Desfecho.CPEN
+
+    def test_a_cpen_nao_depende_da_quebra_de_linha(self, tmp_path, monkeypatch):
+        """O marcador antigo era "positiva com efeito", e ele só casava
+        porque o colapso de espaços juntava "POSITIVA" de uma linha com "COM
+        EFEITO NEGATIVO" da seguinte. Quebrar em outro ponto transformava a
+        CPEN em POSITIVA — e CPEN VALE como regularidade, então o cliente
+        perderia uma certidão a que tem direito."""
+        embaralhado = CERTIDAO_REAL_CPEN.replace(
+            "- POSITIVA\nCOM EFEITO NEGATIVO(PARCELAMENTO)",
+            "- POSITIVA\nNR. CERTIDAO: N 1\nCOM EFEITO NEGATIVO(PARCELAMENTO)")
+
+        assert self._classificar(embaralhado, tmp_path,
+                                 monkeypatch) == Desfecho.CPEN
+
+    def test_a_cpen_e_entregavel_e_a_positiva_nao(self, tmp_path, monkeypatch):
+        cpen = self._classificar(CERTIDAO_REAL_CPEN, tmp_path, monkeypatch)
+        positiva = self._classificar(CERTIDAO_REAL_POSITIVA, tmp_path,
+                                     monkeypatch)
+
+        assert cpen in COM_PDF, "CPEN vale como regularidade"
+        assert positiva not in COM_PDF, "positiva nao vai para o cliente"
+
+    def test_o_titulo_da_positiva_nao_tem_inscrito(self):
+        """A negativa diz "DEBITO INSCRITO EM DIVIDA ATIVA"; a positiva diz
+        "DEBITO EM DIVIDA ATIVA". Marcador que exigisse o "inscrito" nas duas
+        deixaria a positiva sem titulo reconhecido."""
+        for texto in (CERTIDAO_REAL_POSITIVA, CERTIDAO_REAL_CPEN):
+            normalizado = " ".join(sefaz_go._sem_acento(texto).split())
+            assert sefaz_go.RE_TITULO_POSITIVA.search(normalizado)
+            assert not sefaz_go.RE_TITULO_NEGATIVA.search(normalizado)
