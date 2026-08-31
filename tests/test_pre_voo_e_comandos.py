@@ -664,3 +664,26 @@ class TestComandosPelaRede:
         banco = conn.execute("PRAGMA database_list").fetchone()[2]
 
         assert comandos._robo_rodando(banco)
+
+    def test_falha_ao_zerar_vira_recado_e_vai_para_o_log(self, monkeypatch,
+                                                         tmp_path):
+        """500 sem corpo, sem log e sem pista é o pior desfecho possível:
+        o botão não funciona e a máquina não diz por quê. Aconteceu de
+        verdade em 31/08/2026, numa máquina em produção."""
+        from cnd.infra import limpeza
+
+        def explodir(*_a, **_k):
+            raise RuntimeError("disco cheio ao apagar")
+
+        monkeypatch.setattr(limpeza, "zerar", explodir)
+        monkeypatch.setattr(comandos, "_robo_rodando", lambda _b: False)
+
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            resposta = cliente.post(
+                "/api/zerar", headers={"X-CND-Senha": "segredo"},
+                data={"confirmar": "APAGAR TUDO"})
+
+        assert resposta.status_code == 500
+        detalhe = resposta.json()["detail"]
+        assert "Registro" in detalhe, "precisa dizer onde procurar o motivo"
+        assert "disco cheio" not in detalhe, "detalhe tecnico e do log"

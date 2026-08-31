@@ -416,11 +416,25 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         from cnd.infra import limpeza
         from cnd.infra.db import conectar, criar_schema
 
+        # Sem este try, uma falha aqui escapava para o FastAPI e virava um
+        # "500 Internal Server Error" sem corpo, sem log e sem pista: o
+        # botao nao funcionava e a maquina nao dizia por que. O detalhe vai
+        # para o Registro, que e onde se diagnostica; quem apertou o botao
+        # recebe recado curto.
         conn = conectar(cfg.banco)
         try:
             criar_schema(conn)
             resultado = limpeza.zerar(
                 conn, (cfg.pasta_certidoes, cfg.pasta_evidencias))
+        except Exception as erro:
+            log.exception("falha_ao_zerar", extra={
+                "erro": f"{type(erro).__name__}: {erro}"[:500],
+                "banco": str(cfg.banco)})
+            raise HTTPException(
+                status_code=500,
+                detail="Nao consegui zerar a maquina. O motivo ficou no "
+                       "Registro desta maquina (aba Diagnostico).",
+            ) from erro
         finally:
             conn.close()
 
