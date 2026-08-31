@@ -263,7 +263,7 @@
     border:0;background:transparent;color:rgba(234,242,255,.7);
   }
   .painel-sidebar .secao-topo h2{
-    font-size:13px;text-transform:uppercase;letter-spacing:.04em;color:rgba(234,242,255,.72);
+    font-size:13px;text-transform:uppercase;letter-spacing:0;color:rgba(234,242,255,.72);
   }
   .painel-sidebar .contador-secao{display:none}
   .painel-sidebar .lista-maquinas{gap:.78rem}
@@ -302,14 +302,15 @@
   }
 
   .operacao-topo{
-    display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;
-    padding:1.2rem 1.35rem 1rem;border-bottom:1px solid transparent;
+    display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    padding:1.25rem 1.35rem 1rem;border-bottom:1px solid var(--linha);
+    background:#fff;
   }
   .identidade{min-width:0}
   .linha-identidade{display:flex;align-items:center;gap:.72rem;flex-wrap:wrap}
   .linha-identidade h2{font-size:22px}
   .identidade p{margin:.2rem 0 0;color:var(--texto-3);font-size:12.5px;word-break:break-word}
-  .acoes-operacao{display:flex;align-items:center;justify-content:flex-end;gap:.5rem;flex-wrap:wrap}
+  .acoes-operacao{display:flex;align-items:center;justify-content:flex-end;gap:.6rem;flex-wrap:wrap}
   .acoes-operacao form{display:inline;margin:0}
 
   .faixa-operacao{
@@ -983,6 +984,29 @@
   }
   .dialogo-acoes{display:flex;justify-content:flex-end;gap:.5rem;flex-wrap:wrap}
   .dialogo-acoes .primario[disabled]{opacity:.65;cursor:progress}
+  .dialogo-exportar{width:min(520px,calc(100vw - 2rem))}
+  .exportar-todas,.exportar-item{
+    display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;
+    gap:.65rem;color:var(--texto);font-weight:750;
+  }
+  .exportar-todas{
+    min-height:42px;padding:.5rem 0;border-bottom:1px solid var(--linha);
+  }
+  .exportar-todas input,.exportar-item input{
+    width:16px;height:16px;margin:0;accent-color:var(--azul-acao);
+  }
+  .exportar-lista{
+    display:grid;margin:.1rem 0 0;border-bottom:1px solid var(--linha);
+  }
+  .exportar-lista[hidden]{display:none}
+  .exportar-item{
+    min-height:48px;padding:.55rem 0;border-top:1px solid var(--linha);
+  }
+  .exportar-item:first-child{border-top:0}
+  .exportar-item strong,.exportar-item small{
+    display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .exportar-item small{font-size:11.5px;color:var(--texto-3);font-weight:650}
 
   /* Tela de mapear aba -> automação.
 
@@ -990,26 +1014,34 @@
      da automação tem um controle dentro, não um dado. Tabela apertaria
      tudo na altura do texto. */
   .mapear{
-    max-width:1040px;margin:0 auto;background:var(--branco);
-    border:1px solid var(--linha);border-radius:14px;overflow:hidden;
-    box-shadow:0 24px 60px rgba(15,23,42,.10);
+    max-width:1180px;margin:0 auto;background:var(--branco);
+    border:1px solid var(--linha);border-radius:0;overflow:hidden;
+    box-shadow:none;
   }
   .mapear-topo{
     display:grid;grid-template-columns:auto minmax(0,1fr) auto;
-    align-items:start;gap:1.1rem;padding:1.5rem 1.6rem 1.35rem;
-    border-bottom:1px solid var(--linha);
+    align-items:center;gap:1rem;padding:1.15rem 1.45rem;
+    border-bottom:1px solid var(--linha);background:linear-gradient(180deg,#fff,#FBFCFF);
   }
   .mapear-icone{
-    width:52px;height:52px;border-radius:12px;display:grid;place-items:center;
+    width:44px;height:44px;border-radius:8px;display:grid;place-items:center;
     background:var(--verde-fundo);border:1px solid #C7EBD5;color:var(--verde);
   }
   .mapear-icone svg{
-    width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.8;
+    width:23px;height:23px;fill:none;stroke:currentColor;stroke-width:1.8;
     stroke-linecap:round;stroke-linejoin:round;
   }
   .mapear-titulo{min-width:0}
-  .mapear-titulo h1{font-size:22px;margin:.25rem 0 0;word-break:break-all}
-  .mapear-titulo .sub{margin:.5rem 0 0;font-size:13px;max-width:70ch}
+  .mapear-titulo h1{
+    font-size:22px;margin:.15rem 0 .35rem;word-break:break-word;
+  }
+  .mapear-resumo{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+  .mapear-resumo span{
+    display:inline-flex;align-items:center;gap:.32rem;min-height:25px;
+    padding:.18rem .5rem;border:1px solid var(--linha);border-radius:999px;
+    background:#fff;color:var(--texto-2);font-size:12px;font-weight:750;
+  }
+  .mapear-resumo b{font:850 12px var(--mono);color:var(--texto)}
   .mapear-fechar{gap:.45rem}
   .mapear-fechar svg{
     width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2.2;
@@ -1017,25 +1049,46 @@
   }
 
   .mapear-form{padding:0 0 1.35rem}
+  .mapear-ok,.mapear-erro{
+    margin:1rem 1.6rem 0;padding:.75rem .9rem;border:1px solid #F0BBB6;
+    border-radius:8px;font-weight:800;
+  }
+  .mapear-ok{
+    border-color:#B9E5C9;background:var(--verde-fundo);color:var(--verde);
+  }
+  .mapear-erro{background:var(--vermelho-fundo);color:var(--vermelho)}
   /* A MESMA grade no cabeçalho e nas linhas: definida uma vez, as colunas
      não têm como desalinhar quando uma das duas mudar. */
   .mapear-cabecalho,.mapear-linha{
-    display:grid;grid-template-columns:minmax(0,1fr) 110px 340px;
-    align-items:center;gap:1.4rem;padding:0 1.6rem;
+    display:grid;grid-template-columns:minmax(220px,1fr) 96px minmax(320px,420px);
+    align-items:center;gap:1.25rem;padding:0 1.45rem;
   }
   .mapear-cabecalho{
-    padding-top:1rem;padding-bottom:.7rem;
+    padding-top:.78rem;padding-bottom:.62rem;
     font-size:11px;font-weight:800;text-transform:uppercase;
     color:var(--texto-3);border-bottom:1px solid var(--linha);
+    background:#F8FAFD;
   }
   .mapear-linha{
-    min-height:74px;border-bottom:1px solid var(--linha);
+    min-height:70px;border-bottom:1px solid var(--linha);
     transition:background-color .15s ease;
   }
   .mapear-linha:hover{background:var(--faixa)}
+  .mapear-linha.tem-aviso{background:#FFFCF2}
+  .mapear-linha.bloqueada{background:linear-gradient(90deg,#FFFCF2,#fff 210px)}
   .mapear-aba{display:flex;align-items:center;gap:.7rem;min-width:0}
-  .mapear-aba strong{font-size:14.5px;font-weight:800}
+  .mapear-aba > span{display:grid;gap:.08rem;min-width:0}
+  .mapear-aba strong{font-size:14.5px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mapear-aba small{color:var(--texto-3);font-size:12px}
+  .mapear-sugestao{display:flex;align-items:center;gap:.35rem;min-width:0}
+  .mapear-sugestao::before{
+    content:"";width:7px;height:7px;border-radius:50%;background:var(--verde);
+  }
+  .mapear-sugestao.bloqueada::before{background:var(--ambar)}
+  .mapear-sugestao em{
+    min-width:0;color:var(--ambar);font-style:normal;font-weight:750;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
   .mapear-folha{
     width:19px;height:19px;flex:0 0 19px;fill:none;stroke:var(--texto-3);
     stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;
@@ -1054,7 +1107,7 @@
   .mapear-escolha select{
     width:100%;appearance:none;padding:.68rem 2.2rem .68rem .85rem;
     font:inherit;font-size:13.5px;color:var(--texto);cursor:pointer;
-    border:1px solid var(--linha-forte);border-radius:10px;background:#fff;
+    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
     text-overflow:ellipsis;
     transition:border-color .15s ease,box-shadow .15s ease;
   }
@@ -1073,27 +1126,53 @@
     border-style:dashed;
   }
   .mapear-escolha .chevron{
-    position:absolute;right:.8rem;top:50%;transform:translateY(-50%);
+    position:absolute;right:.8rem;top:1rem;
     width:16px;height:16px;pointer-events:none;fill:none;
     stroke:var(--texto-3);stroke-width:2;stroke-linecap:round;
     stroke-linejoin:round;
   }
+  .mapear-alerta{
+    display:block;margin-top:.5rem;padding:.58rem .7rem;border-radius:8px;
+    background:var(--ambar-fundo);border:1px solid #F6E3AE;
+    color:var(--ambar);font-size:12px;line-height:1.35;font-weight:700;
+  }
+  .mapear-alerta[hidden]{display:none}
 
   .mapear-nota,.mapear-aviso{
     display:flex;align-items:flex-start;gap:.65rem;
-    margin:1.1rem 1.6rem 0;padding:.8rem .9rem;border-radius:10px;
+    margin:1rem 1.45rem 0;padding:.8rem .9rem;border-radius:8px;
     font-size:12.5px;line-height:1.5;
   }
-  .mapear-nota{color:var(--texto-2);background:var(--faixa-2);border:1px solid var(--linha)}
+  .mapear-nota{
+    color:var(--texto-2);background:#FFFCF2;border:1px solid #F6E3AE;
+  }
   .mapear-aviso{color:#14213F;background:var(--azul-claro);border:1px solid #DCE6FA}
   .mapear-nota svg,.mapear-aviso svg{
     width:17px;height:17px;flex:0 0 17px;margin-top:.08rem;fill:none;
     stroke:currentColor;stroke-width:1.8;stroke-linecap:round;
     stroke-linejoin:round;opacity:.75;
   }
+  .mapear-nota strong{display:block;margin-bottom:.45rem;color:var(--texto)}
+  .mapear-bloqueios{display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+  .mapear-bloqueio-item{
+    display:inline-flex;align-items:center;gap:.38rem;min-height:28px;
+    padding:.18rem .52rem;border:1px solid #F6E3AE;border-radius:999px;
+    background:#fff;
+  }
+  .mapear-bloqueios b{font-weight:850;color:var(--texto)}
+  .mapear-bloqueios small{color:var(--ambar);font-weight:750}
+  .mapear-bloqueio-item .botao.mini{
+    min-height:24px;padding:.16rem .48rem;border-radius:999px;
+    font-size:11px;background:var(--ambar-fundo);border-color:#F6E3AE;
+    color:var(--ambar);box-shadow:none;
+  }
+  .mapear-bloqueio-item .botao.mini:hover{background:#FFF1C7}
   .mapear-acoes{
+    position:sticky;bottom:0;z-index:5;
     display:flex;align-items:center;justify-content:flex-end;gap:.6rem;
-    margin:1.35rem 1.6rem 0;
+    margin:1.2rem 0 0;padding:1rem 1.45rem;
+    border-top:1px solid var(--linha);background:rgba(255,255,255,.96);
+    backdrop-filter:saturate(140%) blur(10px);
   }
   .mapear-acoes .primario{gap:.5rem}
   .mapear-acoes .primario svg{
@@ -1112,6 +1191,7 @@
     .mapear-topo{grid-template-columns:auto minmax(0,1fr)}
     .mapear-topo form{grid-column:2;justify-self:start}
     .mapear-acoes{flex-direction:column-reverse;align-items:stretch}
+    .mapear{border-left:0;border-right:0}
   }
 
   /* "Está indo" precisa ser visível sem ler: o giro conta o tempo que a
@@ -1119,6 +1199,9 @@
      não mostra progresso nenhum. */
   .botao.carregando,.primario.carregando{
     pointer-events:none;opacity:.75;cursor:progress;
+  }
+  .upload-planilha .botao.carregando{
+    border-color:#93C5FD;background:#EFF6FF;color:#1D4ED8;
   }
   .botao.carregando svg:first-child,.primario.carregando svg:first-child{
     animation:girando .9s linear infinite;transform-origin:50% 50%;
@@ -1133,6 +1216,44 @@
      conteúdo tem, senão encostaria nas bordas da seção. */
   .aviso-conteudo{margin:1.35rem 1.6rem 0}
 
+  .planilhas-salvas{
+    margin:1rem 1.35rem 0;padding:1rem;border:1px solid #DCE6FA;
+    border-radius:8px;background:#F8FBFF;
+  }
+  .planilhas-salvas-topo{
+    display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;
+    margin-bottom:.75rem;color:var(--texto-3);
+  }
+  .planilhas-salvas-topo strong{
+    display:block;margin-top:.12rem;color:var(--texto);font-size:15px;
+  }
+  .planilhas-salvas-topo > span{
+    font:800 12px var(--mono);color:#244783;white-space:nowrap;
+  }
+  .planilhas-salvas-lista{
+    display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));
+    gap:.65rem;
+  }
+  .planilha-salva{
+    display:grid;grid-template-columns:36px minmax(0,1fr) auto;
+    align-items:center;gap:.75rem;padding:.75rem .85rem;
+    border:1px solid var(--linha);border-radius:8px;background:#fff;
+    color:inherit;text-decoration:none;min-width:0;
+    box-shadow:0 10px 24px rgba(37,99,235,.045);
+  }
+  .planilha-salva:hover{
+    color:inherit;border-color:#B7C8E6;background:#FCFDFF;
+    box-shadow:0 12px 28px rgba(37,99,235,.07);
+  }
+  .planilha-salva strong,.planilha-salva small{
+    display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .planilha-salva strong{font-size:13.5px}
+  .planilha-salva small{color:var(--texto-3);font-size:11.5px;margin-top:.05rem}
+  .planilha-salva b{
+    color:var(--azul-acao);font-size:12px;white-space:nowrap;
+  }
+
   /* Controle da fila, na linha de cada automação — é onde a decisão
      acontece. Botão pequeno de propósito: são ações de exceção, e dar a
      eles o peso do "Iniciar robô" faria a tabela gritar. */
@@ -1141,7 +1262,9 @@
   .botao.mini,.primario.mini{
     min-height:0;padding:.3rem .7rem;font-size:11.5px;border-radius:99px;
   }
-  .botao.mini.perigo{color:var(--vermelho);border-color:var(--linha)}
+  .botao.mini.perigo{
+    color:var(--vermelho);border-color:#F0BBB6;background:#fff;
+  }
   .botao.mini.perigo:hover{border-color:var(--vermelho);background:var(--vermelho-fundo)}
   .botao.mini[disabled],.primario.mini[disabled]{opacity:.6;cursor:progress}
 
@@ -1149,35 +1272,40 @@
      só. A barra amarela à esquerda é o mesmo sinal de "está rodando" que a
      linha da fila usa — o olho acha os dois de uma vez. */
   .trabalho-atual{
-    margin:.9rem 1.35rem;padding:1.1rem 1.25rem;border-radius:10px;
-    background:var(--faixa);border:1px solid var(--linha);
+    margin:.45rem 0 0;padding:1.25rem 1.35rem 1.1rem 1.6rem;
+    background:linear-gradient(90deg,rgba(245,158,11,.08),#fff 220px);
+    border-top:1px solid var(--linha);border-bottom:1px solid var(--linha);
     position:relative;overflow:hidden;
   }
   .trabalho-atual::before{
     content:"";position:absolute;left:0;top:0;bottom:0;width:5px;
     background:var(--amarelo);
   }
+  .trabalho-atual.completo{
+    background:linear-gradient(90deg,rgba(5,150,105,.08),#fff 220px);
+  }
+  .trabalho-atual.completo::before{background:var(--verde)}
   .trabalho-topo{
     display:flex;align-items:flex-start;justify-content:space-between;
     gap:1.2rem;flex-wrap:wrap;
   }
   .trabalho-quem{min-width:0}
   .trabalho-quem strong{
-    display:block;font-size:17px;font-weight:800;margin:.2rem 0 .1rem;
+    display:block;font-size:20px;font-weight:850;margin:.22rem 0 .1rem;
     word-break:break-word;
   }
   .trabalho-quem small{color:var(--texto-3);font-size:12.5px}
   .trabalho-quem small b{color:var(--texto);font-weight:800}
   .trabalho-numeros{text-align:right;white-space:nowrap}
   .trabalho-numeros b{
-    font-size:22px;font-weight:800;font-family:var(--mono);
+    font-size:28px;font-weight:850;font-family:var(--mono);
     font-variant-numeric:tabular-nums;
   }
   .trabalho-numeros span{font-size:13px;color:var(--texto-2)}
   .trabalho-numeros small{display:block;font-size:12px;color:var(--texto-3)}
   .trabalho-barra{
-    height:8px;border-radius:99px;background:var(--cinza-fundo);
-    margin:.9rem 0 .7rem;overflow:hidden;
+    height:9px;border-radius:99px;background:var(--cinza-fundo);
+    margin:1rem 0 .8rem;overflow:hidden;
   }
   .trabalho-barra i{display:block;height:100%;background:var(--verde);
                     border-radius:99px;transition:width .45s ease}

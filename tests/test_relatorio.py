@@ -45,6 +45,42 @@ def test_desfecho_vira_coluna_com_nome_legivel(conn, lote, tmp_path):
     assert pendencias["D2"].value == "Informações insuficientes"
 
 
+def test_positiva_aparece_em_pendencias_com_mensagem_corrigida(conn, lote,
+                                                               tmp_path):
+    job = criar_job(conn, lote, documento="40539572000168",
+                    orgao="SEFAZ_GO", nome="LAMON CONSTRUTORA")
+    conn.execute(
+        "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? WHERE id = ?",
+        (Status.DONE, Desfecho.POSITIVA, "2026-08-31T18:57:31.858Z", job),
+    )
+    conn.execute(
+        """
+        INSERT INTO tentativa
+            (job_id, numero, iniciada_em, finalizada_em, desfecho,
+             mensagem_portal, worker)
+        VALUES (?, 1, ?, ?, ?, ?, 0)
+        """,
+        (
+            job,
+            "2026-08-31T18:57:30.738Z",
+            "2026-08-31T18:57:31.856Z",
+            Desfecho.POSITIVA,
+            "SEFAZ-GO emitiu PDF apos confirmar nome do contribuinte",
+        ),
+    )
+
+    pendencias = load_workbook(
+        gerar(conn, Recorte("2026-08"), tmp_path / "positiva.xlsx")
+    )["Pendências"]
+
+    assert pendencias["A2"].value == "LAMON CONSTRUTORA"
+    assert pendencias["B2"].value == "40.539.572/0001-68"
+    assert pendencias["D2"].value == "Positiva (com pendência)"
+    assert pendencias["F2"].value == (
+        "SEFAZ-GO emitiu PDF após confirmar o nome do contribuinte."
+    )
+
+
 def test_aproveitada_entra_com_a_certidao_que_reusou(conn, lote, tmp_path):
     """A APROVEITADA vale como certidão em mãos e traz emissão, validade,
     código e arquivo — a do job reenfileirado, que não reemitiu.
@@ -98,6 +134,32 @@ def test_recorte_por_orgao_deixa_os_outros_de_fora(conn, lote, tmp_path):
                                                        values_only=True)]
     assert "EMPRESA FEDERAL" in nomes
     assert "EMPRESA ESTADUAL" not in nomes
+
+
+def test_recorte_aceita_varias_automacoes(conn, lote, tmp_path):
+    for documento, orgao, nome in (
+        ("11222333000181", "RFB_PJ", "EMPRESA FEDERAL"),
+        ("11444777000161", "SEFAZ_GO", "EMPRESA ESTADUAL"),
+        ("11888777000165", "CRF", "EMPRESA FGTS"),
+    ):
+        job = criar_job(conn, lote, documento=documento, orgao=orgao,
+                        nome=nome)
+        conn.execute(
+            "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? "
+            "WHERE id = ?",
+            (Status.DONE, Desfecho.NEGATIVA, "2026-08-20T10:00:00.000Z", job),
+        )
+
+    livro = load_workbook(
+        gerar(conn, Recorte("2026-08", ("RFB_PJ", "SEFAZ_GO")),
+              tmp_path / "selecionadas.xlsx")
+    )
+
+    nomes = [linha[0] for linha in livro["Certidões"].iter_rows(
+        min_row=2, values_only=True)]
+    assert set(nomes) == {"EMPRESA FEDERAL", "EMPRESA ESTADUAL"}
+    assert "EMPRESA FGTS" not in nomes
+    assert livro["Resumo"]["B3"].value == "RFB_PJ, SEFAZ_GO"
 
 
 def test_arquivo_pdf_nao_vira_link_quebrado(conn, lote, tmp_path):

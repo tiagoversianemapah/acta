@@ -58,7 +58,7 @@ def _enviar(cliente, planilha: Path) -> str:
                      files={"arquivo": (planilha.name, planilha.read_bytes())},
                      follow_redirects=False)
     assert r.status_code == 303, r.text
-    return r.headers["location"].rsplit("/", 1)[-1]
+    return up.urlparse(r.headers["location"]).path.rsplit("/", 1)[-1]
 
 
 def test_a_tela_mostra_todas_as_abas(painel, planilha):
@@ -67,6 +67,38 @@ def test_a_tela_mostra_todas_as_abas(painel, planilha):
     pagina = cliente.get(f"/planilha/{_enviar(cliente, planilha)}").text
     abas = re.findall(r'<select name="orgao__([^"]+)"', pagina)
     assert set(abas) == {"RFB", "Clientes GO", "Instruções"}
+
+
+def test_caixa_aparece_no_seletor_mesmo_desligada(painel, tmp_path):
+    """FGTS/CAIXA não pode sumir: se não roda, a tela mostra o motivo."""
+    livro = Workbook()
+    crf = livro.active
+    crf.title = "CRF"
+    crf.append(["Empresa", "Doc"])
+    crf.append(["EMPRESA FGTS", CNPJ_A])
+    caminho = tmp_path / "fgts.xlsx"
+    livro.save(caminho)
+
+    cliente, _ = painel
+    pagina = cliente.get(f"/planilha/{_enviar(cliente, caminho)}").text
+
+    assert "FGTS - CAIXA" in pagina
+    assert "desligada no config" in pagina
+    assert 'data-orgao-ativo="/api/orgao/CRF/ativo"' in pagina
+    trecho = pagina[pagina.index('value="CRF"'):][:180]
+    assert "disabled" in trecho
+
+
+def test_upload_mostra_que_a_planilha_esta_sendo_lida(painel):
+    cliente, _ = painel
+
+    pagina = cliente.get("/").text
+
+    assert 'data-enviando="Lendo planilha..."' in pagina
+    assert "requestSubmit" in pagina
+    assert "data-orgao-ativo" in pagina
+    assert "this.form.submit()" not in pagina
+    assert "campo.disabled = true" not in pagina
 
 
 def test_aba_vazia_nao_pode_ser_escolhida(painel, planilha):
@@ -101,8 +133,8 @@ def test_aba_de_nome_livre_roda_a_automacao_escolhida(painel, planilha):
     assert [linha["orgao"] for linha in linhas] == ["RFB_PJ"]
 
 
-def test_o_arquivo_sai_do_disco_ao_confirmar(painel, planilha):
-    """Planilha de cliente não fica esquecida em pasta temporária (RNF-06)."""
+def test_o_arquivo_fica_guardado_ao_confirmar(painel, planilha):
+    """Enfileirar uma aba não apaga a carteira usada pelas próximas."""
     cliente, modulo = painel
     token = _enviar(cliente, planilha)
     guardado = modulo._pegar_planilha(token)["caminho"]
@@ -110,16 +142,16 @@ def test_o_arquivo_sai_do_disco_ao_confirmar(painel, planilha):
 
     cliente.post(f"/planilha/{token}/confirmar", data={"orgao__RFB": "RFB_PJ"},
                  follow_redirects=False)
-    assert not guardado.exists(), "o arquivo tem de sair do disco"
-    assert modulo._pegar_planilha(token) is None
+    assert guardado.exists()
+    assert modulo._pegar_planilha(token) is not None
 
 
-def test_cancelar_tambem_apaga(painel, planilha):
+def test_voltar_nao_apaga_a_planilha_guardada(painel, planilha):
     cliente, modulo = painel
     token = _enviar(cliente, planilha)
     guardado = modulo._pegar_planilha(token)["caminho"]
     cliente.post(f"/planilha/{token}/cancelar", follow_redirects=False)
-    assert not guardado.exists()
+    assert guardado.exists()
 
 
 def test_sem_escolher_nada_nao_importa(painel, planilha):
@@ -157,9 +189,155 @@ def test_planilha_grande_demais_nao_deixa_lixo_no_temp(painel, planilha,
     assert list(temporarios.iterdir()) == [], "a pasta temporária ficou para trás"
 
 
+def test_planilha_guardada_aparece_na_operacao(painel, planilha):
+    cliente, _ = painel
+    _enviar(cliente, planilha)
+
+    pagina = cliente.get("/").text
+
+    assert "Planilhas guardadas" in pagina
+    assert "carteira.xlsx" in pagina
+    assert "Enfileirar" in pagina
+
+
+def test_aviso_de_reimportacao_aparece_no_mapeamento(painel, planilha):
+    from cnd.core import tempo
+    from cnd.infra.db import conectar
+    from tests.conftest import criar_job
+
+    cliente, modulo = painel
+    with conectar(modulo.cfg.banco) as conn:
+        lote = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+            ("CND MIA 0826", "CND MIA 0826.xlsx"),
+        ).lastrowid
+        criar_job(conn, lote, documento=CNPJ_A, orgao="RFB_PJ")
+        conn.execute("UPDATE job SET atualizado_em = ?", (tempo.agora_iso(),))
+
+    pagina = cliente.get(f"/planilha/{_enviar(cliente, planilha)}").text
+
+    assert "Já existem 1 item(ns) de RECEITA FEDERAL neste mês" in pagina
+    assert "Importar cria um lote novo" in pagina
+
+
+def test_api_informa_o_que_ja_esta_na_fila_no_mes(painel):
+    from cnd.core import tempo
+    from cnd.infra.db import conectar
+    from tests.conftest import criar_job
+
+    cliente, modulo = painel
+    with conectar(modulo.cfg.banco) as conn:
+        lote = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+            ("GO", "go.xlsx"),
+        ).lastrowid
+        criar_job(conn, lote, documento=CNPJ_A, orgao="RFB_PJ")
+        conn.execute("UPDATE job SET atualizado_em = ?", (tempo.agora_iso(),))
+
+    resposta = cliente.get("/api/fila/mes?orgao=RFB_PJ")
+
+    assert resposta.status_code == 200
+    assert resposta.json()["itens"] == 1
+    assert resposta.json()["planilha"] == "GO"
+
+
+def test_api_lista_automacoes_do_mes_para_exportar(painel):
+    from cnd.core import tempo
+    from cnd.infra.db import conectar
+    from tests.conftest import criar_job
+
+    cliente, modulo = painel
+    with conectar(modulo.cfg.banco) as conn:
+        lote = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+            ("GO", "go.xlsx"),
+        ).lastrowid
+        criar_job(conn, lote, documento=CNPJ_A, orgao="RFB_PJ")
+        criar_job(conn, lote, documento=CNPJ_B, orgao="SEFAZ_GO")
+        conn.execute("UPDATE job SET atualizado_em = ?", (tempo.agora_iso(),))
+
+    resposta = cliente.get("/api/orgaos/mes")
+
+    assert resposta.status_code == 200
+    assert {item["orgao"] for item in resposta.json()} == {"RFB_PJ", "SEFAZ_GO"}
+
+
+def test_entrega_deixa_escolher_automacoes_do_mes(painel):
+    from cnd.core import tempo
+    from cnd.core.modelos import Desfecho, Status
+    from cnd.infra.db import conectar
+    from tests.conftest import criar_job
+
+    cliente, modulo = painel
+    with conectar(modulo.cfg.banco) as conn:
+        lote = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+            ("CND MIA 0826", "CND MIA 0826.xlsx"),
+        ).lastrowid
+        atual = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+            ("CND RFB", "CND RFB.xlsx"),
+        ).lastrowid
+        for lote_id, documento, orgao in (
+            (atual, CNPJ_A, "RFB_PJ"),
+            (lote, CNPJ_B, "SEFAZ_GO"),
+        ):
+            job = criar_job(conn, lote_id, documento=documento, orgao=orgao)
+            conn.execute(
+                "UPDATE job SET status = ?, desfecho = ?, atualizado_em = ? "
+                "WHERE id = ?",
+                (Status.DONE, Desfecho.NEGATIVA, tempo.agora_iso(), job),
+            )
+
+    pagina = cliente.get("/").text
+
+    assert 'data-abrir="#exportar-relatorio"' in pagina
+    assert 'action="/relatorio/' in pagina
+    assert 'value="RFB_PJ"' in pagina
+    assert 'value="SEFAZ_GO"' in pagina
+    assert "Todas as automações do mês" in pagina
+
+
+def test_envio_remoto_leva_a_automacao_e_o_nome(monkeypatch, tmp_path):
+    from cnd.desktop import remoto
+    from cnd.infra.config import Maquina
+
+    arquivo = tmp_path / "guardada.xlsx"
+    arquivo.write_bytes(b"x")
+    visto = {}
+
+    class Resposta:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"criados": 0, "rejeitados": [], "total_rejeitados": 0}'
+
+    def abrir(pedido, timeout):
+        visto["timeout"] = timeout
+        visto["corpo"] = pedido.data.decode("utf-8", errors="ignore")
+        return Resposta()
+
+    monkeypatch.setattr(remoto.urllib.request, "urlopen", abrir)
+
+    remoto.enviar_planilha(
+        Maquina("Robo", "http://robo:8000"), arquivo, "segredo",
+        aba="Clientes GO", orgao="SEFAZ_GO", nome="CND GO.xlsx",
+    )
+
+    assert 'name="aba"' in visto["corpo"] and "Clientes GO" in visto["corpo"]
+    assert 'name="orgao"' in visto["corpo"] and "SEFAZ_GO" in visto["corpo"]
+    assert 'name="nome"' in visto["corpo"] and "CND GO.xlsx" in visto["corpo"]
+    assert visto["timeout"] == 120
+
+
 def test_token_desconhecido_nao_quebra(painel):
     """Quem volta num link velho recebe recado, não erro 500."""
     cliente, _ = painel
     r = cliente.get("/planilha/inventado", follow_redirects=False)
     assert r.status_code == 303
-    assert "expirou" in up.unquote(r.headers["location"])
+    erro = up.parse_qs(up.urlparse(r.headers["location"]).query)["erro"][0]
+    assert "não encontrada" in erro

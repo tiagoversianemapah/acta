@@ -452,7 +452,7 @@ class AdapterSEFAZGO:
             if _e_pdf(confirmada):
                 return self._salvar_pdf(
                     confirmada.corpo, doc,
-                    "SEFAZ-GO emitiu PDF apos confirmar nome do contribuinte",
+                    "SEFAZ-GO emitiu PDF após confirmar o nome do contribuinte.",
                 )
             texto = texto_da_resposta(confirmada)
 

@@ -32,6 +32,7 @@ from cnd.web import consultas
 
 CABECALHO = Font(bold=True, color="FFFFFF")
 FUNDO = PatternFill("solid", fgColor="1F4E79")
+TipoOrgao = str | list[str] | tuple[str, ...] | None
 
 
 def _escrever(planilha, titulos: list[str], linhas: list[list]) -> None:
@@ -68,30 +69,58 @@ def _data_curta(iso: str | None) -> str:
     return texto
 
 
+def _mensagem_portal(texto: str | None) -> str:
+    return (consultas.mensagem_portal_legivel(texto) or "")[:300]
+
+
+def _orgaos_escolhidos(orgao: TipoOrgao) -> tuple[str, ...]:
+    if orgao is None:
+        return ()
+    valores = [orgao] if isinstance(orgao, str) else orgao
+    escolhidos = []
+    for valor in valores:
+        codigo = str(valor or "").strip()
+        if codigo and codigo not in escolhidos:
+            escolhidos.append(codigo)
+    return tuple(escolhidos)
+
+
 @dataclass(frozen=True)
 class Recorte:
     """O pedaço do trabalho que vai para a planilha.
 
-    Mês e órgão, não lote — o mesmo corte da tela e do pacote de certidões.
-    Exportar por lote entregava outra coisa que o operador via na frente
-    dele: ele filtra "Receita Federal", pede a planilha, e recebia tudo.
+    Mês e automações, não lote — o mesmo corte da tela e do pacote de
+    certidões. Exportar por lote entregava outra coisa que o operador via
+    na frente dele: ele filtra "Receita Federal", pede a planilha, e
+    recebia tudo.
     """
 
     mes: str
-    orgao: str | None = None
+    orgao: TipoOrgao = None
+
+    @property
+    def orgaos(self) -> tuple[str, ...]:
+        return _orgaos_escolhidos(self.orgao)
 
     @property
     def onde(self) -> str:
         clausula = "strftime('%Y-%m', j.atualizado_em) = ?"
-        return clausula + (" AND j.orgao = ?" if self.orgao else "")
+        if not self.orgaos:
+            return clausula
+        marcadores = ", ".join(["?"] * len(self.orgaos))
+        return f"{clausula} AND j.orgao IN ({marcadores})"
 
     @property
     def valores(self) -> list:
-        return [self.mes, self.orgao] if self.orgao else [self.mes]
+        return [self.mes, *self.orgaos]
 
     @property
     def descricao(self) -> str:
-        return self.mes + (f" · {self.orgao}" if self.orgao else "")
+        return self.mes + (f" · {', '.join(self.orgaos)}" if self.orgaos else "")
+
+    @property
+    def orgaos_descricao(self) -> str:
+        return ", ".join(self.orgaos) if self.orgaos else "todos"
 
 
 # Rótulo de cada desfecho dentro da planilha. Com o desfecho virando
@@ -180,7 +209,7 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
          "Mensagem do portal"],
         [[linha["nome"], formatar(linha["documento"]), linha["orgao"],
           ROTULO.get(linha["desfecho"], linha["desfecho"]),
-          _data_curta(linha["atualizado_em"]), (linha["mensagem"] or "")[:300]]
+          _data_curta(linha["atualizado_em"]), _mensagem_portal(linha["mensagem"])]
          for linha in _por_desfecho(conn, recorte, A_TRATAR)],
     )
 
@@ -203,14 +232,14 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
         [[linha["nome"], formatar(linha["documento"]), linha["orgao"],
           ROTULO.get(linha["desfecho"], linha["desfecho"]),
           linha["tentativas"], _data_curta(linha["atualizado_em"]),
-          (linha["mensagem"] or "")[:300]] for linha in erros],
+          _mensagem_portal(linha["mensagem"])] for linha in erros],
     )
 
     # --- resumo ---
     resumo_linhas: list[list] = [
         ["Recorte", recorte.descricao],
         ["Mês de referência", recorte.mes],
-        ["Órgão", recorte.orgao or "todos"],
+        ["Órgão", recorte.orgaos_descricao],
         ["Relatório gerado em", tempo.agora_iso()],
         [],
         ["Órgão", "Total", "Concluídos", "Falhados", "Pendentes", "% concluído"],
@@ -219,8 +248,9 @@ def gerar(conn: sqlite3.Connection, recorte: Recorte,
     # O MESMO recorte das abas de cima. Sem o mês aqui, a planilha de agosto
     # trazia as abas com agosto e a linha de total com o ano inteiro — e
     # listava órgão que não trabalhou no mês, com números de outro.
-    for orgao in ([recorte.orgao] if recorte.orgao
-                  else consultas.orgaos_do_lote(conn, None, recorte.mes)):
+    for orgao in (
+        recorte.orgaos or tuple(consultas.orgaos_do_lote(conn, None, recorte.mes))
+    ):
         r = consultas.resumo(conn, orgao, None, recorte.mes)
         resumo_linhas.append([orgao, r.total, r.concluidos, r.falhados,
                               r.pendentes, f"{r.percentual:.1f}%"])
@@ -298,7 +328,7 @@ def mes_corrente() -> str:
 def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
                somente_negativas: bool = False,
                nomes: dict[str, str] | None = None,
-               orgao: str | None = None) -> bytes:
+               orgao: TipoOrgao = None) -> bytes:
     """Pacote com as certidões emitidas no mês, separadas por órgão.
 
     O corte é o MÊS, e não o lote, por dois motivos. O primeiro é a regra do
@@ -331,9 +361,10 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
     # tudo, mas a federal costuma terminar antes das estaduais, e não faz
     # sentido segurar a entrega dela esperando as outras.
     parametros: list = [mes]
-    if orgao:
-        filtro += " AND j.orgao = ?"
-        parametros.append(orgao)
+    orgaos = _orgaos_escolhidos(orgao)
+    if orgaos:
+        filtro += f" AND j.orgao IN ({', '.join(['?'] * len(orgaos))})"
+        parametros.extend(orgaos)
 
     buffer = BytesIO()
     indice_csv = StringIO()

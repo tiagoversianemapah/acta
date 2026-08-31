@@ -31,6 +31,18 @@ ERROS_DIAGNOSTICO = frozenset({
     Desfecho.ERRO_TECNICO,
 })
 
+MENSAGENS_CORRIGIDAS = {
+    "SEFAZ-GO emitiu PDF apos confirmar nome do contribuinte":
+        "SEFAZ-GO emitiu PDF após confirmar o nome do contribuinte.",
+}
+
+
+def mensagem_portal_legivel(texto: str | None) -> str | None:
+    if not texto:
+        return texto
+    limpo = " ".join(str(texto).split())
+    return MENSAGENS_CORRIGIDAS.get(limpo, texto)
+
 
 @dataclass
 class ResumoOrgao:
@@ -134,6 +146,38 @@ def orgaos_do_lote(conn: sqlite3.Connection, lote_id: int | None,
     return [linha["orgao"] for linha in conn.execute(
         f"SELECT DISTINCT orgao FROM job {onde} ORDER BY orgao", args
     )]
+
+
+def ja_na_fila_no_mes(conn: sqlite3.Connection, orgao: str,
+                      mes: str | None = None) -> dict:
+    """O que este órgão já tem no mês: quantos itens e de qual planilha.
+
+    É o que permite avisar antes de importar a mesma aba duas vezes. A
+    idempotência do robô só vale DENTRO do mesmo lote (ver
+    `fila.certidao_do_mes`), então reimportar cria um lote novo e o portal
+    é consultado de novo, do zero — em Goiás isso são 299 consultas
+    gastas à toa, e na Receita, horas de robô.
+    """
+    # Duas consultas, e nao uma: subconsulta que referencia MAX() na mesma
+    # selecao e "misuse of aggregate function" no SQLite.
+    mes = mes or tempo.agora_iso()[:7]
+    linha = conn.execute(
+        """
+        SELECT COUNT(*) AS itens, MAX(lote_id) AS lote
+          FROM job
+         WHERE orgao = ? AND strftime('%Y-%m', atualizado_em) = ?
+        """,
+        (orgao, mes),
+    ).fetchone()
+
+    lote = linha["lote"]
+    planilha = ""
+    if lote is not None:
+        achado = conn.execute(
+            "SELECT descricao FROM lote WHERE id = ?", (lote,)).fetchone()
+        planilha = achado["descricao"] if achado else ""
+
+    return {"itens": linha["itens"] or 0, "lote": lote, "planilha": planilha}
 
 
 def resumo(conn: sqlite3.Connection, orgao: str, lote_id: int | None = None,
@@ -420,7 +464,7 @@ def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8,
         "documento": linha["documento"],
         "orgao": linha["orgao"],
         "desfecho": linha["desfecho"],
-        "mensagem_portal": linha["mensagem_portal"],
+        "mensagem_portal": mensagem_portal_legivel(linha["mensagem_portal"]),
         "quando": quando,
         "hora": _hora_local(quando),
         "em_curso": bool(linha["em_curso"]),

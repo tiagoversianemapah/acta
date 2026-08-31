@@ -177,6 +177,31 @@ def montar(obter_config: Callable[[], Config],
                 "orgaos": orgaos,
             }
 
+    @roteador.get("/fila/mes")
+    def fila_no_mes(orgao: str, mes: str | None = None):
+        """Resumo usado antes de reimportar uma aba para o mesmo órgão."""
+        with contextlib.closing(abrir_leitura()) as conn:
+            return consultas.ja_na_fila_no_mes(conn, orgao, mes)
+
+    @roteador.get("/orgaos/mes")
+    def orgaos_do_mes(mes: str | None = None):
+        """Automações com itens no mês, para montar o recorte da entrega."""
+        cfg = obter_config()
+        mes = mes or tempo.agora_iso()[:7]
+        with contextlib.closing(abrir_leitura()) as conn:
+            resultado = []
+            for codigo in consultas.orgaos_do_lote(conn, None, mes):
+                resumo = consultas.resumo(conn, codigo, None, mes)
+                resultado.append({
+                    "orgao": codigo,
+                    "rotulo": (
+                        cfg.orgaos[codigo].rotulo if codigo in cfg.orgaos
+                        else nome_do_orgao(codigo)
+                    ),
+                    "total": resumo.total,
+                })
+            return resultado
+
     @roteador.get("/itens")
     def itens(lote: int | None = None, lote_id: int | None = None,
               orgao: str | None = None,

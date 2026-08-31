@@ -69,13 +69,53 @@ document.addEventListener('click', function (evento) {
 // pintaria até as que estão em "não importar" — o oposto do que se quer.
 function marcarEscolhidas() {
   document.querySelectorAll('.mapear-escolha select').forEach(function (s) {
-    s.classList.toggle('escolhida', !!s.value && !s.disabled);
+    var escolhida = !!s.value && !s.disabled;
+    var mostrouAviso = false;
+    s.classList.toggle('escolhida', escolhida);
+    var caixa = s.closest('.mapear-escolha');
+    if (caixa) {
+      caixa.querySelectorAll('[data-aviso-orgao]').forEach(function (aviso) {
+        var mostrar = escolhida && aviso.dataset.avisoOrgao === s.value;
+        aviso.hidden = !mostrar;
+        mostrouAviso = mostrouAviso || mostrar;
+      });
+    }
+    var linha = s.closest('.mapear-linha');
+    if (linha) linha.classList.toggle('tem-aviso', mostrouAviso);
   });
 }
 document.addEventListener('change', function (evento) {
   if (evento.target.closest('.mapear-escolha')) marcarEscolhidas();
 });
 marcarEscolhidas();
+
+function atualizarExportacao(raiz) {
+  (raiz || document).querySelectorAll('[data-exportar-form]').forEach(function (form) {
+    var todas = form.querySelector('[data-exportar-todas]');
+    var escolhendo = todas && !todas.checked;
+    var lista = form.querySelector('[data-exportar-opcoes]');
+    if (lista) lista.hidden = !escolhendo;
+    form.querySelectorAll('[data-exportar-orgao]').forEach(function (campo) {
+      campo.disabled = !escolhendo;
+    });
+  });
+}
+document.addEventListener('change', function (evento) {
+  if (evento.target.matches('[data-exportar-todas]')) {
+    atualizarExportacao(evento.target.closest('form'));
+  }
+});
+document.addEventListener('submit', function (evento) {
+  var form = evento.target.closest('[data-exportar-form]');
+  if (!form) return;
+  var todas = form.querySelector('[data-exportar-todas]');
+  if (todas && !todas.checked
+      && !form.querySelector('[data-exportar-orgao]:checked')) {
+    evento.preventDefault();
+    window.alert('Escolha ao menos uma automação.');
+  }
+});
+atualizarExportacao();
 
 
 // Onde a resposta de um comando aparece: no próprio endereço, para o
@@ -219,6 +259,54 @@ document.addEventListener('click', function (evento) {
         });
       return;
     }
+
+    const orgaoAtivo = evento.target.closest('[data-orgao-ativo]');
+    if (orgaoAtivo) {
+      evento.preventDefault();
+      orgaoAtivo.disabled = true;
+      const rotulo = orgaoAtivo.textContent;
+      orgaoAtivo.textContent = 'Ligando';
+      fetch(orgaoAtivo.dataset.orgaoAtivo, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({ativo: 'true'})
+      })
+        .then(function (resposta) {
+          if (!resposta.ok) return resposta.json().then(function (corpo) {
+            throw new Error(corpo.detail || 'Não consegui ligar a automação');
+          });
+          return resposta.json();
+        })
+        .then(function (corpo) {
+          window.location.href = destinoComMensagem(
+            mensagemDaApi(corpo, 'Automação ligada.'));
+        })
+        .catch(function (erro) {
+          orgaoAtivo.disabled = false;
+          orgaoAtivo.textContent = rotulo;
+          avisarErro(erro);
+        });
+      return;
+    }
+});
+
+function marcarEnviando(alvo) {
+  if (!alvo || alvo.classList.contains('carregando')) return;
+  if (alvo.disabled === false) alvo.disabled = true;
+  alvo.classList.add('carregando');
+  alvo.setAttribute('aria-busy', 'true');
+  var texto = alvo.querySelector('span');
+  if (texto) texto.textContent = alvo.dataset.enviando;
+}
+
+document.addEventListener('change', function (evento) {
+  var campo = evento.target.closest('.upload-planilha input[type=file]');
+  if (!campo || !campo.files || !campo.files.length) return;
+  var form = campo.form;
+  marcarEnviando(form && form.querySelector('[data-enviando]'));
+  if (form.requestSubmit) form.requestSubmit();
+  else form.submit();
 });
 
 document.addEventListener('submit', function (evento) {
@@ -227,12 +315,7 @@ document.addEventListener('submit', function (evento) {
   // Uma planilha de milhares de linhas leva segundos subindo, e a página
   // fica parada o tempo todo. Sem dizer que está indo, quem enviou aperta
   // de novo — e cada aperto cria um lote repetido na máquina.
-  if (alvo.disabled === false) alvo.disabled = true;
-  alvo.classList.add('carregando');
-  var campo = alvo.querySelector('input[type=file]');
-  if (campo) campo.disabled = true;      // trava o rótulo, que não desabilita
-  var texto = alvo.querySelector('span');
-  if (texto) texto.textContent = alvo.dataset.enviando;
+  marcarEnviando(alvo);
 });
 </script>
 </body>

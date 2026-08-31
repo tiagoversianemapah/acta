@@ -181,10 +181,9 @@
                dispara o envio é o próprio seletor de arquivo. Uma planilha
                de milhares de linhas leva segundos subindo, e sem dizer
                nada a pessoa aperta de novo — e cada aperto cria um lote. #}
-            <label class="botao" data-enviando="Enviando planilha…">
+            <label class="botao" data-enviando="Lendo planilha...">
               {{ icone_acao('planilha') }}<span>Enviar planilha</span>
-              <input type="file" name="arquivo" accept=".xlsx,.xlsm"
-                     onchange="this.form.submit()">
+              <input type="file" name="arquivo" accept=".xlsx,.xlsm">
             </label>
           </form>
         {% endif %}
@@ -228,11 +227,36 @@
       </div>
     </header>
 
+    {% if planilhas_salvas %}
+    <section class="planilhas-salvas">
+      <div class="planilhas-salvas-topo">
+        <div>
+          <span class="rotulo">Planilhas guardadas</span>
+          <strong>Escolha uma para colocar na fila</strong>
+        </div>
+        <span>{{ planilhas_salvas | length }} de 3</span>
+      </div>
+      <div class="planilhas-salvas-lista">
+        {% for p in planilhas_salvas %}
+        <a class="planilha-salva"
+           href="/planilha/{{ p.token }}{% if selecionada_idx is not none %}?maquina={{ selecionada_idx }}{% endif %}">
+          <span class="arquivo-icone">{{ icone_acao('planilha') }}</span>
+          <span>
+            <strong>{{ p.nome }}</strong>
+            <small>{{ p.quando }}</small>
+          </span>
+          <b>Enfileirar</b>
+        </a>
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+
     {# O centro da tela: QUAL planilha, QUAL automação e quanto falta, num
        bloco só. Antes eram quatro cartões de peso igual — "Planilha", "Fila",
        "Faltam" e "Resultado" — e os dois do meio diziam a mesma coisa de
        duas formas ("2.829 de 2.829" e "faltam 0"). #}
-    <div class="trabalho-atual">
+    <div class="trabalho-atual {{ 'completo' if totais.total and not totais.get('restantes', totais.pendentes) else 'andamento' }}">
       <div class="trabalho-topo">
         <div class="trabalho-quem">
           <span class="rotulo">Trabalho atual</span>
@@ -287,10 +311,6 @@
           </span>
         {% endif %}
       </div>
-    </div>
-
-    <div class="linha-progresso" title="{{ '%.1f' % totais.percentual }}% concluído">
-      <span style="width: {{ '%.2f' % totais.percentual }}%"></span>
     </div>
 
     {% if robo_parado_com_fila %}
@@ -531,11 +551,77 @@
           empresa; o pacote traz os PDFs.</small>
       </div>
       <div class="acoes">
-        <a class="botao" href="{{ base_download }}/relatorio/{{ mes }}.xlsx">
-          {{ icone_acao('planilha') }}<span>Planilha resultado</span></a>
-        <a class="botao" href="{{ base_download }}/certidoes/{{ mes }}.zip">
-          {{ icone_acao('certidoes') }}<span>Certidões</span></a>
+        <button class="botao" type="button" data-abrir="#exportar-relatorio">
+          {{ icone_acao('planilha') }}<span>Planilha de resultado</span></button>
+        <button class="botao" type="button" data-abrir="#exportar-certidoes">
+          {{ icone_acao('certidoes') }}<span>Certidões</span></button>
       </div>
+      <dialog id="exportar-relatorio" class="dialogo dialogo-exportar">
+        <form method="get" action="{{ base_download }}/relatorio/{{ mes }}.xlsx"
+              data-exportar-form>
+          <h3>Planilha de resultado</h3>
+          <div class="campo">
+            <span class="rotulo">Automações</span>
+            <label class="exportar-todas">
+              <input type="checkbox" data-exportar-todas checked>
+              <span>Todas as automações do mês</span>
+            </label>
+            {% if orgaos_exportacao %}
+            <div class="exportar-lista" data-exportar-opcoes hidden>
+              {% for r in orgaos_exportacao %}
+              <label class="exportar-item">
+                <input type="checkbox" name="orgao" value="{{ r.orgao }}"
+                       data-exportar-orgao checked disabled>
+                <span>
+                  <strong>{{ r.rotulo or rotulo_orgao(r.orgao) }}</strong>
+                  <small>{{ r.total }} item(ns)</small>
+                </span>
+              </label>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="dialogo-acoes">
+            <button type="button" class="botao" data-fechar>Cancelar</button>
+            <button type="submit" class="primario">
+              {{ icone_acao('planilha') }}<span>Baixar planilha</span>
+            </button>
+          </div>
+        </form>
+      </dialog>
+      <dialog id="exportar-certidoes" class="dialogo dialogo-exportar">
+        <form method="get" action="{{ base_download }}/certidoes/{{ mes }}.zip"
+              data-exportar-form>
+          <h3>Certidões</h3>
+          <div class="campo">
+            <span class="rotulo">Automações</span>
+            <label class="exportar-todas">
+              <input type="checkbox" data-exportar-todas checked>
+              <span>Todas as automações do mês</span>
+            </label>
+            {% if orgaos_exportacao %}
+            <div class="exportar-lista" data-exportar-opcoes hidden>
+              {% for r in orgaos_exportacao %}
+              <label class="exportar-item">
+                <input type="checkbox" name="orgao" value="{{ r.orgao }}"
+                       data-exportar-orgao checked disabled>
+                <span>
+                  <strong>{{ r.rotulo or rotulo_orgao(r.orgao) }}</strong>
+                  <small>{{ r.total }} item(ns)</small>
+                </span>
+              </label>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+          <div class="dialogo-acoes">
+            <button type="button" class="botao" data-fechar>Cancelar</button>
+            <button type="submit" class="primario">
+              {{ icone_acao('certidoes') }}<span>Baixar certidões</span>
+            </button>
+          </div>
+        </form>
+      </dialog>
     </section>
     {% endif %}
 

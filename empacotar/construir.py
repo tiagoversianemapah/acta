@@ -86,16 +86,26 @@ def construir() -> None:
     Guardamos essas coisas fora do caminho e devolvemos depois.
     """
     guardado = RAIZ / "build" / "preservado"
-    if guardado.exists():
+    recuperaveis = {nome for nome in ("config.toml", "data")
+                    if (guardado / nome).exists()}
+    if guardado.exists() and not recuperaveis:
         shutil.rmtree(guardado)
 
     salvos = []
     for nome in ("config.toml", "data"):
         origem = DESTINO / nome
+        salvo = guardado / nome
         if origem.exists():
+            if salvo.exists():
+                if salvo.is_dir():
+                    shutil.rmtree(salvo)
+                else:
+                    salvo.unlink()
             guardado.mkdir(parents=True, exist_ok=True)
             (shutil.copytree if origem.is_dir() else shutil.copy2)(
-                origem, guardado / nome)
+                origem, salvo)
+            salvos.append(nome)
+        elif salvo.exists():
             salvos.append(nome)
     if salvos:
         print(f"  preservando  {', '.join(salvos)}")

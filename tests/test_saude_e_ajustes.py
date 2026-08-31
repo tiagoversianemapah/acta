@@ -6,7 +6,7 @@ from dataclasses import replace
 import pytest
 
 from cnd.infra import ajustes, maquina
-from cnd.infra.config import ConfigAlertas, ConfigRede
+from cnd.infra.config import ConfigAlertas, ConfigRede, carregar
 
 
 class TestConfigAlertas:
@@ -131,6 +131,28 @@ class TestGravarNoConfig:
 
         assert dados["rede"]["anydesk"] == "123 456 789"
         assert dados["geral"]["banco"] == "data/cnd.db"
+
+    def test_grava_booleano_sem_aspas(self, config_temporario):
+        import tomllib
+
+        ajustes.gravar_booleano("orgaos.CRF", "ativo", True)
+        dados = tomllib.loads(config_temporario.read_text(encoding="utf-8"))
+
+        assert dados["orgaos"]["CRF"]["ativo"] is True
+
+    def test_leitor_nao_trata_string_false_como_ligada(self, tmp_path):
+        arquivo = tmp_path / "config.toml"
+        arquivo.write_text(
+            "[geral]\n"
+            'banco = "data/cnd.db"\n'
+            "\n"
+            "[orgaos.CRF]\n"
+            'ativo = "false"\n'
+            'adapter = "crf"\n',
+            encoding="utf-8",
+        )
+
+        assert carregar(arquivo).orgaos["CRF"].ativo is False
 
 
 class TestBotaoAtualizarNoDiagnostico:

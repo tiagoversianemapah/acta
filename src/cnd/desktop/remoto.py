@@ -439,6 +439,33 @@ def contar_itens(maquina: Maquina, senha: str = "", **filtros) -> int | None:
     return None
 
 
+def ja_na_fila_no_mes(
+    maquina: Maquina, senha: str = "", orgao: str = "", mes: str = "",
+) -> dict | None:
+    partes = [
+        f"{chave}={urllib.parse.quote(str(valor))}"
+        for chave, valor in {"orgao": orgao, "mes": mes}.items()
+        if valor
+    ]
+    consulta = ("?" + "&".join(partes)) if partes else ""
+    try:
+        resultado = _pedir(maquina, "/api/fila/mes", senha, consulta)
+        return resultado if isinstance(resultado, dict) else None
+    except Exception:
+        return None
+
+
+def orgaos_do_mes(
+    maquina: Maquina, senha: str = "", mes: str = "",
+) -> list[dict] | None:
+    consulta = f"?mes={urllib.parse.quote(mes)}" if mes else ""
+    try:
+        resultado = _pedir(maquina, "/api/orgaos/mes", senha, consulta)
+        return resultado if isinstance(resultado, list) else None
+    except Exception:
+        return None
+
+
 def reenfileirar_falhados(
     maquina: Maquina, senha: str = "", orgao: str | None = None,
     lote_id: int | None = None,
@@ -585,7 +612,7 @@ def _pacote_da_maquina(cfg: Config, maquina: Maquina | None, mes: str,
             temporario.write_bytes(zipar_pdfs(
                 conn, mes, pedido.get("somente_negativas") == ["1"],
                 nomes={c: o.rotulo for c, o in cfg.orgaos.items()},
-                orgao=(pedido.get("orgao") or [None])[0]))
+                orgao=pedido.get("orgao")))
         return temporario
 
     baixar(maquina, f"/certidoes/{mes}.zip{consulta}", temporario,
@@ -627,17 +654,21 @@ def baixar_planilha(cfg: Config, mes: str, destino: Path,
 
 
 def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "",
-                    aba: str = "", orgao: str = "") -> dict:
+                    aba: str = "", orgao: str = "", nome: str = "") -> dict:
     """Sobe a planilha para a máquina e devolve o resumo da importação.
 
-    `aba` é a automação escolhida: a mesma máquina roda mais de uma, e é a
-    aba da planilha que diz qual (ver ingestao.planilha.ABA_PARA_ORGAO).
+    `aba` diz onde estão os dados; `orgao` diz qual automação vai rodar.
+    Sem `orgao`, a máquina mantém o atalho antigo pelo nome da aba.
     """
     limite = b"----acta" + str(id(arquivo)).encode()
     corpo = b"".join([
         b"--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="aba"\r\n\r\n',
         (aba or "RFB").encode("utf-8"), b"\r\n--", limite, b"\r\n",
+        b'Content-Disposition: form-data; name="orgao"\r\n\r\n',
+        orgao.encode("utf-8"), b"\r\n--", limite, b"\r\n",
+        b'Content-Disposition: form-data; name="nome"\r\n\r\n',
+        (nome or arquivo.name).encode("utf-8"), b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="arquivo"; filename="',
         arquivo.name.encode("utf-8"), b'"\r\n',
         b"Content-Type: application/vnd.openxmlformats-officedocument"

@@ -82,6 +82,44 @@ class TestComandosPelaRede:
                     rede=ConfigRede(nome="teste", senha=senha)))
         return fastapi_testclient.TestClient(modulo.app)
 
+    def _cliente_com_config_editavel(self, monkeypatch, tmp_path):
+        from cnd.infra import ajustes
+        from cnd.infra import config as modulo_config
+        from cnd.infra.db import conectar, criar_schema
+        from cnd.web import app as modulo
+
+        banco = tmp_path / "cnd.db"
+        conn = conectar(banco)
+        try:
+            criar_schema(conn)
+        finally:
+            conn.close()
+
+        arquivo = tmp_path / "config.toml"
+        arquivo.write_text(
+            "[geral]\n"
+            f'banco = "{banco.as_posix()}"\n'
+            "\n"
+            "[rede]\n"
+            'nome = "teste"\n'
+            'senha = "segredo"\n'
+            "\n"
+            "[orgaos.CRF]\n"
+            "ativo = false\n"
+            'adapter = "crf"\n'
+            "workers = 1\n"
+            "\n"
+            "[orgaos.RFB_PF]\n"
+            "ativo = false\n"
+            'adapter = "rfb_pf"\n'
+            "workers = 1\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(modulo_config, "CAMINHO_PADRAO", arquivo)
+        monkeypatch.setattr(ajustes, "_caminho", lambda: arquivo)
+        monkeypatch.setattr(modulo, "cfg", modulo_config.carregar(arquivo))
+        return fastapi_testclient.TestClient(modulo.app), arquivo
+
     def test_sem_senha_configurada_recusa_iniciar(self, monkeypatch, tmp_path):
         with self._cliente(monkeypatch, tmp_path, senha="") as cliente:
             resposta = cliente.post("/api/robo/iniciar")
@@ -103,6 +141,39 @@ class TestComandosPelaRede:
 
         assert resposta.status_code == 400
         assert ".xlsx" in resposta.json()["detail"]
+
+    def test_liga_orgao_existente_no_config(self, monkeypatch, tmp_path):
+        from cnd.infra.config import carregar as carregar_config
+        from cnd.web import app as modulo
+
+        cliente, arquivo = self._cliente_com_config_editavel(
+            monkeypatch, tmp_path)
+        with cliente:
+            resposta = cliente.post(
+                "/api/orgao/CRF/ativo",
+                headers={"X-CND-Senha": "segredo"},
+                data={"ativo": "true"},
+            )
+
+        assert resposta.status_code == 200
+        assert carregar_config(arquivo).orgaos["CRF"].ativo is True
+        assert modulo.cfg.orgaos["CRF"].ativo is True
+
+    def test_nao_liga_orgao_sem_adapter(self, monkeypatch, tmp_path):
+        from cnd.infra.config import carregar as carregar_config
+
+        cliente, arquivo = self._cliente_com_config_editavel(
+            monkeypatch, tmp_path)
+        with cliente:
+            resposta = cliente.post(
+                "/api/orgao/RFB_PF/ativo",
+                headers={"X-CND-Senha": "segredo"},
+                data={"ativo": "true"},
+            )
+
+        assert resposta.status_code == 409
+        assert "Adapter rfb_pf não existe" in resposta.json()["detail"]
+        assert carregar_config(arquivo).orgaos["RFB_PF"].ativo is False
 
     def test_area_bloqueada_recusa_com_motivo(self, monkeypatch, tmp_path):
         """O robô move o mouse de verdade; com a estação bloqueada ele

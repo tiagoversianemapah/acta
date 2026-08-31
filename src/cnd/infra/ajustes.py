@@ -41,6 +41,15 @@ def ler_valor(secao: str, chave: str) -> str:
 
 def gravar_valor(secao: str, chave: str, valor: str) -> None:
     """Escreve a chave na seção, criando a linha (ou a seção) se faltar."""
+    _gravar(secao, chave, f'"{valor}"')
+
+
+def gravar_booleano(secao: str, chave: str, valor: bool) -> None:
+    """Escreve um booleano TOML, sem aspas."""
+    _gravar(secao, chave, "true" if valor else "false")
+
+
+def _gravar(secao: str, chave: str, valor_toml: str) -> None:
     linhas = _linhas()
     dentro = False
     fim_da_secao = None
@@ -54,16 +63,16 @@ def gravar_valor(secao: str, chave: str, valor: str) -> None:
             dentro = nua == f"[{secao}]"
             continue
         if dentro and re.match(rf'\s*{chave}\s*=', linha):
-            linhas[indice] = f'{chave} = "{valor}"'
+            linhas[indice] = f"{chave} = {valor_toml}"
             _escrever(linhas)
             return
         if dentro and nua:
             fim_da_secao = indice + 1
 
     if fim_da_secao is not None:
-        linhas.insert(fim_da_secao, f'{chave} = "{valor}"')
+        linhas.insert(fim_da_secao, f"{chave} = {valor_toml}")
     else:
-        linhas += ["", f"[{secao}]", f'{chave} = "{valor}"']
+        linhas += ["", f"[{secao}]", f"{chave} = {valor_toml}"]
     _escrever(linhas)
 
 

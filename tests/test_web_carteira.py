@@ -116,3 +116,9 @@ def test_desfecho_insuficiente_aparece_como_resultado_de_negocio():
         "Informações insuficientes"
     )
     assert carteira.classe_desfecho(Desfecho.PENDENCIA_MANUAL) == "alerta"
+
+
+def test_mensagem_antiga_do_sefaz_go_aparece_corrigida():
+    assert consultas.mensagem_portal_legivel(
+        "SEFAZ-GO emitiu PDF apos confirmar nome do contribuinte"
+    ) == "SEFAZ-GO emitiu PDF após confirmar o nome do contribuinte."

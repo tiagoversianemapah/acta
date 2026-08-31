@@ -26,6 +26,7 @@ import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
+from importlib.util import find_spec
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
@@ -323,10 +324,50 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         log.info("maquina_renomeada", extra={"nome": limpo})
         return _resposta(f"Máquina renomeada para {limpo}.")
 
+    @roteador.post("/orgao/{orgao}/ativo")
+    def definir_orgao_ativo(orgao: str, ativo: bool = Form(default=True)):
+        """Liga ou desliga uma automação existente no config desta máquina."""
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+
+        codigo = orgao.strip().upper()
+        configurado = cfg.orgaos.get(codigo)
+        if configurado is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Não achei [orgaos.{codigo}] no config.",
+            )
+        if ativo and find_spec(f"cnd.adapters.{configurado.adapter}") is None:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Adapter {configurado.adapter} não existe.",
+            )
+
+        from cnd.infra import ajustes
+        try:
+            ajustes.gravar_booleano(f"orgaos.{codigo}", "ativo", ativo)
+        except OSError as erro:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Não gravei o config: {erro}",
+            ) from erro
+
+        from cnd.infra.config import carregar as recarregar
+        from cnd.web import app as modulo_app
+        with contextlib.suppress(Exception):
+            modulo_app.cfg = recarregar()
+
+        rotulo = configurado.rotulo
+        estado = "ligada" if ativo else "desligada"
+        log.info("orgao_config_alterado",
+                 extra={"orgao": codigo, "ativo": ativo})
+        return _resposta(f"{rotulo} {estado}.")
+
     @roteador.post("/planilha")
     async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
                               aba: str = Form(default=""),
-                              orgao: str = Form(default="")):
+                              orgao: str = Form(default=""),
+                              nome: str = Form(default="")):
         """Recebe a planilha e cria o lote nesta máquina.
 
         Resolve o caminho que hoje obriga a entrar por AnyDesk em cada
@@ -336,12 +377,16 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         cfg = obter_config()
         exigir_senha_configurada(cfg)
 
-        nome = Path(arquivo.filename or "planilha.xlsx").name
-        if not nome.lower().endswith((".xlsx", ".xlsm")):
+        nome_recebido = Path(arquivo.filename or "planilha.xlsx").name
+        if not nome_recebido.lower().endswith((".xlsx", ".xlsm")):
             raise HTTPException(status_code=400,
                                 detail="Envie um arquivo .xlsx.")
+        from cnd.infra import carteiras
 
-        destino = Path(tempfile.mkdtemp(prefix="acta_")) / nome
+        nome_arquivo = carteiras.nome_seguro(nome_recebido)
+        nome_lote = carteiras.nome_seguro(nome or nome_recebido)
+
+        destino = Path(tempfile.mkdtemp(prefix="acta_")) / nome_arquivo
         try:
             tamanho = 0
             with open(destino, "wb") as saida:
@@ -365,8 +410,9 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                 # que a linha de comando continua usando.
                 escolhidas = [aba.strip()] if aba.strip() else None
                 lote_id, leitura = importar(conn, destino,
-                                            f"Importação de {nome}",
-                                            escolhidas, orgao.strip() or None)
+                                            f"Importação de {nome_lote}",
+                                            escolhidas, orgao.strip() or None,
+                                            arquivo_origem=nome_lote)
             finally:
                 conn.close()
 

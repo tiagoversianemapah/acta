@@ -139,8 +139,8 @@ def ler(caminho: Path, abas: list[str] | None = None,
 
 
 def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
-             abas: list[str] | None = None,
-             orgao: str | None = None) -> tuple[int, Leitura]:
+             abas: list[str] | None = None, orgao: str | None = None,
+             arquivo_origem: str | None = None) -> tuple[int, Leitura]:
     """Lê a planilha e grava lote + empresas + jobs no banco.
 
     Tudo de uma vez só: ou o lote inteiro entra, ou nada entra."""
@@ -150,7 +150,7 @@ def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
     try:
         cursor = conn.execute(
             "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
-            (descricao, caminho.name),
+            (descricao, arquivo_origem or caminho.name),
         )
         lote_id = cursor.lastrowid
 

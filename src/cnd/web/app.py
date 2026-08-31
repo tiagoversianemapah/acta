@@ -32,7 +32,7 @@ from fastapi.templating import Jinja2Templates
 from cnd.core import breaker, fila, tempo
 from cnd.core.documentos import formatar
 from cnd.desktop import remoto
-from cnd.infra import alertas, heartbeat, maquina
+from cnd.infra import alertas, carteiras, heartbeat, maquina
 from cnd.infra.config import Maquina
 from cnd.infra.config import carregar as carregar_config
 from cnd.infra.db import RAIZ_PROJETO, conectar, conectar_leitura, criar_schema
@@ -71,9 +71,13 @@ def automacoes() -> list[dict]:
     lista = []
     for aba, (codigo, tipo) in ABA_PARA_ORGAO.items():
         orgao = cfg.orgaos.get(codigo)
+        adapter_ok = (
+            orgao is not None
+            and find_spec(f"cnd.adapters.{orgao.adapter}") is not None
+        )
         if orgao is None:
             motivo = "não está no config desta máquina"
-        elif find_spec(f"cnd.adapters.{orgao.adapter}") is None:
+        elif not adapter_ok:
             # Antes de "desligada": ligar no config não constrói adapter
             # nenhum, e dizer só que está desligada mandaria a pessoa
             # trocar `ativo = true` para descobrir o problema de verdade.
@@ -89,6 +93,7 @@ def automacoes() -> list[dict]:
             "rotulo": orgao.rotulo if orgao else codigo,
             "disponivel": not motivo,
             "motivo": motivo,
+            "pode_ligar": bool(orgao and adapter_ok and not orgao.ativo),
         })
     lista.sort(key=lambda a: (not a["disponivel"], a["rotulo"]))
     return lista
@@ -430,6 +435,29 @@ def _totais(orgaos: list[dict]) -> dict:
     }
 
 
+def _orgaos_para_exportar(
+    selecionada: remoto.EstadoRemoto | None, mes: str,
+) -> list[dict]:
+    if not selecionada or not selecionada.online:
+        return []
+
+    if selecionada.local:
+        with contextlib.closing(ler()) as conn:
+            return [
+                {
+                    "orgao": codigo,
+                    "rotulo": _rotulo_orgao(codigo),
+                    "total": consultas.resumo(conn, codigo, None, mes).total,
+                }
+                for codigo in consultas.orgaos_do_lote(conn, None, mes)
+            ]
+
+    remoto_lista = remoto.orgaos_do_mes(
+        selecionada.maquina, cfg.rede.senha, mes
+    )
+    return remoto_lista or selecionada.orgaos
+
+
 def _url_destino(
     rota: str, maquina: int | str | None = None,
     mensagem: str | None = None, erro: str | None = None,
@@ -555,6 +583,11 @@ def _contexto_painel(
     # Com a mesma planilha enviada mais de uma vez, o nome não distingue
     # nada: os arquivos vêm formatados com a data de envio junto.
     lotes = carteira.arquivos_do_estado(selecionada)
+    planilhas_salvas = [{
+        "token": g.token,
+        "nome": g.nome,
+        "quando": g.quando_curto,
+    } for g in carteiras.listar(cfg.banco)]
     em_execucao = dados.get("lote_em_execucao")
     rodando = next((lote for lote in lotes if lote["id"] == em_execucao), None)
     meses = dados.get("meses", [])
@@ -569,6 +602,7 @@ def _contexto_painel(
         "selecionada_idx": indice,
         "dados": dados,
         "orgaos": orgaos,
+        "orgaos_exportacao": _orgaos_para_exportar(selecionada, mes_atual),
         "totais": totais,
         "bloqueios": [o for o in orgaos if o.get("disjuntor") == "ABERTO"],
         # Órgãos com trabalho parado esperando a próxima rodada. Sem esta
@@ -579,6 +613,11 @@ def _contexto_painel(
         "atividade": selecionada.atividade if selecionada else [],
         "saude": selecionada.saude if selecionada else {},
         "lotes": lotes,
+        "planilhas_salvas": (
+            planilhas_salvas
+            if selecionada and selecionada.online and selecionada.roda_robo
+            else []
+        ),
         "lote_id": dados.get("lote_id"),
         "lote_nome": dados.get("lote_nome") or "sem planilha ativa",
         # O que veio na URL, para o seletor não "voltar sozinho" quando o
@@ -858,46 +897,35 @@ def baixar_diagnostico(maquina: int | None = None, dias: int = 7):
 # Envio de planilha em dois passos
 # ----------------------------------------------------------------------
 # As abas de um arquivo só existem depois de abri-lo, então não há como
-# oferecer a escolha antes de recebê-lo. O arquivo espera aqui entre o
-# passo 1 (mandar) e o passo 2 (mapear aba -> automação), identificado por
-# um token que só quem enviou conhece — e sai do disco assim que confirma,
-# desiste ou o prazo vence. Planilha de cliente não pode ficar esquecida
-# numa pasta temporária (RNF-06).
-PRAZO_DA_PLANILHA_GUARDADA_S = 1800.0
-_planilhas_guardadas: dict[str, dict] = {}
+# oferecer a escolha antes de recebê-lo. O arquivo passa primeiro por uma
+# cópia temporária, é validado, e depois fica em `data/planilhas` com teto
+# de três versões recentes. O token da URL é só o nome guardado, nunca um
+# caminho arbitrário vindo do navegador.
+def _guardar_planilha(caminho: Path) -> str:
+    """Guarda em `data/planilhas` e devolve o token usado nas URLs."""
+    return carteiras.guardar(cfg.banco, caminho, caminho.name).token
 
 
-def _guardar_planilha(caminho: Path, indice: int | None) -> str:
-    _limpar_planilhas_vencidas()
-    token = secrets.token_urlsafe(16)
-    _planilhas_guardadas[token] = {
-        "caminho": caminho, "maquina": indice, "quando": time.monotonic(),
-    }
-    return token
+def _indice_para_planilha(indice: int | None) -> int | None:
+    if cfg.rede.maquinas:
+        return (
+            indice
+            if indice is not None and 0 <= indice < len(cfg.rede.maquinas)
+            else 0
+        )
+    return 0 if cfg.rede.roda_robo else None
 
 
-def _pegar_planilha(token: str) -> dict | None:
-    _limpar_planilhas_vencidas()
-    guardada = _planilhas_guardadas.get(token)
-    if guardada and not guardada["caminho"].exists():
-        _descartar_planilha(token)
+def _pegar_planilha(token: str, indice: int | None = None) -> dict | None:
+    guardada = carteiras.buscar(cfg.banco, token)
+    if guardada is None:
         return None
-    return guardada
-
-
-def _descartar_planilha(token: str) -> None:
-    guardada = _planilhas_guardadas.pop(token, None)
-    if guardada:
-        shutil.rmtree(guardada["caminho"].parent, ignore_errors=True)
-
-
-def _limpar_planilhas_vencidas() -> None:
-    """Quem fecha a aba no meio do caminho não deixa arquivo para trás."""
-    agora = time.monotonic()
-    vencidos = [t for t, g in _planilhas_guardadas.items()
-                if agora - g["quando"] > PRAZO_DA_PLANILHA_GUARDADA_S]
-    for token in vencidos:
-        _descartar_planilha(token)
+    return {
+        "caminho": guardada.caminho,
+        "maquina": _indice_para_planilha(indice),
+        "nome": guardada.nome,
+        "quando": guardada.quando_curto,
+    }
 
 
 def _mapa_das_abas(caminho: Path) -> list[dict]:
@@ -910,16 +938,49 @@ def _mapa_das_abas(caminho: Path) -> list[dict]:
     """
     from cnd.ingestao.planilha import ABA_PARA_ORGAO, abas_da_planilha
 
-    disponiveis = {a["codigo"] for a in automacoes() if a["disponivel"]}
     mapa = []
     for nome, linhas in abas_da_planilha(caminho):
         sugerido = ABA_PARA_ORGAO.get(nome.strip().upper(), ("", ""))[0]
         mapa.append({
             "nome": nome,
             "linhas": linhas,
-            "sugerido": sugerido if sugerido in disponiveis else "",
+            "sugerido": sugerido,
         })
     return mapa
+
+
+def _ja_na_fila_no_mes(indice: int | None, orgao: str) -> dict:
+    if cfg.rede.maquinas:
+        if indice is None or not (0 <= indice < len(cfg.rede.maquinas)):
+            return {}
+        return remoto.ja_na_fila_no_mes(
+            cfg.rede.maquinas[indice], cfg.rede.senha, orgao
+        ) or {}
+
+    with contextlib.closing(ler()) as conn:
+        return consultas.ja_na_fila_no_mes(conn, orgao)
+
+
+def _avisos_importacao(indice: int | None) -> dict[str, dict]:
+    avisos = {}
+    for opcao in automacoes():
+        if not opcao["disponivel"]:
+            continue
+        info = _ja_na_fila_no_mes(indice, opcao["codigo"])
+        itens = int(info.get("itens") or 0)
+        if not itens:
+            continue
+        planilha = str(info.get("planilha") or "outro lote")
+        avisos[opcao["codigo"]] = {
+            "itens": itens,
+            "planilha": planilha,
+            "texto": (
+                f"Já existem {itens} item(ns) de {opcao['rotulo']} neste mês "
+                f"em {planilha}. Importar cria um lote novo e consulta o "
+                f"portal de novo."
+            ),
+        }
+    return avisos
 
 
 async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
@@ -933,7 +994,7 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
     # chamador redireciona com a mensagem de erro e não tem o que apagar,
     # porque nunca chegou a saber o nome da pasta.
     pasta = Path(tempfile.mkdtemp(prefix="acta_upload_"))
-    destino = pasta / nome
+    destino = pasta / carteiras.nome_seguro(nome)
     try:
         tamanho = 0
         with destino.open("wb") as saida:
@@ -951,15 +1012,16 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
 
 
 def _importar_planilha_local(caminho: Path, aba: str = "",
-                             orgao: str = "") -> dict:
+                             orgao: str = "", nome: str = "") -> dict:
     from cnd.ingestao.planilha import importar
 
     conn = conectar(cfg.banco)
     try:
         criar_schema(conn)
+        nome_lote = nome or caminho.name
         lote_id, leitura = importar(
-            conn, caminho, f"Importacao de {caminho.name}",
-            [aba] if aba else None, orgao or None,
+            conn, caminho, f"Importacao de {nome_lote}",
+            [aba] if aba else None, orgao or None, arquivo_origem=nome_lote,
         )
         resposta = {
             "lote": lote_id,
@@ -1064,50 +1126,78 @@ async def acao_enviar_planilha(indice: int, arquivo: UploadFile = PLANILHA_ENVIA
             _url_destino("/", indice, erro="A planilha não tem nenhuma aba."),
             status_code=303)
 
-    token = _guardar_planilha(caminho, indice)
-    return RedirectResponse(f"/planilha/{token}", status_code=303)
+    try:
+        token = _guardar_planilha(caminho)
+    except Exception as erro:
+        log.warning("guardar_planilha_falhou",
+                    extra={"maquina": indice, "erro": str(erro)})
+        return RedirectResponse(_url_destino("/", indice, erro=str(erro)),
+                                status_code=303)
+    finally:
+        shutil.rmtree(caminho.parent, ignore_errors=True)
+
+    return RedirectResponse(_url_destino(f"/planilha/{token}", indice),
+                            status_code=303)
 
 
 @app.get("/planilha/{token}", response_class=HTMLResponse)
-def tela_mapear_planilha(request: Request, token: str):
+def tela_mapear_planilha(
+    request: Request, token: str, maquina: int | None = None,
+    erro: str | None = None, mensagem: str | None = None,
+):
     """Passo 2: o que a planilha tem, e o que fazer com cada aba."""
-    guardada = _pegar_planilha(token)
+    indice = _indice_para_planilha(maquina)
+    guardada = _pegar_planilha(token, indice)
     if guardada is None:
         return RedirectResponse(
-            _url_destino("/", erro="O envio expirou. Mande a planilha de novo."),
+            _url_destino("/", indice,
+                         erro="Planilha guardada não encontrada."),
             status_code=303)
+    autos = automacoes()
+    abas = _mapa_das_abas(guardada["caminho"])
     return templates.TemplateResponse(request, "planilha.html", {
         "token": token,
-        "arquivo": guardada["caminho"].name,
-        "abas": _mapa_das_abas(guardada["caminho"]),
-        "automacoes": [a for a in automacoes() if a["disponivel"]],
-        "indisponiveis": [a for a in automacoes() if not a["disponivel"]],
-        "selecionada_idx": guardada["maquina"],
+        "arquivo": guardada["nome"],
+        "abas": abas,
+        "abas_com_linhas": sum(1 for aba in abas if aba["linhas"]),
+        "total_linhas_planilha": sum(aba["linhas"] for aba in abas),
+        "automacoes": autos,
+        "automacoes_por_codigo": {a["codigo"]: a for a in autos},
+        "indisponiveis": [a for a in autos if not a["disponivel"]],
+        "avisos": _avisos_importacao(indice),
+        "selecionada_idx": indice,
+        "erro_planilha": _formatar_flash(erro),
+        "mensagem_planilha": _formatar_flash(mensagem),
         "pagina": "painel",
     })
 
 
 @app.post("/planilha/{token}/cancelar")
-def acao_cancelar_planilha(token: str):
-    guardada = _pegar_planilha(token)
-    indice = guardada["maquina"] if guardada else None
-    _descartar_planilha(token)
+def acao_cancelar_planilha(token: str, maquina: int | None = None):
+    del token
+    indice = _indice_para_planilha(maquina)
     return RedirectResponse(
-        _url_destino("/", indice, mensagem="Envio cancelado."), status_code=303)
+        _url_destino("/", indice, mensagem="Nada entrou na fila."),
+        status_code=303,
+    )
 
 
 @app.post("/planilha/{token}/confirmar")
-async def acao_confirmar_planilha(request: Request, token: str):
+async def acao_confirmar_planilha(
+    request: Request, token: str, maquina: int | None = None,
+):
     """Passo 3: importa cada aba na automação que você escolheu.
 
     Um envio só resolve a planilha inteira: a carteira vem com RFB e CRF
     no mesmo arquivo, e mandá-lo duas vezes seria trabalho repetido para
     um problema que é de tela, não de dados.
     """
-    guardada = _pegar_planilha(token)
+    indice = _indice_para_planilha(maquina)
+    guardada = _pegar_planilha(token, indice)
     if guardada is None:
         return RedirectResponse(
-            _url_destino("/", erro="O envio expirou. Mande a planilha de novo."),
+            _url_destino("/", indice,
+                         erro="Planilha guardada não encontrada."),
             status_code=303)
 
     indice = guardada["maquina"]
@@ -1123,7 +1213,10 @@ async def acao_confirmar_planilha(request: Request, token: str):
 
     if not pares:
         return RedirectResponse(
-            f"/planilha/{token}?erro=Escolha+ao+menos+uma+aba", status_code=303)
+            _url_destino(f"/planilha/{token}", indice,
+                         erro="Escolha ao menos uma aba."),
+            status_code=303,
+        )
 
     try:
         for _, escolhido in pares:
@@ -1138,11 +1231,12 @@ async def acao_confirmar_planilha(request: Request, token: str):
                     raise ValueError("Máquina não encontrada.")
                 resposta = remoto.enviar_planilha(
                     cfg.rede.maquinas[indice], caminho, cfg.rede.senha,
-                    aba=aba, orgao=escolhido)
+                    aba=aba, orgao=escolhido, nome=guardada["nome"])
             else:
                 if indice not in (0, None) or not cfg.rede.roda_robo:
                     raise ValueError("Máquina não encontrada.")
-                resposta = _importar_planilha_local(caminho, aba, escolhido)
+                resposta = _importar_planilha_local(
+                    caminho, aba, escolhido, guardada["nome"])
             criados += int(resposta.get("criados") or 0)
             rejeitados += int(resposta.get("total_rejeitados") or 0)
             detalhes.extend(resposta.get("rejeitados") or [])
@@ -1159,8 +1253,6 @@ async def acao_confirmar_planilha(request: Request, token: str):
                     extra={"maquina": indice, "erro": str(erro)})
         return RedirectResponse(_url_destino("/", indice, erro=str(erro)),
                                 status_code=303)
-    finally:
-        _descartar_planilha(token)
 
 
 @app.post("/acoes/maquina/{indice}/robo/{acao}")
@@ -1388,16 +1480,34 @@ def acao_retomar(orgao: str):
 # Downloads
 # ----------------------------------------------------------------------
 
-@app.get("/relatorio/{mes}.xlsx")
-def baixar_relatorio(mes: str, orgao: str | None = None):
-    """Planilha do mês, opcionalmente de um órgão só.
+def _orgaos_do_download(request: Request) -> tuple[str, ...]:
+    escolhidos = []
+    for valor in request.query_params.getlist("orgao"):
+        codigo = str(valor or "").strip().upper()
+        if codigo and codigo not in escolhidos:
+            escolhidos.append(codigo)
+    return tuple(escolhidos)
 
-    Mesmo recorte do pacote de certidões e da tela: quem filtra "Receita
-    Federal" e pede a planilha espera receber a Receita Federal.
+
+def _sufixo_download(orgaos: tuple[str, ...]) -> str:
+    if not orgaos:
+        return ""
+    if len(orgaos) > 1:
+        return "_selecionadas"
+    return "_" + re.sub(r"[^0-9a-z_]+", "_", orgaos[0].lower()).strip("_")
+
+
+@app.get("/relatorio/{mes}.xlsx")
+def baixar_relatorio(request: Request, mes: str):
+    """Planilha do mês, opcionalmente filtrada por automações.
+
+    Mesmo recorte do pacote de certidões e da tela: quem marca Receita e
+    SEFAZ-GO espera receber só essas automações no arquivo.
     """
+    orgaos = _orgaos_do_download(request)
     with contextlib.closing(ler()) as conn:
-        conteudo = relatorio.gerar_bytes(conn, relatorio.Recorte(mes, orgao))
-    sufixo = f"_{orgao.lower()}" if orgao else ""
+        conteudo = relatorio.gerar_bytes(conn, relatorio.Recorte(mes, orgaos))
+    sufixo = _sufixo_download(orgaos)
     return Response(
         conteudo,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1407,22 +1517,23 @@ def baixar_relatorio(mes: str, orgao: str | None = None):
 
 
 @app.get("/certidoes/{mes}.zip")
-def baixar_pdfs(mes: str, somente_negativas: bool = False,
-                orgao: str | None = None):
-    """Pacote das certidões emitidas no mês (`2026-08`), por órgão.
+def baixar_pdfs(
+    request: Request, mes: str, somente_negativas: bool = False,
+):
+    """Pacote das certidões emitidas no mês (`2026-08`), por automações.
 
     `?somente_negativas=1` deixa de fora as CPEN, para quem precisa só das
-    empresas totalmente limpas. `?orgao=RFB_PJ` entrega um órgão de cada
-    vez, para quando a federal fecha antes das estaduais.
+    empresas totalmente limpas. Repetir `?orgao=...` entrega só as
+    automações escolhidas.
     """
+    orgaos = _orgaos_do_download(request)
     with contextlib.closing(ler()) as conn:
         conteudo = relatorio.zipar_pdfs(
             conn, mes, somente_negativas,
             nomes={codigo: o.rotulo for codigo, o in cfg.orgaos.items()},
-            orgao=orgao)
+            orgao=orgaos)
     sufixo = "_negativas" if somente_negativas else ""
-    if orgao:
-        sufixo = f"_{orgao.lower()}{sufixo}"
+    sufixo = _sufixo_download(orgaos) + sufixo
     return Response(
         conteudo, media_type="application/zip",
         headers={"Content-Disposition":

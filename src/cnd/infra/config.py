@@ -81,6 +81,14 @@ def nome_do_orgao(codigo: str) -> str:
     return NOMES_DE_ORGAO.get(codigo, codigo)
 
 
+def _como_bool(valor: object) -> bool:
+    if isinstance(valor, bool):
+        return valor
+    if isinstance(valor, str):
+        return valor.strip().lower() in {"1", "true", "sim", "s", "yes", "on"}
+    return bool(valor)
+
+
 @dataclass(frozen=True)
 class ConfigOrgao:
     codigo: str
@@ -290,7 +298,7 @@ def carregar(caminho: Path | None = None) -> Config:
         retry_bruto = bruto.get("retry", {})
         orgaos[codigo] = ConfigOrgao(
             codigo=codigo,
-            ativo=bool(bruto.get("ativo", False)),
+            ativo=_como_bool(bruto.get("ativo", False)),
             adapter=bruto.get("adapter", codigo.lower()),
             workers=int(bruto.get("workers", 1)),
             nome=bruto.get("nome", ""),

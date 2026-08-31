@@ -153,6 +153,22 @@ class TestPacoteZip:
         assert any(n.startswith("RECEITA FEDERAL/") for n in nomes)
         assert any(n.startswith("SEFAZ GOIAS/") for n in nomes)
 
+    def test_filtra_varias_automacoes_no_mesmo_zip(self, conn, tmp_path):
+        self._preparar(conn, tmp_path, ["NEGATIVA"])
+        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_GO",
+                       inicio=90)
+        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_MT",
+                       inicio=120)
+
+        nomes = self._nomes(zipar_pdfs(
+            conn, MES, nomes={"SEFAZ_GO": "SEFAZ GOIAS"},
+            orgao=("RFB_PJ", "SEFAZ_GO"),
+        ))
+
+        assert any(n.startswith("RECEITA FEDERAL/") for n in nomes)
+        assert any(n.startswith("SEFAZ GOIAS/") for n in nomes)
+        assert not any(n.startswith("SEFAZ_MT/") for n in nomes)
+
     def test_orgao_sem_nome_cadastrado_usa_o_codigo(self, conn, tmp_path):
         """Órgão novo entra na entrega antes de alguém batizá-lo."""
         self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_MT")
