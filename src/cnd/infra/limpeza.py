@@ -24,17 +24,21 @@ from cnd.infra.log import obter
 
 log = obter("limpeza")
 
-# Ordem importa: filho antes de pai, para não esbarrar em chave estrangeira.
+# As tabelas vêm do PRÓPRIO BANCO, e não de uma lista escrita aqui.
 #
-# A lista é a do schema INTEIRO, e não a das tabelas lembradas na hora de
-# escrevê-la. `fila_controle` referencia `lote`, então esquecê-la não
-# deixava sobra: derrubava a zeragem com FOREIGN KEY constraint failed em
-# qualquer máquina que já tivesse estacionado uma automação — e a transação
-# volta atrás inteira, de forma que o botão simplesmente não funcionava.
-# `recuperacao` não trava nada, mas guarda contagem de rodadas do lote que
-# acabou de ser apagado, e ficaria mentindo para o robô seguinte.
-TABELAS = ("tentativa", "certidao", "job", "fila_controle", "empresa",
-           "lote", "ritmo", "breaker", "recuperacao", "heartbeat")
+# Uma lista fixa foi tentada duas vezes e falhou as duas. Primeiro por
+# esquecer `fila_controle`, que referencia `lote`. Depois — numa máquina em
+# produção, 31/08/2026 — porque `criar_schema` usa CREATE TABLE IF NOT
+# EXISTS e NUNCA remove tabela: um banco antigo carrega tabelas de schemas
+# passados, que a lista de hoje não conhece e que ainda apontam para `lote`
+# ou `job`. O sintoma era o mesmo nos dois casos, e é dos piores: a
+# transação volta atrás inteira e o botão simplesmente não funciona.
+#
+# `sqlite_master` sabe o que existe naquele banco; este arquivo, não.
+def _tabelas_do_banco(conn: sqlite3.Connection) -> list[str]:
+    return [linha[0] for linha in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' "
+        "AND name NOT LIKE 'sqlite_%' ORDER BY name")]
 
 
 @dataclass
@@ -79,15 +83,28 @@ def zerar(conn: sqlite3.Connection, pastas: tuple[Path, ...] = ()) -> Zeragem:
     limpar, porque sobrariam jobs apontando para lotes que não existem.
     """
     linhas: dict[str, int] = {}
-    conn.execute("BEGIN")
+
+    # Chave estrangeira DESLIGADA durante a limpeza. Ela existe para impedir
+    # que sobre filho sem pai — e aqui não sobra nada, porque tudo morre na
+    # mesma transação. Com ela ligada, a ordem de DELETE vira um quebra-
+    # cabeça que depende de conhecer o schema inteiro, inclusive as tabelas
+    # que versões antigas deixaram no banco. Desligar troca esse
+    # quebra-cabeça por uma garantia mais simples: ou apaga tudo, ou nada.
+    #
+    # O PRAGMA não vale dentro de transação, por isso vem antes do BEGIN.
+    conn.execute("PRAGMA foreign_keys = OFF")
     try:
-        for tabela in TABELAS:
-            cursor = conn.execute(f"DELETE FROM {tabela}")
-            linhas[tabela] = cursor.rowcount if cursor.rowcount > 0 else 0
-        conn.execute("COMMIT")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+        conn.execute("BEGIN")
+        try:
+            for tabela in _tabelas_do_banco(conn):
+                cursor = conn.execute(f'DELETE FROM "{tabela}"')
+                linhas[tabela] = cursor.rowcount if cursor.rowcount > 0 else 0
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
 
     arquivos = sum(_apagar_conteudo(pasta) for pasta in pastas)
     resultado = Zeragem(linhas=linhas, arquivos=arquivos)

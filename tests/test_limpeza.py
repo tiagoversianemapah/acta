@@ -117,18 +117,25 @@ def test_zerar_nao_deixa_contagem_de_recuperacao_para_tras(conn, tmp_path):
         "SELECT COUNT(*) AS n FROM recuperacao").fetchone()["n"] == 0
 
 
-def test_a_lista_cobre_o_schema_inteiro(conn):
-    """A lista foi escrita de memória uma vez e envelheceu em silêncio:
-    `fila_controle` e `recuperacao` nasceram depois dela, e ninguém tinha
-    como perceber. Tabela nova sem decisão explícita quebra este teste."""
-    do_banco = {
-        linha["name"] for linha in conn.execute(
-            "SELECT name FROM sqlite_master WHERE type = 'table' "
-            "AND name NOT LIKE 'sqlite_%'")
-    }
-    assert do_banco - set(limpeza.TABELAS) == set(), (
-        "tabela no schema e fora de limpeza.TABELAS: ou ela some ao zerar, "
-        "ou é sobrevivente de propósito — e aí entra na exceção aqui")
+def test_nenhuma_tabela_do_schema_sobrevive(conn):
+    """Não há mais lista escrita à mão — as tabelas vêm do próprio banco.
+
+    A lista fixa envelheceu em silêncio duas vezes: `fila_controle` e
+    `recuperacao` nasceram depois dela, e depois um banco de produção
+    trouxe uma tabela de schema antigo que ninguém lembrava. Este teste
+    garante o que importa no fim: depois de zerar, nada sobra.
+    """
+    from tests.conftest import criar_job
+
+    cursor = conn.execute("INSERT INTO lote (descricao) VALUES ('x')")
+    criar_job(conn, cursor.lastrowid)
+    conn.commit()
+
+    limpeza.zerar(conn)
+
+    for tabela in limpeza._tabelas_do_banco(conn):
+        assert conn.execute(
+            f'SELECT COUNT(*) FROM "{tabela}"').fetchone()[0] == 0, tabela
 
 
 def test_o_proximo_lote_volta_a_ser_o_numero_1(conn, tmp_path):
@@ -142,3 +149,52 @@ def test_o_proximo_lote_volta_a_ser_o_numero_1(conn, tmp_path):
     ).lastrowid
 
     assert novo == 1
+
+
+class TestBancoComSchemaAntigo:
+    """`criar_schema` usa CREATE TABLE IF NOT EXISTS e NUNCA remove tabela.
+
+    Um banco de meses atrás carrega tabelas de schemas passados, que a
+    versão de hoje não conhece e que ainda apontam para `lote` ou `job`.
+    Lista fixa de tabelas não tem como saber disso — e o sintoma é dos
+    piores: a transação volta atrás inteira e o botão de zerar simplesmente
+    não funciona. Aconteceu em produção em 31/08/2026.
+    """
+
+    def _com_tabela_legada(self, conn):
+        conn.execute("CREATE TABLE legado_antigo (id INTEGER PRIMARY KEY, "
+                     "lote_id INTEGER NOT NULL REFERENCES lote(id))")
+        conn.execute("INSERT INTO lote (descricao) VALUES ('julho')")
+        conn.execute("INSERT INTO legado_antigo (lote_id) VALUES (1)")
+        conn.commit()
+
+    def test_zera_mesmo_com_tabela_que_o_codigo_nao_conhece(self, conn):
+        self._com_tabela_legada(conn)
+
+        limpeza.zerar(conn)
+
+        for tabela in ("lote", "legado_antigo"):
+            assert conn.execute(
+                f'SELECT COUNT(*) FROM "{tabela}"').fetchone()[0] == 0, tabela
+
+    def test_a_tabela_legada_aparece_no_relato(self, conn):
+        self._com_tabela_legada(conn)
+
+        resultado = limpeza.zerar(conn)
+
+        assert "legado_antigo" in resultado.como_texto()
+
+    def test_a_chave_estrangeira_volta_ligada_depois(self, conn):
+        """Desligar a FK é só durante a limpeza. Deixá-la desligada
+        transformaria o banco num lugar onde filho sem pai passa."""
+        self._com_tabela_legada(conn)
+
+        limpeza.zerar(conn)
+
+        assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+    def test_a_lista_vem_do_banco_e_nao_do_codigo(self, conn):
+        vistas = limpeza._tabelas_do_banco(conn)
+
+        assert "job" in vistas and "fila_controle" in vistas
+        assert not any(t.startswith("sqlite_") for t in vistas)
