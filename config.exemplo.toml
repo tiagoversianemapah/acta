@@ -337,6 +337,60 @@ backoff_erro_s    = [120, 600, 2700]
 backoff_captcha_s = [3600, 14400, 43200]
 backoff_bloqueio_s = [300, 900, 1800]
 
+[orgaos.SEFAZ_ES]
+ativo   = false
+adapter = "sefaz_es"
+workers = 1
+nome    = "SEFAZ ESPIRITO SANTO"
+
+[orgaos.SEFAZ_ES.urls]
+consulta = "https://s2-internet.sefaz.es.gov.br/certidao/cnd"
+# Usado so por sondas/testes do mapeamento. O adapter cego nao chama o
+# endpoint direto; ele salva o PDF pelo visualizador aberto no Edge comum.
+emissao  = "https://s2-internet.sefaz.es.gov.br/certidao/emitir-certidao-internet"
+
+[orgaos.SEFAZ_ES.cego]
+tempo_pagina_inicial_s = 45.0
+tempo_formulario_s = 20.0
+espera_turnstile_s = 5.0
+tempo_reacao_s = 60.0
+tempo_salvar_pdf_s = 25.0
+tentativas_turnstile = 4
+
+# Por que este orgao comeca desligado. O adapter e cego: abre Edge comum,
+# usa mouse/teclado reais e precisa de `cnd calibrar --orgao SEFAZ_ES`.
+# Sem calibragem, os cliques cairiam fora do formulario ou do visor de PDF.
+[orgaos.SEFAZ_ES.pacing]
+intervalo_inicial_s = 8.0
+intervalo_piso_s    = 8.0
+intervalo_teto_s    = 900.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.SEFAZ_ES.recuperacao]
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.SEFAZ_ES.breaker]
+captchas_para_abrir = 2
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.SEFAZ_ES.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+
 [orgaos.RFB_PF]
 ativo   = false
 adapter = "rfb_pf"

@@ -197,8 +197,10 @@ e o robô morre ao subir o worker.
    - `maquinas = []` — máquina de robô não consulta ninguém
    - o órgão que ela atende, em `[orgaos.*]`, com `nome` de exibição
 3. calibre o robô cego naquela tela:
-   `cnd.exe calibrar` — a calibragem é guardada em proporções da janela,
-   mas a posição dos campos ainda depende do zoom e da resolução dela;
+   `cnd.exe calibrar` para Receita, ou
+   `cnd.exe calibrar --orgao SEFAZ_ES` para Espírito Santo. A calibragem é
+   guardada em proporções da janela, mas a posição dos campos ainda depende do
+   zoom e da resolução dela;
 4. **libere a porta 8000 no Firewall do Windows** (uma vez, num prompt como
    administrador):
 

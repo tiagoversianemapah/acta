@@ -33,7 +33,9 @@ Planilha Excel `CND_MIA_0726.xlsx`, uma aba por tipo de certidão/órgão:
 | RFB PJ | https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj | ✅ **mapeado** em 07/08/2026 — ver [docs/fluxos/rfb-pj.md](fluxos/rfb-pj.md) |
 | CRF/Caixa | https://consulta-crf.caixa.gov.br/consultacrf/pages/consultaEmpregador.jsf | Identificado; fluxo não mapeado |
 | RFB PF | Mesmo domínio da RFB | Fluxo não mapeado |
-| GO, DF, ES, SP | — | Sites e captchas não mapeados |
+| SEFAZ-GO | https://www.sefaz.go.gov.br/Certidao/Emissao/001frmEmiteCertidao_c.asp | mapeado por HTTP — ver [docs/fluxos/sefaz-go.md](fluxos/sefaz-go.md) |
+| SEFAZ-ES | https://s2-internet.sefaz.es.gov.br/certidao/cnd | mapeado por adapter cego — ver [docs/fluxos/sefaz-es.md](fluxos/sefaz-es.md) |
+| DF, SP | — | Sites e captchas não mapeados |
 
 Sobre o captcha da RFB: comunicado oficial (jan/2026) confirma que o captcha do
 e-CAC/Portal de Serviços aparece **apenas quando o sistema detecta indícios de
