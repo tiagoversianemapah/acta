@@ -283,8 +283,12 @@ class Calibragem:
             "cor_fundo": list(self.cor_fundo),
         }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def conferir(self, janela_atual: tuple[int, int, int, int] | None = None) -> None:
-        faltando = [p for p in PONTOS_NECESSARIOS if p not in self.pontos]
+    def conferir(
+        self,
+        janela_atual: tuple[int, int, int, int] | None = None,
+        pontos_necessarios: tuple[str, ...] = PONTOS_NECESSARIOS,
+    ) -> None:
+        faltando = [p for p in pontos_necessarios if p not in self.pontos]
         if faltando:
             raise CalibragemAusente(
                 f"Calibragem incompleta, faltam: {', '.join(faltando)}. "

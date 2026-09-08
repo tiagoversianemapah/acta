@@ -81,6 +81,10 @@ def montar(obter_config: Callable[[], Config],
         está sendo processada — ver consultas.lote_em_foco.
         """
         cfg = obter_config()
+        adapter_cego = next(
+            (o.adapter for o in cfg.ativos() if o.adapter in {"rfb_cego", "sefaz_es"}),
+            "rfb_cego",
+        )
         with contextlib.closing(abrir_leitura()) as conn:
             idade = heartbeat.segundos_desde(conn, "orquestrador")
             lotes = consultas.lotes(conn)
@@ -145,7 +149,7 @@ def montar(obter_config: Callable[[], Config],
                 "papel": "robo" if cfg.rede.roda_robo else "console",
                 "versao": maquina.versao(),
                 "calibragem": maquina.calibragem(
-                    cfg.pasta_certidoes.parent / "calibragem"),
+                    cfg.pasta_certidoes.parent / "calibragem", adapter_cego),
                 "certidoes": maquina.certidoes(cfg.pasta_certidoes),
                 # A própria máquina informa o AnyDesk dela — quem cadastrou
                 # foi quem estava na frente, na hora de instalar.

@@ -14,7 +14,8 @@ from pathlib import Path
 
 
 def _importar(args) -> int:
-    from cnd.infra.db import conectar, criar_schema
+    from cnd.infra.config import carregar
+    from cnd.infra.db import conectar, criar_schema, garantir
     from cnd.ingestao.planilha import importar
 
     # Arquivo no lugar errado é o erro mais comum aqui, e é previsível.
@@ -32,7 +33,9 @@ def _importar(args) -> int:
         print(f"\n  {args.planilha.name} nao e uma planilha do Excel.\n")
         return 1
 
-    conn = conectar()
+    cfg = carregar(args.config)
+    garantir(cfg.banco)
+    conn = conectar(cfg.banco)
     criar_schema(conn)
     descricao = args.descricao or f"Importação de {args.planilha.name}"
     abas = [a.upper() for a in args.abas] if args.abas else None
@@ -248,9 +251,10 @@ def _calibrar(args) -> int:
     destino = args.saida or (RAIZ_PROJETO / "data" / "calibragem" /
                              f"{args.orgao.lower()}.json")
     if args.conferir:
-        conferir(destino, destino.with_name(f"{args.orgao.lower()}-conferencia.png"))
+        conferir(destino, destino.with_name(f"{args.orgao.lower()}-conferencia.png"),
+                 orgao=args.orgao)
     else:
-        calibrar(destino)
+        calibrar(destino, orgao=args.orgao)
     return 0
 
 
@@ -316,6 +320,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("planilha", type=Path)
     p.add_argument("--descricao", default="")
     p.add_argument("--abas", nargs="*", default=["RFB"])
+    p.add_argument("--config", type=Path, default=None)
     p.set_defaults(func=_importar)
 
     p = sub.add_parser("rodar", help="sobe o orquestrador (o robô)")
