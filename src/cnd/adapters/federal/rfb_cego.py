@@ -34,8 +34,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cnd.adapters import rfb_matriz
-from cnd.adapters.rfb_pdf import ler_pdf
+from cnd.adapters.federal import rfb_matriz
+from cnd.adapters.federal.rfb_pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real, perfil_edge, tela
 from cnd.infra.arquivos import caminho_certidao
@@ -57,8 +57,7 @@ TITULO_JANELA = "Receita"          # só desempate, quando há várias janelas
 PONTOS_NECESSARIOS = ("campo_cnpj", "botao_emitir", "botao_emitir_nova",
                       "fundo_pagina", "faixa_alerta")
 
-TEMPO_CARREGAR_S = 6.0
-# Espera máxima pelo formulário. Era 4x o tempo de carregar (24s) e cada
+# Espera máxima pelo formulário. Era 4x um tempo de carregar de 6s (24s) e cada
 # item pagava os 24 inteiros, porque a detecção falhava sempre e o fluxo
 # seguia assim mesmo — 19 das 35 horas do lote eram esta espera. Não
 # adianta esperar mais por um critério que nunca passa: se ele falhar, o
@@ -283,8 +282,12 @@ class Calibragem:
             "cor_fundo": list(self.cor_fundo),
         }, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def conferir(self, janela_atual: tuple[int, int, int, int] | None = None) -> None:
-        faltando = [p for p in PONTOS_NECESSARIOS if p not in self.pontos]
+    def conferir(
+        self,
+        janela_atual: tuple[int, int, int, int] | None = None,
+        pontos_necessarios: tuple[str, ...] = PONTOS_NECESSARIOS,
+    ) -> None:
+        faltando = [p for p in pontos_necessarios if p not in self.pontos]
         if faltando:
             raise CalibragemAusente(
                 f"Calibragem incompleta, faltam: {', '.join(faltando)}. "

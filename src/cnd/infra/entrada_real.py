@@ -43,16 +43,19 @@ MOUSEEVENTF_VIRTUALDESK = 0x4000
 KEYEVENTF_UNICODE = 0x0004
 KEYEVENTF_KEYUP = 0x0002
 
+SPI_GETWORKAREA = 0x0030
 SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
 SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
 
 VK_CONTROL, VK_DELETE, VK_A, VK_C = 0x11, 0x2E, 0x41, 0x43
 VK_RETURN, VK_TAB, VK_ESCAPE, VK_L, VK_F5 = 0x0D, 0x09, 0x1B, 0x4C, 0x74
 VK_HOME, VK_END, VK_SHIFT, VK_RIGHT = 0x24, 0x23, 0x10, 0x27
+VK_V = 0x56
 
 SW_MAXIMIZE = 3
 SW_RESTORE = 9
 CF_UNICODETEXT = 13
+GMEM_MOVEABLE = 0x0002
 
 
 class MOUSEINPUT(ctypes.Structure):
@@ -120,6 +123,23 @@ def tela_virtual() -> tuple[int, int, int, int]:
     g = user32.GetSystemMetrics
     return (g(SM_XVIRTUALSCREEN), g(SM_YVIRTUALSCREEN),
             g(SM_CXVIRTUALSCREEN), g(SM_CYVIRTUALSCREEN))
+
+
+def area_util() -> tuple[int, int, int, int]:
+    """(x, y, largura, altura) da tela SEM a barra de tarefas.
+
+    Diferente de `tela_virtual`, que devolve o retângulo bruto. Uma janela
+    dimensionada pela tela cheia nasce com o rodapé escondido atrás da barra
+    de tarefas — e num robô cego, que mede tudo em fração da janela, o que
+    está fora do visível é ponto que nunca vai ser clicado.
+    """
+    retangulo = RECT()
+    if not user32.SystemParametersInfoW(SPI_GETWORKAREA, 0,
+                                        ctypes.byref(retangulo), 0):
+        return tela_virtual()
+    return (retangulo.left, retangulo.top,
+            retangulo.right - retangulo.left,
+            retangulo.bottom - retangulo.top)
 
 
 def posicao() -> tuple[int, int]:
@@ -256,6 +276,60 @@ def limpar_area_transferencia() -> None:
         user32.EmptyClipboard()
     finally:
         user32.CloseClipboard()
+
+
+kernel32.GlobalAlloc.argtypes = [wintypes.UINT, ctypes.c_size_t]
+kernel32.GlobalAlloc.restype = wintypes.HGLOBAL
+kernel32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+kernel32.GlobalFree.restype = wintypes.HGLOBAL
+user32.SetClipboardData.argtypes = [wintypes.UINT, wintypes.HANDLE]
+user32.SetClipboardData.restype = wintypes.HANDLE
+
+
+def definir_area_transferencia(texto: str) -> bool:
+    """Põe texto no clipboard. Devolve se conseguiu.
+
+    Existe para o robô cego **colar** em vez de digitar. Digitar caminho
+    longo em caixa de diálogo do Windows perde caractere: a caixa "Salvar
+    como" recebeu um caminho cortado no meio (08/09/2026), e o arquivo some
+    sem erro nenhum, com outro nome. Colar é atômico.
+    """
+    dados = ctypes.create_unicode_buffer(texto)
+    tamanho = ctypes.sizeof(dados)
+    handle = kernel32.GlobalAlloc(GMEM_MOVEABLE, tamanho)
+    if not handle:
+        return False
+
+    ponteiro = kernel32.GlobalLock(handle)
+    if not ponteiro:
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        ctypes.memmove(ponteiro, dados, tamanho)
+    finally:
+        kernel32.GlobalUnlock(handle)
+
+    if not user32.OpenClipboard(None):
+        kernel32.GlobalFree(handle)
+        return False
+    try:
+        user32.EmptyClipboard()
+        if not user32.SetClipboardData(CF_UNICODETEXT, handle):
+            kernel32.GlobalFree(handle)
+            return False
+    finally:
+        user32.CloseClipboard()
+    # A partir daqui o handle é do sistema: liberar aqui corromperia o
+    # clipboard.
+    return True
+
+
+def colar(texto: str) -> bool:
+    """Coloca o texto no clipboard e manda Ctrl+V. Devolve se colou."""
+    if not definir_area_transferencia(texto):
+        return False
+    atalho(VK_CONTROL, VK_V)
+    return True
 
 
 def texto_area_transferencia() -> str:

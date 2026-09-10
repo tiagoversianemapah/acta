@@ -179,7 +179,7 @@ que toda máquina já tem. O que entra é o *driver* do Playwright (node +
 protocolo). **O pacote foi de 50 MB para 190 MB.** Vale saber antes de
 atualizar várias máquinas pela rede.
 
-O `cnd.adapters.crf` precisa estar nos `hiddenimports` do `acta.spec`:
+O `cnd.adapters.federal.crf` precisa estar nos `hiddenimports` do `acta.spec`:
 adapter é escolhido pelo `config.toml` e importado por nome, coisa que o
 PyInstaller não enxerga lendo o código. Sem essa linha o pacote sai limpo
 e o robô morre ao subir o worker.
@@ -197,8 +197,10 @@ e o robô morre ao subir o worker.
    - `maquinas = []` — máquina de robô não consulta ninguém
    - o órgão que ela atende, em `[orgaos.*]`, com `nome` de exibição
 3. calibre o robô cego naquela tela:
-   `cnd.exe calibrar` — a calibragem é guardada em proporções da janela,
-   mas a posição dos campos ainda depende do zoom e da resolução dela;
+   `cnd.exe calibrar` para Receita, ou
+   `cnd.exe calibrar --orgao SEFAZ_ES` para Espírito Santo. A calibragem é
+   guardada em proporções da janela, mas a posição dos campos ainda depende do
+   zoom e da resolução dela;
 4. **libere a porta 8000 no Firewall do Windows** (uma vez, num prompt como
    administrador):
 

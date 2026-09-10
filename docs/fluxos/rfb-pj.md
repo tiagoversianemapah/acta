@@ -2,7 +2,7 @@
 
 Mapeado manualmente em **07/08/2026**, navegando no portal com o DevTools
 aberto. Este documento é a fonte da verdade para
-[src/cnd/adapters/rfb_pj.py](../../src/cnd/adapters/rfb_pj.py) — quando o
+[src/cnd/adapters/federal/rfb_pj.py](../../src/cnd/adapters/federal/rfb_pj.py) — quando o
 adapter quebrar, é aqui que se confere o que mudou.
 
 ## Endereços

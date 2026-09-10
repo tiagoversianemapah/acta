@@ -1,7 +1,7 @@
 # Fluxo do portal — SEFAZ-GO (Certidão de Débito Inscrito em Dívida Ativa)
 
 Fonte da verdade do
-[src/cnd/adapters/sefaz_go.py](../../src/cnd/adapters/sefaz_go.py).
+[src/cnd/adapters/estadual/sefaz_go.py](../../src/cnd/adapters/estadual/sefaz_go.py).
 Tudo aqui foi conferido contra o
 portal e contra documentos reais em **28/08/2026**, numa rodada que emitiu as
 **299 certidões** da carteira de Goiás.

@@ -15,11 +15,12 @@ dependência externa de infraestrutura — ver
 é justamente o que a fronteira do adapter isola. Hoje há duas técnicas em uso, e
 a diferença nasceu do portal e não de preferência: a Receita **detecta**
 automação de navegador (teste A/B em 07/08/2026, mesmo CNPJ e mesmo IP — a
-consulta manual passou e a do robô tomou bloqueio 106), então o `rfb_cego` abre
-o Edge comum e mexe no **mouse e no teclado do Windows** por cima, via
-`SendInput`, lendo a tela por pixel. O CRF da Caixa usa ShieldSquare/Radware,
-que barra `urllib` mas **não** barrou o Playwright dirigindo o Edge, então o
-`crf` é **por elemento** — sem calibragem e sem coordenada de tela. Ver
+consulta manual passou e a do robô tomou bloqueio 106), e a SEFAZ-ES não libera
+Turnstile em Playwright/CDP. Por isso `rfb_cego` e `sefaz_es` abrem o Edge comum
+e mexem no **mouse e no teclado do Windows** por cima, via `SendInput`, lendo a
+tela por pixel. O CRF da Caixa usa ShieldSquare/Radware, que barra `urllib` mas
+**não** barrou o Playwright dirigindo o Edge, então o `crf` é **por elemento** —
+sem calibragem e sem coordenada de tela. Ver
 [ADR-001](adr/ADR-001-python-playwright.md) e [ADR-003](adr/ADR-003-adapter-por-orgao.md).
 
 Consequência prática: **não é servidor**. O robô cego assume o mouse e o teclado
@@ -77,7 +78,7 @@ Processo único, dono de todas as decisões de **quando** e **o quê** executar:
 ### 2.4 Workers
 
 - Concorrência inicial: **1 worker por órgão** (`[orgaos.*] workers`).
-- **Receita Federal (`rfb_cego`)** — sem navegador automatizado. O Edge comum é
+- **Receita Federal (`rfb_cego`) e SEFAZ-ES (`sefaz_es`)** — sem navegador automatizado. O Edge comum é
   dirigido por `SendInput`: cursor em curva de Bézier com tremor, cliques do
   sistema, digitação tecla por tecla (a máscara do campo de CNPJ é acionada por
   tecla, e preencher de uma vez faz o portal recusar documento válido). Enxerga
@@ -173,18 +174,26 @@ acta/
 │   ├── ingestao/              # leitura Excel, validação de documentos
 │   ├── core/                  # domínio: entidades, máquina de estados, fila, controle
 │   ├── orquestrador/          # loop principal, pacing, circuit breaker, vigilância
-│   ├── adapters/
-│   │   ├── base.py            # Protocol + ResultadoTentativa
-│   │   ├── rfb_cego.py        # Receita Federal PJ, por mouse e teclado reais ← ativo
-│   │   ├── rfb_pj.py          # o mesmo portal por Playwright — DETECTADO, desligado
+│   ├── adapters/              # por âmbito: é o âmbito que decide quem é o órgão
+│   │   ├── base.py            # Protocol + o mapa nome-do-config → módulo
 │   │   ├── calibragem.py      # ensina ao robô cego onde ficam os campos
-│   │   └── ...                # crf.py, rfb_pf.py, sefaz_go.py, ... (fases 2+)
+│   │   ├── fake.py            # órgão de mentira, para ensaiar sem portal
+│   │   ├── federal/
+│   │   │   ├── rfb_cego.py    # Receita Federal PJ, por mouse e teclado reais ← ativo
+│   │   │   ├── rfb_pj.py      # o mesmo portal por Playwright — DETECTADO, desligado
+│   │   │   ├── rfb_matriz.py  # leitura da certidão da matriz
+│   │   │   ├── rfb_pdf.py     # leitura do PDF da Receita
+│   │   │   └── crf.py         # Caixa — FGTS, por Playwright no Edge instalado
+│   │   ├── estadual/
+│   │   │   ├── sefaz_go.py    # SEFAZ-GO, por HTTP
+│   │   │   └── sefaz_es.py    # SEFAZ-ES, por mouse/teclado reais
+│   │   └── municipal/         # ainda vazio — o primeiro município entra aqui
 │   ├── web/                   # FastAPI: painel, API, relatório Excel, ZIP
 │   ├── desktop/               # o aplicativo de mesa e o acesso remoto
 │   ├── infra/                 # db, config, logging, tela, entrada, Teams, arquivos
 │   └── lancador.py            # ponto de entrada do ACTA.exe
 ├── empacotar/                 # construir.py (PyInstaller) e publicar.py (rede local)
-├── tests/                     # tudo num nível só, sem rede e sem portal
+├── tests/                     # sem rede e sem portal; adapters/ espelha os âmbitos
 └── data/                      # cnd.db, certidoes/, evidencias/, calibragem/ (fora do git)
 ```
 

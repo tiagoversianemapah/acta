@@ -4,17 +4,39 @@ Todo conhecimento específico de um portal (URLs, seletores, como detectar
 captcha, como ler o resultado) mora dentro do adapter daquele órgão. O
 núcleo do sistema só conhece o vocabulário de `Desfecho`.
 
+Os adapters moram em subpacotes por âmbito — `federal/`, `estadual/` e
+`municipal/` — porque é o âmbito que decide quem é o órgão e, na prática,
+o que o portal parece. `base.py`, `calibragem.py` e `fake.py` ficam na
+raiz: servem a todos os âmbitos.
+
 Consequência prática: adicionar CRF, RFB-PF ou uma Sefaz estadual é
-escrever um arquivo novo nesta pasta. Nada da fila, do ritmo, do breaker
-ou do painel precisa mudar.
+escrever um arquivo novo no subpacote do âmbito e citá-lo em
+`MODULOS_POR_ADAPTER`. Nada da fila, do ritmo, do breaker ou do painel
+precisa mudar.
 """
 from __future__ import annotations
 
 import importlib
+import importlib.util
 from typing import Protocol, runtime_checkable
 
 from cnd.core.modelos import Documento, ResultadoTentativa
 from cnd.infra.config import Config, ConfigOrgao
+
+# O config nomeia o adapter curto (`adapter = "crf"`), sem dizer o âmbito:
+# é o operador que escreve aquele arquivo, e cobrar dele o caminho do módulo
+# seria vazar a arrumação do código para dentro da configuração. Este mapa faz
+# a tradução. Adapter que não estiver aqui é procurado em `cnd.adapters.<nome>`,
+# que é onde ficam os que não pertencem a âmbito nenhum — `fake`, por exemplo.
+MODULOS_POR_ADAPTER = {
+    "crf": "cnd.adapters.federal.crf",
+    "rfb_cego": "cnd.adapters.federal.rfb_cego",
+    "rfb_matriz": "cnd.adapters.federal.rfb_matriz",
+    "rfb_pdf": "cnd.adapters.federal.rfb_pdf",
+    "rfb_pj": "cnd.adapters.federal.rfb_pj",
+    "sefaz_es": "cnd.adapters.estadual.sefaz_es",
+    "sefaz_go": "cnd.adapters.estadual.sefaz_go",
+}
 
 
 @runtime_checkable
@@ -47,6 +69,20 @@ class AdapterOrgao(Protocol):
         """Fecha tudo. Chamado no desligamento."""
 
 
+def nome_modulo(adapter: str) -> str:
+    """Módulo real do adapter, a partir do nome curto que vem do config."""
+    chave = adapter.strip()
+    if chave.startswith("cnd.adapters."):
+        return chave
+    if chave in MODULOS_POR_ADAPTER:
+        return MODULOS_POR_ADAPTER[chave]
+    return f"cnd.adapters.{chave}"
+
+
+def adapter_existe(adapter: str) -> bool:
+    return importlib.util.find_spec(nome_modulo(adapter)) is not None
+
+
 def carregar(orgao: ConfigOrgao, cfg: Config) -> AdapterOrgao:
     """Instancia o adapter declarado no config (`adapter = "rfb_pj"`).
 
@@ -54,11 +90,11 @@ def carregar(orgao: ConfigOrgao, cfg: Config) -> AdapterOrgao:
     orquestrador liga um órgão sem conhecer nenhum adapter em particular.
     """
     try:
-        modulo = importlib.import_module(f"cnd.adapters.{orgao.adapter}")
+        modulo = importlib.import_module(nome_modulo(orgao.adapter))
     except ModuleNotFoundError as erro:
         raise RuntimeError(
             f"Órgão {orgao.codigo}: adapter '{orgao.adapter}' não existe "
-            f"(esperado em src/cnd/adapters/{orgao.adapter}.py)"
+            f"(esperado em src/cnd/adapters, no subpacote do âmbito)"
         ) from erro
 
     if not hasattr(modulo, "criar"):

@@ -47,7 +47,7 @@ from pathlib import Path
 RAIZ = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(RAIZ / "src"))
 
-from cnd.adapters import sefaz_go  # noqa: E402
+from cnd.adapters.estadual import sefaz_go  # noqa: E402
 from cnd.core.documentos import formatar, limpar  # noqa: E402
 from cnd.core.modelos import COM_PDF, Documento  # noqa: E402
 from cnd.infra.config import carregar  # noqa: E402

@@ -20,11 +20,7 @@ DESCRICAO_PRODUTO = "Emissão de Certidões"
 
 # --- marca -------------------------------------------------------------
 AZUL = "#2B2A6B"          # azul-marinho do logotipo: ações principais
-AZUL_CLARO = "#3B3A8F"    # o mesmo azul sob o cursor
-AZUL_ESCURO = "#242353"   # item selecionado na barra lateral
-AZUL_PROFUNDO = "#17163C" # a própria barra lateral
 AMARELO = "#FCB817"       # a seta do logotipo
-AMARELO_ESCURO = "#D99A0A"
 
 # --- superfícies -------------------------------------------------------
 # A página é cinza e os cartões são brancos, não o contrário. É o que cria
@@ -58,8 +54,6 @@ BARRA_ATIVO = AZUL_VIVO_FUNDO
 TEXTO = "#0F172A"
 TEXTO_2 = "#475569"
 TEXTO_3 = "#94A3B8"
-TEXTO_NA_BARRA = "#111827"
-TEXTO_NA_BARRA_2 = "#5A6474"
 
 # --- estados -----------------------------------------------------------
 # Escolhidos para passar em contraste sobre branco (AA), porque são eles

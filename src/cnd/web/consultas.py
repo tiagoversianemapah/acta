@@ -25,12 +25,6 @@ ROTULOS = {
     Desfecho.RESULTADO_PENDENTE: "Resultado pendente",
 }
 
-ERROS_DIAGNOSTICO = frozenset({
-    Desfecho.CAPTCHA,
-    Desfecho.BLOQUEIO_TEMPORARIO,
-    Desfecho.ERRO_TECNICO,
-})
-
 MENSAGENS_CORRIGIDAS = {
     "SEFAZ-GO emitiu PDF apos confirmar nome do contribuinte":
         "SEFAZ-GO emitiu PDF após confirmar o nome do contribuinte.",
@@ -273,18 +267,6 @@ def eta_horas(resumo_orgao: ResumoOrgao) -> float | None:
     return resumo_orgao.restantes / resumo_orgao.ritmo_por_hora
 
 
-def meses_com_itens(conn: sqlite3.Connection) -> list[str]:
-    """Os meses que têm item, do mais recente para trás.
-
-    O trabalho é mensal: emite-se a carteira inteira uma vez por mês. Sem
-    recorte de mês, a lista mistura agosto com julho e junho, e a pergunta
-    real — "o que saiu neste mês?" — fica sem resposta.
-    """
-    return [linha["mes"] for linha in conn.execute(
-        "SELECT DISTINCT strftime('%Y-%m', atualizado_em) AS mes FROM job "
-        "WHERE atualizado_em IS NOT NULL ORDER BY mes DESC")]
-
-
 def _filtro_jobs(
     lote_id: int | None = None,
     orgao: str | None = None,
@@ -471,29 +453,6 @@ def ultimas_tentativas(conn: sqlite3.Connection, limite: int = 8,
         "interrompida": linha["finalizada_em"] is None and not linha["em_curso"],
         })
     return eventos
-
-
-def _captcha_por_hora_sql_antigo(
-    conn: sqlite3.Connection, orgao: str, dias: int = 7
-) -> list[dict]:
-    """Alimenta a decisão sobre janela ativa e sobre a hipótese de IP (risco R4)."""
-    desde = tempo.daqui_a(-dias * 86400)
-    linhas = conn.execute(
-        """
-        SELECT substr(t.iniciada_em, 12, 2) AS hora,
-               COUNT(*) AS total,
-               SUM(CASE WHEN t.desfecho = 'CAPTCHA' THEN 1 ELSE 0 END) AS captchas
-          FROM tentativa t JOIN job j ON j.id = t.job_id
-         WHERE j.orgao = ? AND t.iniciada_em >= ?
-         GROUP BY hora ORDER BY hora
-        """,
-        (orgao, desde),
-    ).fetchall()
-    return [
-        {"hora": linha["hora"], "total": linha["total"], "captchas": linha["captchas"],
-         "taxa": (linha["captchas"] / linha["total"]) if linha["total"] else 0.0}
-        for linha in linhas
-    ]
 
 
 def captcha_por_hora(conn: sqlite3.Connection, orgao: str, dias: int = 7) -> list[dict]:

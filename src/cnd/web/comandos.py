@@ -26,11 +26,11 @@ import tempfile
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from importlib.util import find_spec
 from pathlib import Path
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
+from cnd.adapters.base import adapter_existe
 from cnd.core import breaker, controle, fila, tempo
 from cnd.core.modelos import Status
 from cnd.infra import maquina
@@ -107,7 +107,7 @@ try {
     # robo ainda estava encerrando quando a copia comecou, segurou
     # _internal\libcrypto-3.dll, a copia parou no meio e a maquina ficou
     # com instalacao pela metade e painel morto - so voltou por AnyDesk.
-    # Mesma licao do _matar_edge em adapters/rfb_cego.py.
+    # Mesma licao do _matar_edge em adapters/federal/rfb_cego.py.
     Registrar "parando processos"
     try { schtasks /End /TN "ACTA Painel" 2>$null | Out-Null } catch {}
     $vivos = @()
@@ -337,7 +337,7 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                 status_code=404,
                 detail=f"Não achei [orgaos.{codigo}] no config.",
             )
-        if ativo and find_spec(f"cnd.adapters.{configurado.adapter}") is None:
+        if ativo and not adapter_existe(configurado.adapter):
             raise HTTPException(
                 status_code=409,
                 detail=f"Adapter {configurado.adapter} não existe.",

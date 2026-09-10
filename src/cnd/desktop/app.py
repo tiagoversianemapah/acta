@@ -84,10 +84,8 @@ ICONE_CALENDARIO = ""
 ICONE_DOCUMENTO = ""
 ICONE_RELOGIO = ""
 ICONE_ENVIAR = ""
-ICONE_AJUDA = ""
 ICONE_MAQUINA = ""
 ICONE_BAIXAR = ""
-TODOS_OS_MESES = "Todos os meses"
 # Limites da janela. O máximo existe porque texto em linha muito larga
 # cansa de ler; o mínimo é onde as colunas ainda cabem sem cortar.
 MINIMO_L, MINIMO_A = 780, 560
@@ -112,7 +110,6 @@ COLUNAS_DE_MAQUINA = (
     ("DISCO", 0, 220),
     ("A\u00c7\u00d5ES", 0, 170),
 )
-RECUO_DO_CARTAO = 18
 # Margem sobre o tamanho estimado do lote. Certidão que sai do portal e não
 # encontra espaço é consulta gasta e documento perdido — vale pedir dobro.
 FOLGA_DE_DISCO = 2.0
@@ -256,20 +253,6 @@ def _resumo_compacto_da_maquina(estado) -> str:
     if estado.falhados:
         partes.append(f"{_numero(estado.falhados)} falhas")
     return "   ·   ".join(partes)
-
-
-def _configurar_colunas_de_maquina(quadro) -> None:
-    """Larguras das colunas da tela de Máquinas.
-
-    Aplicado a UMA grade só — a do painel inteiro, com o cabeçalho na
-    primeira linha e as máquinas nas seguintes. Tentar casar duas grades
-    separadas não funciona: o Tk deixa a coluna crescer além do `minsize`
-    quando o conteúdo pede mais, e como o cabeçalho tem uma palavra e o
-    cartão tem uma frase, as larguras divergiam e o título DISCO ficava
-    deslocado do próprio conteúdo.
-    """
-    for coluna, (_, peso, largura) in enumerate(COLUNAS_DE_MAQUINA):
-        quadro.grid_columnconfigure(coluna, weight=peso, minsize=largura)
 
 
 def _detalhe_da_situacao(estado) -> str:

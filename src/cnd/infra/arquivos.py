@@ -1,4 +1,4 @@
-"""Guarda de PDFs e evidências no sistema de arquivos.
+"""Guarda de PDFs de certidão no sistema de arquivos.
 
 Organizado para consulta humana direta: quem abrir a pasta no Explorer
 consegue achar a certidão de uma empresa sem precisar do sistema.
@@ -40,13 +40,6 @@ def caminho_certidao(base: Path, lote_id: int, orgao: str, documento: str,
     return pasta / f"{rotulo}.pdf"
 
 
-def caminho_evidencia(base: Path, job_id: int, tentativa: int) -> Path:
-    """Pasta onde screenshot + HTML da falha são gravados (RNF-05)."""
-    pasta = base / str(job_id) / str(tentativa)
-    pasta.mkdir(parents=True, exist_ok=True)
-    return pasta
-
-
 def hash_arquivo(caminho: Path | str) -> str:
     """SHA-256 do arquivo, para detectar corrupção e duplicata."""
     digest = hashlib.sha256()
@@ -54,19 +47,3 @@ def hash_arquivo(caminho: Path | str) -> str:
         for bloco in iter(lambda: arquivo.read(65536), b""):
             digest.update(bloco)
     return digest.hexdigest()
-
-
-def limpar_evidencias_antigas(base: Path, dias: int = 90) -> int:
-    """Evidências são para diagnóstico recente; PDFs de certidão nunca
-    são apagados. Devolve quantos arquivos foram removidos."""
-    import time
-
-    limite = time.time() - dias * 86400
-    removidos = 0
-    if not base.exists():
-        return 0
-    for arquivo in base.rglob("*"):
-        if arquivo.is_file() and arquivo.stat().st_mtime < limite:
-            arquivo.unlink()
-            removidos += 1
-    return removidos

@@ -38,8 +38,6 @@ ESTACIONADA = "ESTACIONADA"
 CANCELADA = "CANCELADA"
 
 SITUACOES = (ATIVA, ESTACIONADA, CANCELADA)
-# As que a fila pode entregar. Fora daqui, o worker nem enxerga o item.
-ENTREGAVEIS = (ATIVA,)
 
 
 @dataclass(frozen=True)

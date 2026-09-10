@@ -304,6 +304,10 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
     from cnd.web import consultas
     from cnd.web.consultas import eta_horas, rotulo_duracao
 
+    adapter_cego = next(
+        (o.adapter for o in cfg.ativos() if o.adapter in {"rfb_cego", "sefaz_es"}),
+        "rfb_cego",
+    )
     panorama = ler_panorama(cfg, lote)
     try:
         with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
@@ -341,7 +345,7 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         "papel": "robo" if cfg.rede.roda_robo else "console",
         "versao": maquina.versao(),
         "calibragem": maquina.calibragem(
-            cfg.pasta_certidoes.parent / "calibragem"),
+            cfg.pasta_certidoes.parent / "calibragem", adapter_cego),
         "certidoes": maquina.certidoes(cfg.pasta_certidoes),
         "ultimo_sinal_ha_s": (round(panorama.robo_idade_s)
                               if panorama.robo_idade_s is not None else None),

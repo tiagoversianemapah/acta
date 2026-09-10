@@ -103,15 +103,16 @@ O portal da Receita **detecta** automação de navegador. Comprovado em 07/08/20
 com teste A/B: mesmo CNPJ, mesmo IP, no mesmo minuto — a consulta manual passou e
 a do robô tomou bloqueio 106.
 
-Por isso o adapter ativo (`rfb_cego`) não usa Playwright nem CDP. Ele abre o Edge
-comum e mexe no **mouse e no teclado do Windows** por cima, via `SendInput`: o
+Por isso os adapters cegos (`rfb_cego` e `sefaz_es`) não usam Playwright nem CDP.
+Eles abrem o Edge comum e mexem no **mouse e no teclado do Windows** por cima,
+via `SendInput`: o
 cursor viaja em curva de Bézier com tremor, os cliques são cliques do sistema, e
 a digitação é tecla por tecla — porque a máscara do campo de CNPJ é acionada por
 tecla, e preencher o valor de uma vez faz o portal recusar um documento válido.
 
-Ele enxerga a tela por pixel (Pillow) e reconhece o estado pela cor: véu do modal,
-faixa amarela de aviso, faixa rosa de erro, e o PDF aparecendo na pasta Downloads
-como sinal de sucesso.
+Eles enxergam a tela por pixel (Pillow) e reconhecem o estado pela cor: véu do modal,
+faixa amarela de aviso, faixa rosa de erro, PDF aparecendo na pasta Downloads
+(Receita) ou PDF salvo pelo visor embutido com `Ctrl+S` (SEFAZ-ES).
 
 A calibragem é guardada em **proporções da janela** (0..1), não em pixels — o que
 faz a mesma calibragem servir em telas de resolução diferente.
@@ -239,6 +240,7 @@ pedindo a senha de acesso ou a confirmação de quem estiver na outra ponta.
 ```powershell
 cnd importar "CND_MIA_0726.xlsx" --abas RFB   # cria o lote
 cnd calibrar                                  # ensina onde ficam os campos
+cnd calibrar --orgao SEFAZ_ES                 # calibragem do portal ES
 cnd rodar                                     # o robô
 cnd painel --host 0.0.0.0                     # publica na rede
 cnd relatorio --mes 2026-08 --orgao RFB_PJ    # Excel do mês, por órgão
@@ -266,6 +268,7 @@ o ritmo adaptativo convergindo de verdade, sem gastar consulta no portal.
 | [07 — Instalação nas máquinas](docs/07-instalacao-nas-maquinas.md) | Empacotamento, atalhos, AnyDesk |
 | [Fluxo do portal RFB PJ](docs/fluxos/rfb-pj.md) | O caminho real na tela — fonte da verdade do adapter |
 | [Fluxo do portal SEFAZ-GO](docs/fluxos/sefaz-go.md) | O caminho por HTTP, os campos do formulário e como o PDF é classificado |
+| [Fluxo do portal SEFAZ-ES](docs/fluxos/sefaz-es.md) | O caminho cego no Edge comum, Turnstile e PDF em modal |
 | [ADRs](docs/adr/) | As decisões de arquitetura e por que foram tomadas |
 
 ## Como o código está organizado
@@ -284,6 +287,7 @@ src/cnd/
 │   ├── rfb_cego.py     Receita Federal PJ, por mouse e teclado reais  ← ativo
 │   ├── rfb_pj.py       o mesmo portal por Playwright — DETECTADO, desligado
 │   ├── sefaz_go.py     SEFAZ Goiás, por HTTP — o portal devolve o PDF no POST
+│   ├── sefaz_es.py     SEFAZ Espírito Santo, por Edge comum — Turnstile + PDF em modal
 │   ├── calibragem.py   ensina ao robô cego onde ficam os campos
 │   └── fake.py         simulador para teste offline
 ├── ingestao/      única camada que conhece Excel

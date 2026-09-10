@@ -47,7 +47,8 @@ Os dois estão tratados no código e vão gerar evidência quando ocorrerem.
 
 ## Fase 4 — Estaduais GO, ES, DF, SP (≈ 1–2 semanas por estado)
 
-- Ordem por volume: GO (287) → ES (42) → DF (24) → SP (18).
+- GO e ES ja tem adapter integrado; ES exige calibragem propria por maquina.
+- Proxima ordem por volume restante: DF (24) → SP (18).
 - Cada estado: mapear site/captcha → adapter → piloto → produção.
 - Estados com captcha fixo (não heurístico) em toda consulta exigirão decisão à
   parte — levantar isso **antes** de codar cada adapter e registrar em ADR.
