@@ -1,4 +1,4 @@
-from cnd.adapters import rfb_matriz
+from cnd.adapters.federal import rfb_matriz
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 
 

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from cnd.adapters.crf import classificar
+from cnd.adapters.federal.crf import classificar
 from cnd.core.modelos import CONCLUSIVOS, Desfecho
 
 REGULAR = (

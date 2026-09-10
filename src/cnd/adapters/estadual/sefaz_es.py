@@ -29,7 +29,7 @@ from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-from cnd.adapters.rfb_cego import (
+from cnd.adapters.federal.rfb_cego import (
     Calibragem,
     CalibragemAusente,
     JanelaOcupada,

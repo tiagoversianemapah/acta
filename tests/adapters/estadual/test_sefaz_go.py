@@ -13,9 +13,10 @@ from pathlib import Path
 
 import pytest
 
-from cnd.adapters import sefaz_go
+from cnd.adapters.estadual import sefaz_go
 from cnd.core.modelos import COM_PDF, CONCLUSIVOS, Desfecho, Documento
 from cnd.infra.config import carregar
+from tests.conftest import RAIZ
 
 CNPJ = "11222333000181"
 
@@ -228,9 +229,8 @@ class TestContrato:
         """Adapter é importado por NOME, vindo do config: o PyInstaller não
         enxerga isso lendo o código, e sem a linha no .spec o executável
         sobe e morre ao ligar o órgão."""
-        raiz = Path(__file__).resolve().parent.parent
-        spec = (raiz / "empacotar" / "acta.spec").read_text(encoding="utf-8")
-        assert '"cnd.adapters.sefaz_go"' in spec
+        spec = (RAIZ / "empacotar" / "acta.spec").read_text(encoding="utf-8")
+        assert '"cnd.adapters.estadual.sefaz_go"' in spec
 
 
 class TestClassificacaoDoPdf:
@@ -320,8 +320,7 @@ class TestFerramentaDeConferencia:
         import importlib.util
         import sys
 
-        raiz = Path(__file__).resolve().parent.parent
-        caminho = raiz / "ferramentas" / "conferir_sefaz_go.py"
+        caminho = RAIZ / "ferramentas" / "conferir_sefaz_go.py"
         spec = importlib.util.spec_from_file_location("conferir_sefaz_go", caminho)
         modulo = importlib.util.module_from_spec(spec)
         sys.modules["conferir_sefaz_go"] = modulo
@@ -450,8 +449,7 @@ class TestFerramentaDeConferencia:
                                 recebido.update(intervalo=intervalo) or ([], False)))
         monkeypatch.setattr(sys, "argv",
                             ["conferir", "--config",
-                             str(Path(__file__).resolve().parent.parent
-                                 / "config.exemplo.toml"),
+                             str(RAIZ / "config.exemplo.toml"),
                              "11222333000181"])
         ferramenta.main()
 
@@ -467,8 +465,7 @@ class TestFerramentaDeConferencia:
                                 recebido.update(intervalo=intervalo) or ([], False)))
         monkeypatch.setattr(sys, "argv",
                             ["conferir", "--config",
-                             str(Path(__file__).resolve().parent.parent
-                                 / "config.exemplo.toml"),
+                             str(RAIZ / "config.exemplo.toml"),
                              "--intervalo", "0", "11222333000181"])
         ferramenta.main()
 
@@ -590,8 +587,7 @@ class TestFerramentaDeConferencia:
         assert "[orgaos.SEFAZ_GO]" in capsys.readouterr().out
 
     def test_config_bom_e_aceito(self, ferramenta):
-        raiz = Path(__file__).resolve().parent.parent
-        cfg = ferramenta._carregar_config(raiz / "config.exemplo.toml")
+        cfg = ferramenta._carregar_config(RAIZ / "config.exemplo.toml")
 
         assert cfg is not None
         assert "SEFAZ_GO" in cfg.orgaos
@@ -788,8 +784,7 @@ class TestAmostraDaPlanilha:
         import importlib.util
         import sys
 
-        raiz = Path(__file__).resolve().parent.parent
-        caminho = raiz / "ferramentas" / "conferir_sefaz_go.py"
+        caminho = RAIZ / "ferramentas" / "conferir_sefaz_go.py"
         spec = importlib.util.spec_from_file_location("conferir_sefaz_go", caminho)
         modulo = importlib.util.module_from_spec(spec)
         sys.modules["conferir_sefaz_go"] = modulo
@@ -836,23 +831,21 @@ class TestAmostraDaPlanilha:
 
     def test_todos_desliga_o_limite_de_verdade(self, ferramenta, monkeypatch,
                                                tmp_path):
-        raiz = Path(__file__).resolve().parent.parent
         planilha = tmp_path / "c.xlsx"
         planilha.write_bytes(b"x")
 
         visto = self._limite_que_main_usa(ferramenta, monkeypatch, [
-            "--config", str(raiz / "config.exemplo.toml"),
+            "--config", str(RAIZ / "config.exemplo.toml"),
             "--planilha", str(planilha), "--todos"])
 
         assert visto["limite"] is None, "--todos precisa desligar o corte"
 
     def test_sem_todos_o_limite_vale(self, ferramenta, monkeypatch, tmp_path):
-        raiz = Path(__file__).resolve().parent.parent
         planilha = tmp_path / "c.xlsx"
         planilha.write_bytes(b"x")
 
         visto = self._limite_que_main_usa(ferramenta, monkeypatch, [
-            "--config", str(raiz / "config.exemplo.toml"),
+            "--config", str(RAIZ / "config.exemplo.toml"),
             "--planilha", str(planilha), "--limite", "7"])
 
         assert visto["limite"] == 7

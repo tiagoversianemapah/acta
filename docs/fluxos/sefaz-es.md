@@ -1,7 +1,7 @@
 # Fluxo do portal - SEFAZ-ES (Certidao Negativa de Debitos)
 
 Fonte da verdade do
-[src/cnd/adapters/sefaz_es.py](../../src/cnd/adapters/sefaz_es.py).
+[src/cnd/adapters/estadual/sefaz_es.py](../../src/cnd/adapters/estadual/sefaz_es.py).
 Mapeado em **03/09/2026** e convertido para adapter cego em **08/09/2026**.
 
 Portal:

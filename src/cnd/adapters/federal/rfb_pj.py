@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
-from cnd.adapters import rfb_matriz
+from cnd.adapters.federal import rfb_matriz
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real
 from cnd.infra.arquivos import caminho_certidao

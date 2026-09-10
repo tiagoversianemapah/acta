@@ -13,7 +13,7 @@ import csv
 import zipfile
 from io import BytesIO, StringIO
 
-from cnd.adapters.rfb_pj import (
+from cnd.adapters.federal.rfb_pj import (
     TITULO_CPEN,
     TITULO_NEGATIVA,
     TITULO_POSITIVA,

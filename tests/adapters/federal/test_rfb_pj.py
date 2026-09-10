@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date
 from types import SimpleNamespace
 
-from cnd.adapters.rfb_pj import (
+from cnd.adapters.federal.rfb_pj import (
     FRASE_BLOQUEIO,
     FRASE_INSUFICIENTE,
     FRASE_PROCESSANDO,

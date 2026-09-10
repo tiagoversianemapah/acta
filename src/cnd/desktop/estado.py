@@ -14,7 +14,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from queue import Empty, Queue
 
-from cnd.core import breaker
 from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config
 from cnd.infra.db import conectar_leitura
@@ -131,20 +130,6 @@ def ler_atividade(cfg: Config, limite: int = 6,
         conn.close()
 
 
-def ler_meses_de_itens(cfg: Config) -> list[str]:
-    """Meses que têm item na fila ou processado. Nunca levanta exceção."""
-    try:
-        conn = conectar_leitura(cfg.banco)
-    except Exception:
-        return []
-    try:
-        return consultas.meses_com_itens(conn)
-    except Exception:
-        return []
-    finally:
-        conn.close()
-
-
 def ler_meses(cfg: Config) -> list[str]:
     """Meses com certidão guardada. Nunca levanta exceção."""
     from cnd.web.relatorio import meses_com_certidao
@@ -245,22 +230,3 @@ class Robo:
             except Empty:
                 break
         return saida
-
-
-def estado_dos_orgaos(cfg: Config) -> dict[str, str]:
-    """Disjuntor de cada órgão, para a tela poder oferecer 'retomar'."""
-    try:
-        conn = conectar_leitura(cfg.banco)
-    except Exception:
-        return {}
-    try:
-        # `consultar_leitura`, e não `consultar`: a conexão acima é
-        # só de leitura, e a outra escreve. Aqui o defeito era pior
-        # que um 500 — o `except` abaixo engolia e a tela concluía
-        # que nenhum órgão tinha disjuntor. Ver breaker.py.
-        return {o.codigo: breaker.consultar_leitura(conn, o.codigo).estado
-                for o in cfg.ativos()}
-    except Exception:
-        return {}
-    finally:
-        conn.close()

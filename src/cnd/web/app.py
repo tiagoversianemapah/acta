@@ -29,6 +29,7 @@ from fastapi.responses import (
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from cnd.adapters.base import adapter_existe
 from cnd.core import breaker, fila, tempo
 from cnd.core.documentos import formatar
 from cnd.desktop import remoto
@@ -64,8 +65,6 @@ def automacoes() -> list[dict]:
     faria a pessoa procurar no lugar errado por algo que não está lá —
     ela precisa ver que existe e que falta ligar.
     """
-    from importlib.util import find_spec
-
     from cnd.ingestao.planilha import ABA_PARA_ORGAO
 
     lista = []
@@ -73,7 +72,7 @@ def automacoes() -> list[dict]:
         orgao = cfg.orgaos.get(codigo)
         adapter_ok = (
             orgao is not None
-            and find_spec(f"cnd.adapters.{orgao.adapter}") is not None
+            and adapter_existe(orgao.adapter)
         )
         if orgao is None:
             motivo = "não está no config desta máquina"

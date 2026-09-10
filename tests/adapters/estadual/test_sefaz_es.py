@@ -9,12 +9,14 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image, ImageDraw
 
-from cnd.adapters import calibragem, sefaz_es
+from cnd.adapters import calibragem
+from cnd.adapters.estadual import sefaz_es
 from cnd.adapters.base import AdapterOrgao
-from cnd.adapters.rfb_cego import Calibragem
+from cnd.adapters.federal.rfb_cego import Calibragem
 from cnd.core.modelos import Desfecho, Documento
 from cnd.infra.config import carregar, nome_do_orgao
 from cnd.ingestao.planilha import ler
+from tests.conftest import RAIZ
 
 CNPJ = "31705832000137"
 JANELA = (0, 0, 2560, 1600)
@@ -587,5 +589,5 @@ def test_nome_do_orgao_para_pacote():
 def test_o_empacotador_leva_o_adapter():
     from pathlib import Path
 
-    spec = Path("empacotar/acta.spec").read_text(encoding="utf-8")
-    assert '"cnd.adapters.sefaz_es"' in spec
+    spec = (RAIZ / "empacotar" / "acta.spec").read_text(encoding="utf-8")
+    assert '"cnd.adapters.estadual.sefaz_es"' in spec

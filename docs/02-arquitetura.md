@@ -174,20 +174,26 @@ acta/
 │   ├── ingestao/              # leitura Excel, validação de documentos
 │   ├── core/                  # domínio: entidades, máquina de estados, fila, controle
 │   ├── orquestrador/          # loop principal, pacing, circuit breaker, vigilância
-│   ├── adapters/
-│   │   ├── base.py            # Protocol + ResultadoTentativa
-│   │   ├── rfb_cego.py        # Receita Federal PJ, por mouse e teclado reais ← ativo
-│   │   ├── rfb_pj.py          # o mesmo portal por Playwright — DETECTADO, desligado
+│   ├── adapters/              # por âmbito: é o âmbito que decide quem é o órgão
+│   │   ├── base.py            # Protocol + o mapa nome-do-config → módulo
 │   │   ├── calibragem.py      # ensina ao robô cego onde ficam os campos
-│   │   ├── sefaz_go.py        # SEFAZ-GO, por HTTP
-│   │   ├── sefaz_es.py        # SEFAZ-ES, por mouse/teclado reais
-│   │   └── ...                # crf.py, rfb_pf.py, ... (fases 2+)
+│   │   ├── fake.py            # órgão de mentira, para ensaiar sem portal
+│   │   ├── federal/
+│   │   │   ├── rfb_cego.py    # Receita Federal PJ, por mouse e teclado reais ← ativo
+│   │   │   ├── rfb_pj.py      # o mesmo portal por Playwright — DETECTADO, desligado
+│   │   │   ├── rfb_matriz.py  # leitura da certidão da matriz
+│   │   │   ├── rfb_pdf.py     # leitura do PDF da Receita
+│   │   │   └── crf.py         # Caixa — FGTS, por Playwright no Edge instalado
+│   │   ├── estadual/
+│   │   │   ├── sefaz_go.py    # SEFAZ-GO, por HTTP
+│   │   │   └── sefaz_es.py    # SEFAZ-ES, por mouse/teclado reais
+│   │   └── municipal/         # ainda vazio — o primeiro município entra aqui
 │   ├── web/                   # FastAPI: painel, API, relatório Excel, ZIP
 │   ├── desktop/               # o aplicativo de mesa e o acesso remoto
 │   ├── infra/                 # db, config, logging, tela, entrada, Teams, arquivos
 │   └── lancador.py            # ponto de entrada do ACTA.exe
 ├── empacotar/                 # construir.py (PyInstaller) e publicar.py (rede local)
-├── tests/                     # tudo num nível só, sem rede e sem portal
+├── tests/                     # sem rede e sem portal; adapters/ espelha os âmbitos
 └── data/                      # cnd.db, certidoes/, evidencias/, calibragem/ (fora do git)
 ```
 

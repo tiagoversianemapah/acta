@@ -179,7 +179,7 @@ que toda máquina já tem. O que entra é o *driver* do Playwright (node +
 protocolo). **O pacote foi de 50 MB para 190 MB.** Vale saber antes de
 atualizar várias máquinas pela rede.
 
-O `cnd.adapters.crf` precisa estar nos `hiddenimports` do `acta.spec`:
+O `cnd.adapters.federal.crf` precisa estar nos `hiddenimports` do `acta.spec`:
 adapter é escolhido pelo `config.toml` e importado por nome, coisa que o
 PyInstaller não enxerga lendo o código. Sem essa linha o pacote sai limpo
 e o robô morre ao subir o worker.

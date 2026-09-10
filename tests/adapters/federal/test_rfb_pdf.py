@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from cnd.adapters import rfb_pdf
+from cnd.adapters.federal import rfb_pdf
 from cnd.core.modelos import Desfecho
 
 
