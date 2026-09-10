@@ -12,8 +12,8 @@ from types import SimpleNamespace
 import pytest
 from PIL import Image, ImageDraw
 
-from cnd.adapters.federal import rfb_cego
-from cnd.adapters.federal.rfb_cego import (
+from cnd.adapters.federal.rfb import cego as rfb_cego
+from cnd.adapters.federal.rfb.cego import (
     AdapterRFBCego,
     Calibragem,
     CalibragemAusente,

@@ -257,7 +257,7 @@ def reenfileirar_falhados(
       · jobs encerrados como pendência manual só porque o robô não
         conseguiu ler a tela. Até 15/08/2026 esse caso era conclusivo, e um
         lote inteiro parou lá quando o portal passou a devolver 400 do
-        nginx (ver adapters/federal/rfb_cego.py). Eles ficariam para sempre no
+        nginx (ver adapters/federal/rfb/cego.py). Eles ficariam para sempre no
         relatório como pendência que ninguém tem como tratar — o e-CAC não
         mostra nada, porque nunca houve pendência.
 

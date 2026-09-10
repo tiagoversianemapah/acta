@@ -34,8 +34,8 @@ import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from cnd.adapters.federal import rfb_matriz
-from cnd.adapters.federal.rfb_pdf import ler_pdf
+from cnd.adapters.federal.rfb import matriz as rfb_matriz
+from cnd.adapters.federal.rfb.pdf import ler_pdf
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra import entrada_real, perfil_edge, tela
 from cnd.infra.arquivos import caminho_certidao

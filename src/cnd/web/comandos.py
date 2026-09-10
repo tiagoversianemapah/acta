@@ -107,7 +107,7 @@ try {
     # robo ainda estava encerrando quando a copia comecou, segurou
     # _internal\libcrypto-3.dll, a copia parou no meio e a maquina ficou
     # com instalacao pela metade e painel morto - so voltou por AnyDesk.
-    # Mesma licao do _matar_edge em adapters/federal/rfb_cego.py.
+    # Mesma licao do _matar_edge em adapters/federal/rfb/cego.py.
     Registrar "parando processos"
     try { schtasks /End /TN "ACTA Painel" 2>$null | Out-Null } catch {}
     $vivos = @()
