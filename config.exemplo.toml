@@ -361,8 +361,12 @@ tentativas_turnstile = 4
 # usa mouse/teclado reais e precisa de `cnd calibrar --orgao SEFAZ_ES`.
 # Sem calibragem, os cliques cairiam fora do formulario ou do visor de PDF.
 [orgaos.SEFAZ_ES.pacing]
-intervalo_inicial_s = 8.0
-intervalo_piso_s    = 8.0
+# Uma emissao a cada 5 minutos, e nunca mais rapido que isso: o portal do ES
+# e instavel e cada item leva mais de um minuto de janela real. O teto de 900
+# fica de proposito - levando captcha, o fator de punicao 3.0 leva o intervalo
+# a 15 minutos, e a aceleracao traz de volta aos 5 depois de acertos.
+intervalo_inicial_s = 300.0
+intervalo_piso_s    = 300.0
 intervalo_teto_s    = 900.0
 acelera_apos        = 20
 fator_aceleracao    = 0.85

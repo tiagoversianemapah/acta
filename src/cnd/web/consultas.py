@@ -23,6 +23,11 @@ ROTULOS = {
     Desfecho.INAPTA: "CNPJ inapto (omissão de declarações)",
     Desfecho.APROVEITADA: "Aproveitadas (já vigentes)",
     Desfecho.RESULTADO_PENDENTE: "Resultado pendente",
+    # As falhas tambem passam por aqui: a tela do job rotula cada tentativa
+    # por este mapa, e sem elas o operador lia "ERRO_TECNICO" em maiuscula.
+    Desfecho.CAPTCHA: "Exigiu captcha",
+    Desfecho.BLOQUEIO_TEMPORARIO: "Bloqueio temporário",
+    Desfecho.ERRO_TECNICO: "Erro técnico",
 }
 
 MENSAGENS_CORRIGIDAS = {

@@ -1,6 +1,13 @@
 from cnd.core import tempo
 from cnd.web import consultas, diagnostico
 
+# A consulta do diagnostico olha os ultimos N dias a partir de AGORA, entao a
+# data do caso tem de ser relativa. Com data fixa o teste passava e, no dia em
+# que ela saia da janela, virava vermelho sozinho sem ninguem ter mexido em
+# nada - foi o que aconteceu em 10/09/2026, 30 dias depois do 2026-08-11 que
+# estava aqui. Dois dias atras fica dentro de qualquer janela que os testes usem.
+DIA = tempo.de_iso(tempo.daqui_a(-2 * 86400)).strftime("%Y-%m-%d")
+
 
 def _tentativa(conn, job_id: int, hora: str, desfecho: str, mensagem: str = ""):
     conn.execute(
@@ -11,8 +18,8 @@ def _tentativa(conn, job_id: int, hora: str, desfecho: str, mensagem: str = ""):
         """,
         (
             job_id,
-            f"2026-08-11T{hora}:00:00.000Z",
-            f"2026-08-11T{hora}:00:20.000Z",
+            f"{DIA}T{hora}:00:00.000Z",
+            f"{DIA}T{hora}:00:20.000Z",
             desfecho,
             mensagem,
         ),
@@ -20,7 +27,7 @@ def _tentativa(conn, job_id: int, hora: str, desfecho: str, mensagem: str = ""):
 
 
 def _hora_local(hora: str) -> str:
-    return tempo.de_iso(f"2026-08-11T{hora}:00:00.000Z").astimezone().strftime("%H")
+    return tempo.de_iso(f"{DIA}T{hora}:00:00.000Z").astimezone().strftime("%H")
 
 
 def test_diagnostico_usa_tentativas_e_nao_confunde_insuficiente_com_erro(
