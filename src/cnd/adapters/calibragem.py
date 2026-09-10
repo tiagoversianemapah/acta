@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from cnd.adapters.federal.rfb_cego import Calibragem, _achar_edge
+from cnd.adapters.federal.rfb.cego import Calibragem, _achar_edge
 from cnd.infra import entrada_real, tela
 
 SEGUNDOS_IMOVEL = 2.5
@@ -82,7 +82,7 @@ def _perfil(orgao: str | None = None) -> PerfilCalibragem:
     chave = (orgao or "rfb_cego").strip().lower().replace("-", "_")
 
     if chave in {"rfb", "rfb_pj", "rfb_cego", "receita"}:
-        from cnd.adapters.federal import rfb_cego
+        from cnd.adapters.federal.rfb import cego as rfb_cego
 
         return PerfilCalibragem(
             codigo="rfb_cego",

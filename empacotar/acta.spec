@@ -65,7 +65,7 @@ ocultos = [
     *ctk_ocultos,
     # Escolhidos pelo config.toml e importados por nome — o PyInstaller não
     # tem como enxergar isso lendo o código.
-    "cnd.adapters.federal.rfb_cego",
+    "cnd.adapters.federal.rfb.cego",
     "cnd.adapters.federal.crf",
     "cnd.adapters.estadual.sefaz_go",
     "cnd.adapters.estadual.sefaz_es",
@@ -91,7 +91,7 @@ analise = Analysis(
     # aquele portal detecta automação (teste A/B em 07/08/2026) e quem
     # atende a Receita é o rfb_cego. O Playwright em si deixou de ser
     # excluído por causa do CRF da Caixa, que não detecta.
-    excludes=["cnd.adapters.federal.rfb_pj", "pytest", "matplotlib",
+    excludes=["cnd.adapters.federal.rfb.pj", "pytest", "matplotlib",
               "numpy", "pandas"],
     noarchive=False,
 )

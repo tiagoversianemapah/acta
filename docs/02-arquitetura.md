@@ -179,10 +179,11 @@ acta/
 │   │   ├── calibragem.py      # ensina ao robô cego onde ficam os campos
 │   │   ├── fake.py            # órgão de mentira, para ensaiar sem portal
 │   │   ├── federal/
-│   │   │   ├── rfb_cego.py    # Receita Federal PJ, por mouse e teclado reais ← ativo
-│   │   │   ├── rfb_pj.py      # o mesmo portal por Playwright — DETECTADO, desligado
-│   │   │   ├── rfb_matriz.py  # leitura da certidão da matriz
-│   │   │   ├── rfb_pdf.py     # leitura do PDF da Receita
+│   │   │   ├── rfb/           # um órgão em quatro peças, agrupadas
+│   │   │   │   ├── cego.py    # Receita Federal PJ, por mouse e teclado reais ← ativo
+│   │   │   │   ├── pj.py      # o mesmo portal por Playwright — DETECTADO, desligado
+│   │   │   │   ├── matriz.py  # leitura da certidão da matriz
+│   │   │   │   └── pdf.py     # leitura do PDF da Receita
 │   │   │   └── crf.py         # Caixa — FGTS, por Playwright no Edge instalado
 │   │   ├── estadual/
 │   │   │   ├── sefaz_go.py    # SEFAZ-GO, por HTTP

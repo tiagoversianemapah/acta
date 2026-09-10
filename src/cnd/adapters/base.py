@@ -30,10 +30,10 @@ from cnd.infra.config import Config, ConfigOrgao
 # que é onde ficam os que não pertencem a âmbito nenhum — `fake`, por exemplo.
 MODULOS_POR_ADAPTER = {
     "crf": "cnd.adapters.federal.crf",
-    "rfb_cego": "cnd.adapters.federal.rfb_cego",
-    "rfb_matriz": "cnd.adapters.federal.rfb_matriz",
-    "rfb_pdf": "cnd.adapters.federal.rfb_pdf",
-    "rfb_pj": "cnd.adapters.federal.rfb_pj",
+    "rfb_cego": "cnd.adapters.federal.rfb.cego",
+    "rfb_matriz": "cnd.adapters.federal.rfb.matriz",
+    "rfb_pdf": "cnd.adapters.federal.rfb.pdf",
+    "rfb_pj": "cnd.adapters.federal.rfb.pj",
     "sefaz_es": "cnd.adapters.estadual.sefaz_es",
     "sefaz_go": "cnd.adapters.estadual.sefaz_go",
 }
