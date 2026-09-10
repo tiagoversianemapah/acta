@@ -1045,3 +1045,63 @@ def test_modal_parece_aviso_com_icone_de_erro_fino(monkeypatch, tmp_path):
     monkeypatch.setattr(adapter, "_janela", lambda: JANELA)
 
     assert adapter._modal_parece_aviso(imagem) is True
+
+
+class TestModalDeCertidaoNegativaImpossivel:
+    """O aviso que o portal mostra quando a empresa nao tem direito a negativa.
+
+    Texto real, capturado do portal em 10/09/2026. O padrao antigo era a
+    substring "nao foi possivel emitir certidao negativa" e o portal escreve
+    "emitir A certidao negativa" - com artigo. Nao casava, entao o modal nem
+    era reconhecido como resposta: virava erro_transitorio, o robo reapertava
+    Emitir quatro vezes e o job ainda era reagendado tres, numa empresa que
+    nunca teria negativa.
+    """
+
+    TEXTO = (
+        "Atencao! Nao foi possivel emitir a Certidao Negativa para o CNPJ "
+        "61.841.428/0001-51. Se tiver cadastro na Agencia Virtual, clique aqui "
+        "para acessar o site e tentar emitir uma Certidao Positiva com Efeito "
+        "de Negativa. Caso contrario, procure a Agencia da Receita Estadual "
+        "de sua preferencia."
+    )
+
+    def test_o_modal_e_reconhecido_como_resposta_do_portal(self):
+        assert sefaz_es._texto_tem_resposta(self.TEXTO)
+
+    def test_o_modal_vira_positiva(self):
+        assert sefaz_es.classificar_texto(self.TEXTO) is Desfecho.POSITIVA
+
+    def test_positiva_e_conclusivo_e_nao_volta_para_a_fila(self):
+        """POSITIVA e conclusivo: e isso que impede as retentativas."""
+        from cnd.core.modelos import CONCLUSIVOS
+
+        assert sefaz_es.classificar_texto(self.TEXTO) in CONCLUSIVOS
+
+    def test_casa_com_e_sem_o_artigo(self):
+        """A regex existe para o artigo nao poder quebrar de novo."""
+        for frase in ("nao foi possivel emitir a certidao negativa",
+                      "nao foi possivel emitir certidao negativa",
+                      "Nao foi possivel emitir  a  Certidao  Negativa de debitos"):
+            assert sefaz_es.classificar_texto(frase) is Desfecho.POSITIVA, frase
+
+    def test_positiva_preserva_a_sessao_para_o_proximo_cnpj(self):
+        """Depois deste aviso o formulario continua atras do modal.
+
+        ESC devolve a tela e o proximo documento entra direto no campo, sem
+        pagar o minuto de recarga do portal.
+        """
+        assert (sefaz_es.classificar_texto(self.TEXTO)
+                in sefaz_es.DESFECHOS_QUE_PRESERVAM_A_SESSAO)
+
+    def test_captcha_nao_preserva_a_sessao(self):
+        """Captcha e avaria da sessao: reaproveitar repetiria o problema."""
+        captcha = sefaz_es.classificar_texto("Verificacao de seguranca invalida")
+        assert captcha is Desfecho.CAPTCHA
+        assert captcha not in sefaz_es.DESFECHOS_QUE_PRESERVAM_A_SESSAO
+
+    def test_cookie_estourado_nao_preserva_a_sessao(self):
+        estourado = sefaz_es.classificar_texto(
+            "400 Bad Request Request Header Or Cookie Too Large")
+        assert estourado is Desfecho.ERRO_TECNICO
+        assert estourado not in sefaz_es.DESFECHOS_QUE_PRESERVAM_A_SESSAO

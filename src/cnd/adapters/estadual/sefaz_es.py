@@ -188,6 +188,15 @@ RE_VALIDADE = re.compile(
 )
 RE_VALIDA_POR = re.compile(r"valid[ao]\s+por\s+(\d+)\s+dias", re.IGNORECASE)
 RE_DATA = re.compile(r"(\d{2}/\d{2}/\d{4})")
+# "Nao foi possivel emitir A certidao negativa para o CNPJ ..." - o artigo
+# esta no texto real do portal (visto em 10/09/2026) e faltava no padrao fixo,
+# que por isso nunca casava. Como e esta frase que diz POSITIVA, o modal virava
+# erro tecnico retentavel: 4 reinsistencias e mais 3 reagendamentos do job numa
+# empresa que nunca teria negativa. Regex em vez de substring para o artigo (e
+# um eventual complemento) nao poder quebrar de novo.
+RE_SEM_NEGATIVA = re.compile(
+    r"nao foi possivel emitir\s+(?:a\s+)?certidao\s+negativa")
+
 RE_CODIGO = re.compile(
     r"(?:codigo\s+de\s+controle|numero\s+da\s+certidao|certidao\s+n[ro.]*|"
     r"n[ro.]*\s+certidao)\s*[:.-]\s*([0-9A-Z./-]{6,})",
@@ -200,7 +209,6 @@ FRASES_RESPOSTA_TELA = (
     "cnpj invalido",
     "cpf/cnpj informado esta incompleto",
     "cnpj informado esta incompleto",
-    "nao foi possivel emitir certidao negativa",
     "possui debito",
     "constam debitos",
     "consta debito",
@@ -287,6 +295,8 @@ def _parece_icone_erro_modal(cor: tuple[int, int, int]) -> bool:
 
 def _texto_tem_resposta(texto: str) -> bool:
     t = _sem_acento(texto)
+    if RE_SEM_NEGATIVA.search(t):
+        return True
     return any(frase in t for frase in FRASES_RESPOSTA_TELA)
 
 
@@ -324,6 +334,17 @@ def _mensagem_curta(texto: str) -> str:
     return " ".join((texto or "").split())[:500]
 
 
+# Respostas que falam do CNPJ consultado, e nao da sessao: o formulario
+# continua intacto atras do modal, entao ESC devolve a tela pronta e o proximo
+# documento entra direto no campo. Captcha e erro de sessao (cookie estourado,
+# 400) ficam de fora de proposito - ali a sessao esta suja e reaproveita-la
+# repetiria o problema no documento seguinte.
+DESFECHOS_QUE_PRESERVAM_A_SESSAO = frozenset({
+    Desfecho.POSITIVA,
+    Desfecho.PENDENCIA_MANUAL,
+})
+
+
 def classificar_texto(texto: str) -> Desfecho:
     """Classifica mensagens sem PDF.
 
@@ -336,7 +357,7 @@ def classificar_texto(texto: str) -> Desfecho:
         return Desfecho.ERRO_TECNICO
     if "cnpj invalido" in t or "cpf/cnpj informado esta incompleto" in t:
         return Desfecho.PENDENCIA_MANUAL
-    if "nao foi possivel emitir certidao negativa" in t:
+    if RE_SEM_NEGATIVA.search(t):
         return Desfecho.POSITIVA
     if "possui debito" in t or "constam debitos" in t or "consta debito" in t:
         return Desfecho.POSITIVA
@@ -737,12 +758,21 @@ class AdapterSEFAZES:
             self._clicar("botao_emitir", self._ponto_botao_emitir())
             reacao, caminho = self._aguardar_reacao(doc, self.tempo_reacao_s)
             if reacao not in ("turnstile", "erro_transitorio"):
-                # So o PDF deixa a sessao reaproveitavel: fecha o visor e o
-                # formulario volta para a tela, pronto para o proximo CNPJ.
-                # Qualquer outro desfecho e estado desconhecido - o proximo
-                # documento recarrega em vez de arriscar.
-                self._formulario_pronto = reacao == "pdf"
-                if reacao == "pdf":
+                # ESC fecha o modal e o formulario volta para a tela, pronto
+                # para o proximo CNPJ - vale para o visor do PDF e tambem para
+                # o aviso de "nao foi possivel emitir a certidao negativa",
+                # que e resposta sobre a empresa e nao avaria da sessao.
+                # Recarregar o portal custa cerca de um minuto (janela
+                # estreita, espera de assentamento, maximizar), e paga-se isso
+                # so quando o estado e mesmo desconhecido.
+                # `_formulario_na_tela` confere antes de usar: a marca aqui e
+                # so a aposta, a tela continua sendo a verdade.
+                self._formulario_pronto = reacao == "pdf" or (
+                    reacao == "texto"
+                    and classificar_texto(self._ultimo_texto_portal or "")
+                    in DESFECHOS_QUE_PRESERVAM_A_SESSAO
+                )
+                if self._formulario_pronto:
                     self._fechar_aviso()
                 return reacao, caminho
 
