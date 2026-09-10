@@ -1,0 +1,55 @@
+[geral]
+banco = "data/teste_sefaz_es/cnd.db"
+pasta_certidoes = "data/teste_sefaz_es/certidoes"
+pasta_evidencias = "data/teste_sefaz_es/evidencias"
+pasta_logs = "data/teste_sefaz_es/logs"
+
+[rede]
+papel = "robo"
+senha = ""
+
+[alertas]
+metodo = "teams"
+teams_webhook = ""
+
+[orgaos.SEFAZ_ES]
+ativo = true
+adapter = "sefaz_es"
+workers = 1
+nome = "SEFAZ ESPIRITO SANTO"
+
+[orgaos.SEFAZ_ES.urls]
+consulta = "https://s2-internet.sefaz.es.gov.br/certidao/cnd"
+emissao = "https://s2-internet.sefaz.es.gov.br/certidao/emitir-certidao-internet"
+
+[orgaos.SEFAZ_ES.cego]
+tempo_pagina_inicial_s = 45.0
+tempo_formulario_s = 20.0
+espera_turnstile_s = 10.0
+tempo_reacao_s = 60.0
+tempo_salvar_pdf_s = 25.0
+tentativas_turnstile = 4
+
+[orgaos.SEFAZ_ES.pacing]
+intervalo_inicial_s = 8.0
+intervalo_piso_s = 8.0
+intervalo_teto_s = 900.0
+acelera_apos = 20
+fator_aceleracao = 0.85
+fator_punicao = 3.0
+fator_punicao_bloqueio = 1.4
+jitter = 0.3
+janela_ativa = "00:00-24:00"
+
+[orgaos.SEFAZ_ES.breaker]
+captchas_para_abrir = 2
+janela_jobs = 10
+erros_para_abrir = 5
+cooldown_inicial_s = 1800
+cooldown_maximo_s = 9000
+
+[orgaos.SEFAZ_ES.retry]
+max_tentativas = 1
+backoff_erro_s = [120]
+backoff_captcha_s = [3600]
+backoff_bloqueio_s = [300]

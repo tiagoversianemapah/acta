@@ -126,7 +126,13 @@ Versoes anteriores deste documento descreviam um ambiente
 ambiente e o portal real `s2-internet.sefaz.es.gov.br`.
 
 O bloco antigo `[orgaos.SEFAZ_ES.captcha]` pode continuar em configs velhos sem
-quebrar leitura, mas nao e chamado. O adapter nao usa provider externo.
+quebrar leitura: chave desconhecida e ignorada. Mas nao ha mais o que ele
+configure - a classe `CapSolver` e o ponto de extensao do provider **foram
+removidos do adapter em 09/09/2026**, junto com a leitura da resposta AJAX
+(`_pdf_da_resposta`, `_salvar_pdf`), que so fazia sentido no adapter de
+navegador: o robo cego nao ve resposta HTTP nenhuma, o PDF chega como arquivo
+salvo pelo visualizador. Foram ~130 linhas que nenhuma execucao alcancava. O
+git guarda tudo se a decisao mudar.
 
 ## 7. Situacao
 

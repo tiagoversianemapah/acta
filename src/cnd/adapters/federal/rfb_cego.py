@@ -57,8 +57,7 @@ TITULO_JANELA = "Receita"          # só desempate, quando há várias janelas
 PONTOS_NECESSARIOS = ("campo_cnpj", "botao_emitir", "botao_emitir_nova",
                       "fundo_pagina", "faixa_alerta")
 
-TEMPO_CARREGAR_S = 6.0
-# Espera máxima pelo formulário. Era 4x o tempo de carregar (24s) e cada
+# Espera máxima pelo formulário. Era 4x um tempo de carregar de 6s (24s) e cada
 # item pagava os 24 inteiros, porque a detecção falhava sempre e o fluxo
 # seguia assim mesmo — 19 das 35 horas do lote eram esta espera. Não
 # adianta esperar mais por um critério que nunca passa: se ele falhar, o

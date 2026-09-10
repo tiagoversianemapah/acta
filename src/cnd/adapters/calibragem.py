@@ -33,6 +33,10 @@ class PerfilCalibragem:
     pontos_necessarios: tuple[str, ...]
     cores_esperadas: dict[str, tuple[str, TesteCor]]
     pontos_condicionais: dict[str, str]
+    # (largura, altura) da janela, ou None para maximizar. O SEFAZ-ES so
+    # carrega em janela estreita, e calibrar num tamanho e rodar noutro poe
+    # todos os pontos no lugar errado.
+    janela: tuple[int, int] | None = None
 
 
 def _parece_botao(cor: Cor) -> bool:
@@ -109,6 +113,7 @@ def _perfil(orgao: str | None = None) -> PerfilCalibragem:
             titulo_janela=sefaz_es.TITULO_JANELA,
             executavel=sefaz_es.EXECUTAVEL_NAVEGADOR,
             passos=PASSOS_SEFAZ_ES,
+            janela=(sefaz_es.LARGURA_JANELA, sefaz_es.ALTURA_JANELA),
             pontos_necessarios=sefaz_es.PONTOS_NECESSARIOS,
             cores_esperadas={
                 "menu_cnd": ("menu lateral", _qualquer),
@@ -275,10 +280,34 @@ def _abrir_portal(perfil: PerfilCalibragem) -> tuple[int, int, int, int] | None:
                    capture_output=True, check=False)
     time.sleep(2)
 
-    subprocess.Popen([_achar_edge(), "--start-maximized", perfil.url])
-    print("\n  abrindo o Edge maximizado...", flush=True)
-    time.sleep(9)
-    entrada_real.maximizar(perfil.titulo_janela, perfil.executavel)
+    if perfil.janela:
+        largura, altura = perfil.janela
+        subprocess.Popen([_achar_edge(), "--new-window",
+                          f"--window-size={largura},{altura}", perfil.url])
+        print(f"\n  abrindo o Edge em {largura}x{altura}...",
+              flush=True)
+        time.sleep(9)
+        entrada_real.trazer_para_frente(perfil.titulo_janela, perfil.executavel)
+        # O Edge ignora --window-size quando reabre no estado maximizado que
+        # ficou salvo no perfil. Forcar aqui, senao a calibragem sai do
+        # tamanho errado e todos os pontos ficam inuteis.
+        atual = entrada_real.retangulo_janela(perfil.titulo_janela,
+                                              perfil.executavel)
+        origem = (atual[0], atual[1]) if atual else (0, 0)
+        entrada_real.posicionar_janela(perfil.titulo_janela, perfil.executavel,
+                                       (*origem, largura, altura))
+        # E ENTAO maximiza, igual ao adapter faz. A janela estreita serve so
+        # para a pagina CARREGAR; depois de carregada ela pode crescer, e e na
+        # janela grande que o robo vai clicar. Calibrar estreito e trabalhar
+        # maximizado poria todos os pontos no lugar errado.
+        print("  pagina carregada; maximizando para medir...", flush=True)
+        time.sleep(3)
+        entrada_real.maximizar(perfil.titulo_janela, perfil.executavel)
+    else:
+        subprocess.Popen([_achar_edge(), "--start-maximized", perfil.url])
+        print("\n  abrindo o Edge maximizado...", flush=True)
+        time.sleep(9)
+        entrada_real.maximizar(perfil.titulo_janela, perfil.executavel)
     time.sleep(1)
 
     janela = entrada_real.retangulo_janela(perfil.titulo_janela,
@@ -427,7 +456,14 @@ def calibrar(destino: Path, orgao: str | None = None) -> Calibragem:
     print(f"  CALIBRAGEM DO ROBO CEGO - {perfil.nome}")
     print("=" * 70)
     print()
-    print(f"  Vou abrir o portal de {perfil.nome} maximizado.")
+    if perfil.janela:
+        largura, altura = perfil.janela
+        print(f"  Vou abrir o portal de {perfil.nome} numa janela estreita")
+        print(f"  ({largura}x{altura}) e so DEPOIS maximizar. Nao estranhe: e")
+        print("  na largura pequena que este portal carrega inteiro, e e na")
+        print("  janela grande que o robo vai clicar - por isso medimos nela.")
+    else:
+        print(f"  Vou abrir o portal de {perfil.nome} maximizado.")
     print("  Para cada item, leve o mouse ate o alvo e segure parado.")
     print("  Nao clique em nada e nao mexa no tamanho da janela.")
     print()
