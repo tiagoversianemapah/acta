@@ -361,12 +361,14 @@ tentativas_turnstile = 4
 # usa mouse/teclado reais e precisa de `cnd calibrar --orgao SEFAZ_ES`.
 # Sem calibragem, os cliques cairiam fora do formulario ou do visor de PDF.
 [orgaos.SEFAZ_ES.pacing]
-# Uma emissao a cada 5 minutos, e nunca mais rapido que isso: o portal do ES
-# e instavel e cada item leva mais de um minuto de janela real. O teto de 900
-# fica de proposito - levando captcha, o fator de punicao 3.0 leva o intervalo
-# a 15 minutos, e a aceleracao traz de volta aos 5 depois de acertos.
-intervalo_inicial_s = 300.0
-intervalo_piso_s    = 300.0
+# Dez segundos entre um documento e outro. O portal do ES nao reclama do
+# ritmo: o que ele opoe e o Turnstile, e para isso quem responde e o disjuntor
+# abaixo, nao o espacamento. Andar devagar "por precaucao" so faria a carteira
+# levar o dia sem evitar captcha nenhum.
+intervalo_inicial_s = 10.0
+intervalo_piso_s    = 10.0
+# Levando captcha o intervalo sobe (10 -> 30 -> 90 ...) ate este teto, e volta
+# aos 10 conforme os acertos. E a resposta suave; a dura e o disjuntor.
 intervalo_teto_s    = 900.0
 acelera_apos        = 20
 fator_aceleracao    = 0.85
@@ -383,11 +385,18 @@ espera_maxima_s  = 21600
 avisar_apos      = 5
 
 [orgaos.SEFAZ_ES.breaker]
-captchas_para_abrir = 2
+# UM captcha ja pausa o orgao. No ES o captcha nao e ruido ocasional: quando
+# o Turnstile passa a exigir clique, ele exige do proximo documento tambem, e
+# insistir a 10s so queima a carteira contra um portal que ja disse nao.
+captchas_para_abrir = 1
 janela_jobs         = 10
 erros_para_abrir    = 5
+# Meia hora na primeira vez, dobrando a cada reabertura ate o teto de 1h15.
+# O teto existe porque pausa longa demais nao protege mais nada: se o portal
+# voltou, esperar 2h so atrasa a carteira; se nao voltou, a pausa seguinte
+# recomeca a contagem de qualquer jeito.
 cooldown_inicial_s  = 1800
-cooldown_maximo_s   = 9000
+cooldown_maximo_s   = 4500
 
 [orgaos.SEFAZ_ES.retry]
 max_tentativas    = 3
