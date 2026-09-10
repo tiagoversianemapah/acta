@@ -105,7 +105,7 @@
           <td class="mono">{{ t.finalizada_em[:19].replace('T',' ') if t.finalizada_em else '-' }}</td>
           <td>
             {% if t.desfecho in ['CAPTCHA','ERRO_TECNICO'] %}
-              <span class="selo erro">{{ t.desfecho }}</span>
+              <span class="selo erro">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>
             {% elif t.desfecho in ['PENDENCIA_MANUAL','INAPTA','BLOQUEIO_TEMPORARIO','RESULTADO_PENDENTE'] %}
               <span class="selo alerta">{{ rotulos.get(t.desfecho, t.desfecho) }}</span>
             {% elif t.desfecho %}
