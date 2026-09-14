@@ -12,6 +12,7 @@ dependencies = [
     "uvicorn>=0.30",
     "jinja2>=3.1",
     "python-multipart>=0.0.9",
+    "truststore>=0.10",      # usa a loja de certificados do Windows no robô
     # Aplicativo de mesa e robô cego
     "customtkinter>=5.2",
     "pillow>=10.0",         # ícone, marca e leitura de pixel da tela

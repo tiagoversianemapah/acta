@@ -404,6 +404,77 @@ backoff_erro_s    = [120, 600, 2700]
 backoff_captcha_s = [3600, 14400, 43200]
 backoff_bloqueio_s = [300, 900, 1800]
 
+[orgaos.SEFAZ_MA]
+ativo   = false
+adapter = "sefaz_ma"
+workers = 1
+nome    = "SEFAZ MARANHAO"
+
+[orgaos.SEFAZ_MA.urls]
+# CND (debito). Para a Certidao Negativa de Divida Ativa (CNDA), troque por
+# .../emissaoCertidaoNegativaDividaAtiva/emissaoCertidaoNegativaDividaAtiva.jsf
+consulta = "https://sistemas1.sefaz.ma.gov.br/certidoes/jsp/emissaoCertidaoNegativa/emissaoCertidaoNegativa.jsf"
+
+[orgaos.SEFAZ_MA.http]
+timeout_s = 30.0
+
+[orgaos.SEFAZ_MA.ocr]
+# O portal do MA exige captcha em toda emissao (fixo, nao heuristico - o
+# oposto da Receita; ver ADR-006). Ele e trivial de ler, e uma validacao vale
+# para a SESSAO inteira: acertar um captcha arma a sessao para emitir a
+# carteira toda. Por isso o robo le o captcha localmente e o confere no
+# proprio portal (de graca, sem gastar emissao); erra e pede outra imagem.
+#
+# `tentativas_captcha` e quantas imagens tentar antes de devolver o desfecho
+# CAPTCHA e deixar o ritmo/disjuntor recuarem. Como basta acertar uma vez por
+# sessao, 12 e folgado.
+tentativas_captcha = 12
+# Pagina nova a cada documento: consultou, pegou o PDF, reinicia e vai de
+# novo. E o padrao (true) - nao herda uma sessao que expirou no meio da
+# carteira. Uma validacao do MA arma a sessao para varias emissoes; quem
+# quiser essa economia (um captcha por sessao, nao por documento) poe false.
+sessao_por_documento = true
+# Banco de templates do leitor. Cresce sozinho na maquina (cada captcha que o
+# portal confirma vira exemplo) e nada sai dela (RNF-06). Vazio = maquina nao
+# treinada: rode `ferramentas/treinar_ocr_sefaz_ma.py` antes de ligar o orgao.
+# banco = "data/ocr/sefaz_ma.json"   # padrao; descomente para trocar
+
+# Por que este orgao comeca desligado: sem o banco de captcha treinado nesta
+# maquina, o robo nao le o captcha e recusa emitir. E o mesmo padrao do ES,
+# que exige `cnd calibrar` antes de rodar.
+[orgaos.SEFAZ_MA.pacing]
+# O portal do MA nao reclama de ritmo; o que ele opoe e o captcha, e para isso
+# quem responde e o leitor local, nao o espacamento. 3s constante, como o GO.
+intervalo_inicial_s = 3.0
+intervalo_piso_s    = 3.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.SEFAZ_MA.recuperacao]
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.SEFAZ_MA.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.SEFAZ_MA.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+
 [orgaos.RFB_PF]
 ativo   = false
 adapter = "rfb_pf"

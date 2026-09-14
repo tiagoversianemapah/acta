@@ -69,6 +69,8 @@ ocultos = [
     "cnd.adapters.federal.crf",
     "cnd.adapters.estadual.sefaz_go",
     "cnd.adapters.estadual.sefaz_es",
+    # sefaz_ma importa captcha_ma estaticamente, então basta ele aqui.
+    "cnd.adapters.estadual.sefaz_ma",
     "cnd.adapters.fake",
     *pw_ocultos,
     # Cinto e suspensório: o painel também é alcançado por nome em alguns

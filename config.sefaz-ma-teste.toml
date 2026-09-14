@@ -1,0 +1,65 @@
+# Config ISOLADO para testar o SEFAZ-MA nesta máquina, sem tocar na base de
+# produção: banco e pastas próprios, só o SEFAZ_MA ligado. Aponta para o
+# banco de captcha que você já treinou (data/ocr/sefaz_ma.json).
+#
+#   python -m cnd.cli importar --config config.sefaz-ma-teste.toml --abas MA
+#   python -m cnd.cli rodar    --config config.sefaz-ma-teste.toml --limite 3
+#
+# Os PDFs saem em data/teste_sefaz_ma/certidoes/.
+
+[geral]
+banco = "data/teste_sefaz_ma/cnd.db"
+pasta_certidoes = "data/teste_sefaz_ma/certidoes"
+pasta_evidencias = "data/teste_sefaz_ma/evidencias"
+pasta_logs = "data/teste_sefaz_ma/logs"
+
+[rede]
+papel = "robo"
+senha = ""
+
+[alertas]
+metodo = "teams"
+teams_webhook = ""
+
+[orgaos.SEFAZ_MA]
+ativo = true
+adapter = "sefaz_ma"
+workers = 1
+nome = "SEFAZ MARANHAO"
+
+[orgaos.SEFAZ_MA.urls]
+consulta = "https://sistemas1.sefaz.ma.gov.br/certidoes/jsp/emissaoCertidaoNegativa/emissaoCertidaoNegativa.jsf"
+
+[orgaos.SEFAZ_MA.http]
+timeout_s = 30.0
+
+[orgaos.SEFAZ_MA.ocr]
+tentativas_captcha = 12
+sessao_por_documento = true
+# usa o banco treinado no padrao data/ocr/sefaz_ma.json
+
+[orgaos.SEFAZ_MA.pacing]
+intervalo_inicial_s = 3.0
+intervalo_piso_s = 3.0
+intervalo_teto_s = 600.0
+acelera_apos = 20
+fator_aceleracao = 0.85
+fator_punicao = 3.0
+fator_punicao_bloqueio = 1.4
+jitter = 0.3
+janela_ativa = "00:00-24:00"
+
+[orgaos.SEFAZ_MA.breaker]
+captchas_para_abrir = 3
+janela_jobs = 10
+erros_para_abrir = 5
+cooldown_inicial_s = 1800
+cooldown_maximo_s = 9000
+
+[orgaos.SEFAZ_MA.retry]
+max_tentativas = 5
+backoff_erro_s = [10, 20, 30, 60, 120]
+# MA nao tem bloqueio: "captcha" aqui so quer dizer que o OCR nao leu a imagem
+# dessa vez. Retenta rapido em vez de esperar horas (config de teste curto).
+backoff_captcha_s = [10, 20, 30, 60, 120]
+backoff_bloqueio_s = [30, 60, 120]

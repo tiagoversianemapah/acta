@@ -47,7 +47,9 @@ Os dois estão tratados no código e vão gerar evidência quando ocorrerem.
 
 ## Fase 4 — Estaduais GO, ES, DF, SP (≈ 1–2 semanas por estado)
 
-- GO e ES ja tem adapter integrado; ES exige calibragem propria por maquina.
+- GO, ES e MA ja tem adapter integrado; ES exige calibragem propria por
+  maquina, e MA exige treinar o leitor de captcha uma vez (banco portavel entre
+  maquinas — ver ADR-006).
 - Proxima ordem por volume restante: DF (24) → SP (18).
 - Cada estado: mapear site/captcha → adapter → piloto → produção.
 - Estados com captcha fixo (não heurístico) em toda consulta exigirão decisão à
