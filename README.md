@@ -25,6 +25,7 @@ Fase 1: Receita Federal, pessoa jurídica — ~2.850 CNPJs por rodada.
 | Adapter da Receita Federal — leitura do PDF | ✅ validada contra certidão real |
 | **Adapter da Receita Federal — emissão de ponta a ponta** | ✅ **em produção desde 10/08/2026** |
 | **Adapter SEFAZ-GO — Certidão de Dívida Ativa** | ✅ **conferido contra o portal em 28/08/2026** |
+| **Adapter SEFAZ-MA — Certidão Negativa de Débito** | ✅ **captcha por OCR local; NEGATIVA/POSITIVA conferidas em 14/09/2026** |
 | Adapters CRF, RFB-PF e demais estaduais | ⬜ fases 2 a 4 |
 
 Em produção na máquina `PC Receita Federal 01`: 2.829 CNPJs importados,
@@ -269,6 +270,7 @@ o ritmo adaptativo convergindo de verdade, sem gastar consulta no portal.
 | [Fluxo do portal RFB PJ](docs/fluxos/rfb-pj.md) | O caminho real na tela — fonte da verdade do adapter |
 | [Fluxo do portal SEFAZ-GO](docs/fluxos/sefaz-go.md) | O caminho por HTTP, os campos do formulário e como o PDF é classificado |
 | [Fluxo do portal SEFAZ-ES](docs/fluxos/sefaz-es.md) | O caminho cego no Edge comum, Turnstile e PDF em modal |
+| [Fluxo do portal SEFAZ-MA](docs/fluxos/sefaz-ma.md) | O caminho por HTTP, o captcha por OCR local e o "é devedor" (POSITIVA) |
 | [ADRs](docs/adr/) | As decisões de arquitetura e por que foram tomadas |
 
 ## Como o código está organizado

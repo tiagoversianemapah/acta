@@ -36,6 +36,7 @@ MODULOS_POR_ADAPTER = {
     "rfb_pj": "cnd.adapters.federal.rfb.pj",
     "sefaz_es": "cnd.adapters.estadual.sefaz_es",
     "sefaz_go": "cnd.adapters.estadual.sefaz_go",
+    "sefaz_ma": "cnd.adapters.estadual.sefaz_ma",
 }
 
 

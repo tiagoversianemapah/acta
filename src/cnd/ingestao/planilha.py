@@ -19,6 +19,7 @@ ABA_PARA_ORGAO: dict[str, tuple[str, str]] = {
     "CRF": ("CRF", "CNPJ"),
     "CPF": ("RFB_PF", "CPF"),
     "GO": ("SEFAZ_GO", "CNPJ"),
+    "MA": ("SEFAZ_MA", "CNPJ"),
     "DF": ("SEFAZ_DF", "CNPJ"),
     "ES": ("SEFAZ_ES", "CNPJ"),
     "SP": ("SEFAZ_SP", "CNPJ"),
