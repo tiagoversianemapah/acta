@@ -95,6 +95,39 @@ def test_pdf_do_data_uri_decodifica_pdf():
     assert sefaz_es._pdf_do_data_uri("data:text/html;base64,PGgxPk88L2gxPg==") is None
 
 
+def test_pdf_extraido_do_dom_fecha_modal_para_reaproveitar_formulario(
+    monkeypatch, tmp_path
+):
+    cfg = SimpleNamespace(pasta_certidoes=tmp_path, pasta_evidencias=tmp_path)
+    adapter = sefaz_es.AdapterSEFAZES("SEFAZ_ES", cfg)
+    pdf = b"%PDF-1.4\nconteudo"
+    data_uri = (
+        "data:application/pdf;base64,"
+        + base64.b64encode(pdf).decode("ascii")
+    )
+    destino = tmp_path / "certidao.pdf"
+    fechados = []
+
+    class Frame:
+        def evaluate(self, _script):
+            return data_uri
+
+    class Page:
+        main_frame = Frame()
+        frames = []
+
+    pagina = Page()
+    monkeypatch.setattr(
+        adapter,
+        "_fechar_modal_pdf_por_dom",
+        lambda pagina_recebida: fechados.append(pagina_recebida) or True,
+    )
+
+    assert adapter._extrair_data_uri_pdf_da_pagina(pagina, destino) is True
+    assert destino.read_bytes() == pdf
+    assert fechados == [pagina]
+
+
 class TestClassificarPdfSalvo:
     """O roteamento do PDF depois de salvo pelo visualizador.
 

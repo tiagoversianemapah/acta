@@ -1423,7 +1423,77 @@ class AdapterSEFAZES:
                 log.info("pdf_salvo_do_dom",
                          extra={"orgao": self.orgao, "arquivo": str(destino),
                                 "bytes": len(pdf)})
+                self._fechar_modal_pdf_por_dom(pagina)
                 return True
+        return False
+
+    def _fechar_modal_pdf_por_dom(self, pagina) -> bool:
+        """Fecha o visor/modal depois que o PDF ja foi copiado do DOM."""
+        script = """
+        () => {
+          const fechar = (el) => {
+            if (!el) return false;
+            el.click();
+            return true;
+          };
+
+          for (const api of [window.Swal, window.swal]) {
+            if (api && typeof api.close === 'function') {
+              api.close();
+              return true;
+            }
+          }
+
+          for (const seletor of [
+            '.swal2-close',
+            '.swal2-confirm',
+            '.sweet-alert button.confirm',
+            '.modal.show [data-dismiss="modal"]',
+            '.modal.in [data-dismiss="modal"]',
+            '.modal.show .close',
+            '.modal.in .close',
+            'button[aria-label="Close"]'
+          ]) {
+            if (fechar(document.querySelector(seletor))) return true;
+          }
+
+          const aceitos = new Set(['ok', 'fechar', 'close']);
+          for (const el of document.querySelectorAll('button, [role="button"]')) {
+            const texto = (
+              el.innerText || el.textContent || el.getAttribute('aria-label') || ''
+            ).trim().toLowerCase();
+            if (aceitos.has(texto) && fechar(el)) return true;
+          }
+
+          let removidos = 0;
+          for (const seletor of [
+            '.swal2-container',
+            '.sweet-alert',
+            '.modal-backdrop',
+            '.modal.show',
+            '.modal.in'
+          ]) {
+            for (const el of document.querySelectorAll(seletor)) {
+              el.remove();
+              removidos += 1;
+            }
+          }
+          if (document.body) {
+            document.body.classList.remove(
+              'swal2-shown', 'swal2-height-auto', 'modal-open'
+            );
+            document.body.style.overflow = '';
+            document.body.style.paddingRight = '';
+          }
+          return removidos > 0;
+        }
+        """
+        with contextlib.suppress(Exception):
+            fechado = bool(pagina.evaluate(script))
+            if fechado:
+                log.info("modal_pdf_fechado_por_dom",
+                         extra={"orgao": self.orgao})
+            return fechado
         return False
 
     def _fechar_caixa_salvar(
