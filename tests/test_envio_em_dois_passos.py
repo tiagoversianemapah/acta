@@ -334,6 +334,43 @@ def test_envio_remoto_leva_a_automacao_e_o_nome(monkeypatch, tmp_path):
     assert visto["timeout"] == 120
 
 
+def test_envio_remoto_sem_aba_deixa_servidor_ler_a_planilha(monkeypatch, tmp_path):
+    from cnd.desktop import remoto
+    from cnd.infra.config import Maquina
+
+    arquivo = tmp_path / "sefaz.xlsx"
+    arquivo.write_bytes(b"x")
+    visto = {}
+
+    class Resposta:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"criados": 300, "rejeitados": [], "total_rejeitados": 0}'
+
+    def abrir(pedido, timeout):
+        visto["timeout"] = timeout
+        visto["corpo"] = pedido.data.decode("utf-8", errors="ignore")
+        return Resposta()
+
+    monkeypatch.setattr(remoto.urllib.request, "urlopen", abrir)
+
+    remoto.enviar_planilha(
+        Maquina("Robo", "http://robo:8000"), arquivo, "segredo"
+    )
+
+    campo_aba = re.search(
+        r'name="aba"\r\n\r\n(.*?)\r\n------acta', visto["corpo"], re.DOTALL
+    )
+    assert campo_aba and campo_aba.group(1) == ""
+    assert "RFB" not in visto["corpo"]
+    assert visto["timeout"] == 120
+
+
 def test_token_desconhecido_nao_quebra(painel):
     """Quem volta num link velho recebe recado, não erro 500."""
     cliente, _ = painel

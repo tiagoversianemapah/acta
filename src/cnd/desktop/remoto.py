@@ -662,13 +662,14 @@ def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "",
     """Sobe a planilha para a máquina e devolve o resumo da importação.
 
     `aba` diz onde estão os dados; `orgao` diz qual automação vai rodar.
-    Sem `orgao`, a máquina mantém o atalho antigo pelo nome da aba.
+    Sem `aba` e sem `orgao`, a máquina importa todas as abas conhecidas pelo
+    nome. Esse é o caminho do botão "Enviar planilha" do app de mesa.
     """
     limite = b"----acta" + str(id(arquivo)).encode()
     corpo = b"".join([
         b"--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="aba"\r\n\r\n',
-        (aba or "RFB").encode("utf-8"), b"\r\n--", limite, b"\r\n",
+        aba.encode("utf-8"), b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="orgao"\r\n\r\n',
         orgao.encode("utf-8"), b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="nome"\r\n\r\n',
