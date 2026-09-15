@@ -34,7 +34,7 @@ from cnd.core import breaker, fila, tempo
 from cnd.core.documentos import formatar
 from cnd.desktop import remoto
 from cnd.infra import alertas, carteiras, heartbeat, maquina
-from cnd.infra.config import Maquina
+from cnd.infra.config import CAMINHO_PADRAO, Config, Maquina
 from cnd.infra.config import carregar as carregar_config
 from cnd.infra.db import RAIZ_PROJETO, conectar, conectar_leitura, criar_schema
 from cnd.infra.log import configurar as configurar_log
@@ -43,6 +43,59 @@ from cnd.web import api, carteira, comandos, consultas, diagnostico, relatorio
 
 log = obter("web")
 cfg = carregar_config()
+
+
+def _bytes_do_arquivo() -> bytes | None:
+    """O conteúdo cru do config.toml, ou None se ele sumiu."""
+    try:
+        return CAMINHO_PADRAO.read_bytes()
+    except OSError:
+        return None
+
+
+_config_bytes = _bytes_do_arquivo()
+
+
+def config_atual() -> Config:
+    """A config do disco, relida quando o arquivo muda.
+
+    Ler uma vez só na importação fazia o painel discordar do robô: editar o
+    config.toml e reiniciar apenas o robô deixava os dois processos com
+    parâmetros diferentes, e quem responde à API — inclusive a normalização
+    do ritmo no início manual — decidia pelos valores velhos. Levou meia
+    hora para achar em 15/09/2026, com o ritmo do SEFAZ-ES preso em 300s.
+
+    Compara o CONTEÚDO, não a data: dois salvamentos no mesmo tique do
+    relógio saem com `st_mtime_ns` idêntico (medido aqui no Windows), e é
+    exatamente o que acontece quando um editor grava um temporário e
+    renomeia por cima. O arquivo tem ~14 KB; relê-lo por requisição custa
+    menos que errar a config.
+
+    Config inválida NÃO derruba o painel: arquivo sendo salvo passa por um
+    instante ilegível, e trocar a config boa por uma exceção justamente aí
+    seria pior que continuar com a anterior.
+    """
+    global cfg, _config_bytes
+
+    crus = _bytes_do_arquivo()
+    if crus is None or crus == _config_bytes:
+        return cfg
+
+    try:
+        nova = carregar_config()
+    except Exception as erro:
+        # Guarda os bytes ruins para não repetir a tentativa — e o log — a
+        # cada requisição enquanto o arquivo estiver quebrado.
+        _config_bytes = crus
+        log.warning("config_ilegivel_mantendo_a_anterior",
+                    extra={"erro": str(erro)[:300]})
+        return cfg
+
+    cfg, _config_bytes = nova, crus
+    log.info("config_relida", extra={"arquivo": str(CAMINHO_PADRAO)})
+    return cfg
+
+
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app_static = Path(__file__).parent / "static"
 PLANILHA_ENVIADA = File(...)
@@ -245,10 +298,10 @@ async def ciclo_de_vida(app: FastAPI):
 
 app = FastAPI(title="CND Bot", lifespan=ciclo_de_vida)
 app.mount("/static", StaticFiles(directory=str(app_static)), name="static")
-app.include_router(api.montar(lambda: cfg, ler))
+app.include_router(api.montar(config_atual, ler))
 # As rotas que mexem na máquina ficam num roteador separado, e exigem senha
 # configurada — a capacidade perigosa nasce desligada.
-app.include_router(comandos.montar(lambda: cfg, RAIZ_PROJETO))
+app.include_router(comandos.montar(config_atual, RAIZ_PROJETO))
 
 
 # ----------------------------------------------------------------------
