@@ -252,6 +252,42 @@ class TestComandosPelaRede:
         assert resposta.status_code == 200
         assert intervalo == esperado
 
+    def test_reseta_ritmo_do_orgao_para_valor_informado(
+        self, monkeypatch, tmp_path
+    ):
+        from cnd.infra.db import conectar
+
+        banco = tmp_path / "cnd.db"
+        with self._cliente(monkeypatch, tmp_path, senha="segredo") as cliente:
+            conn = conectar(banco)
+            try:
+                conn.execute(
+                    "INSERT INTO ritmo "
+                    "(orgao, intervalo_s, consultas_limpas, atualizado_em) "
+                    "VALUES ('RFB_PJ', 300, 7, '2026-01-01T00:00:00Z')"
+                )
+            finally:
+                conn.close()
+
+            resposta = cliente.post(
+                "/api/ritmo/RFB_PJ/resetar",
+                headers={"X-CND-Senha": "segredo"},
+                data={"intervalo_s": "8"},
+            )
+
+            conn = conectar(banco)
+            try:
+                linha = conn.execute(
+                    "SELECT intervalo_s, consultas_limpas "
+                    "FROM ritmo WHERE orgao = 'RFB_PJ'"
+                ).fetchone()
+            finally:
+                conn.close()
+
+        assert resposta.status_code == 200
+        assert linha["intervalo_s"] == 8
+        assert linha["consultas_limpas"] == 0
+
     def test_iniciar_se_ja_tem_robo_vivo_nao_duplica(
         self, monkeypatch, tmp_path
     ):

@@ -363,6 +363,56 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                  extra={"orgao": codigo, "ativo": ativo})
         return _resposta(f"{rotulo} {estado}.")
 
+    @roteador.post("/ritmo/{orgao}/resetar")
+    def resetar_ritmo(orgao: str,
+                      intervalo_s: float | None = Form(default=None)):
+        """Reseta o intervalo adaptativo de um órgão sem tocar na fila.
+
+        O ritmo fica no banco para sobreviver a reinício, mas isso também faz
+        um castigo antigo atravessar pilotos novos. Esta rota dá ao operador
+        um reset cirúrgico: só muda `ritmo`, não apaga jobs, tentativas,
+        certidões nem calibragem.
+        """
+        cfg = obter_config()
+        exigir_senha_configurada(cfg)
+
+        codigo = orgao.strip().upper()
+        configurado = cfg.orgaos.get(codigo)
+        if configurado is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Não achei [orgaos.{codigo}] no config.",
+            )
+
+        p = configurado.pacing
+        alvo = p.intervalo_inicial_s if intervalo_s is None else float(intervalo_s)
+        teto = max(1.0, p.intervalo_teto_s, p.intervalo_inicial_s)
+        if not 0.0 <= alvo <= teto:
+            raise HTTPException(
+                status_code=400,
+                detail=f"intervalo_s deve ficar entre 0 e {teto:g}.",
+            )
+
+        with contextlib.closing(conectar(cfg.banco)) as conn:
+            conn.execute(
+                """
+                INSERT INTO ritmo
+                    (orgao, intervalo_s, consultas_limpas, atualizado_em)
+                VALUES (?, ?, 0, ?)
+                ON CONFLICT(orgao) DO UPDATE SET
+                    intervalo_s = excluded.intervalo_s,
+                    consultas_limpas = 0,
+                    atualizado_em = excluded.atualizado_em
+                """,
+                (codigo, alvo, tempo.agora_iso()),
+            )
+
+        log.warning("ritmo_resetado_manualmente",
+                    extra={"orgao": codigo, "intervalo_s": round(alvo, 2)})
+        return _resposta(
+            f"Ritmo de {configurado.rotulo} resetado para {alvo:g}s."
+        )
+
     @roteador.post("/planilha")
     async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
                               aba: str = Form(default=""),
