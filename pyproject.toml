@@ -91,4 +91,4 @@ allowed-confusables = ["–", "×"]
 "tests/*" = ["E501"]
 # `_fields_` de uma ctypes.Structure é lista por exigência do ctypes, não
 # por descuido — a regra de atributo de classe mutável não se aplica.
-"src/cnd/infra/entrada_real.py" = ["RUF012"]
+"src/cnd/infra/entrada_real/win32.py" = ["RUF012"]

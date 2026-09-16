@@ -463,6 +463,7 @@ espera_maxima_s  = 21600
 avisar_apos      = 5
 
 [orgaos.SEFAZ_MA.breaker]
+ativo              = false
 captchas_para_abrir = 3
 janela_jobs         = 10
 erros_para_abrir    = 5
@@ -472,7 +473,7 @@ cooldown_maximo_s   = 9000
 [orgaos.SEFAZ_MA.retry]
 max_tentativas    = 3
 backoff_erro_s    = [120, 600, 2700]
-backoff_captcha_s = [3600, 14400, 43200]
+backoff_captcha_s = [0, 0, 0]
 backoff_bloqueio_s = [300, 900, 1800]
 
 [orgaos.RFB_PF]

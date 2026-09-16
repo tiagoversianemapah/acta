@@ -50,6 +50,7 @@ jitter = 0.3
 janela_ativa = "00:00-24:00"
 
 [orgaos.SEFAZ_MA.breaker]
+ativo = false
 captchas_para_abrir = 3
 janela_jobs = 10
 erros_para_abrir = 5
@@ -57,9 +58,9 @@ cooldown_inicial_s = 1800
 cooldown_maximo_s = 9000
 
 [orgaos.SEFAZ_MA.retry]
-max_tentativas = 5
+max_tentativas = 3
 backoff_erro_s = [10, 20, 30, 60, 120]
 # MA nao tem bloqueio: "captcha" aqui so quer dizer que o OCR nao leu a imagem
 # dessa vez. Retenta rapido em vez de esperar horas (config de teste curto).
-backoff_captcha_s = [10, 20, 30, 60, 120]
+backoff_captcha_s = [0, 0, 0]
 backoff_bloqueio_s = [30, 60, 120]

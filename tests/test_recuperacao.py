@@ -135,7 +135,7 @@ class TestVigia:
 
     def test_primeira_passagem_apenas_agenda(self, conn, lote, tmp_path, p):
         """Não recupera na hora: o problema do portal precisa de tempo."""
-        from cnd.orquestrador.loop import Vigia
+        from cnd.orquestrador.vigia import Vigia
 
         job_id = self._falhar(conn, lote)
         cfg, orgao = self._montar(tmp_path, tmp_path / "t.db", p)
@@ -148,7 +148,7 @@ class TestVigia:
         assert recuperacao.estado(conn, "RFB_PJ").proxima_em is not None
 
     def test_recupera_quando_a_hora_chega(self, conn, lote, tmp_path, p):
-        from cnd.orquestrador.loop import Vigia
+        from cnd.orquestrador.vigia import Vigia
 
         job_id = self._falhar(conn, lote)
         cfg, orgao = self._montar(tmp_path, tmp_path / "t.db", p)
@@ -168,7 +168,7 @@ class TestVigia:
 
     def test_nao_recupera_com_a_fila_andando(self, conn, lote, tmp_path, p):
         """Reenfileirar no meio do lote bagunçaria a ordem sem necessidade."""
-        from cnd.orquestrador.loop import Vigia
+        from cnd.orquestrador.vigia import Vigia
 
         job_id = self._falhar(conn, lote)
         criar_job(conn, lote, documento="00000000000002", orgao="RFB_PJ")
@@ -182,7 +182,7 @@ class TestVigia:
 
     def test_lote_fechado_zera_a_contagem(self, conn, lote, tmp_path, p):
         """Sem isto o próximo lote herdaria a espera de 6h deste."""
-        from cnd.orquestrador.loop import Vigia
+        from cnd.orquestrador.vigia import Vigia
 
         cfg, orgao = self._montar(tmp_path, tmp_path / "t.db", p)
         recuperacao.agendar(conn, "RFB_PJ", p)
@@ -193,7 +193,7 @@ class TestVigia:
         assert recuperacao.estado(conn, "RFB_PJ").virgem
 
     def test_desligavel_pelo_config(self, conn, lote, tmp_path):
-        from cnd.orquestrador.loop import Vigia
+        from cnd.orquestrador.vigia import Vigia
 
         job_id = self._falhar(conn, lote)
         cfg, orgao = self._montar(tmp_path, tmp_path / "t.db",

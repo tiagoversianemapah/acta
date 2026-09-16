@@ -103,6 +103,73 @@ def test_um_orgao_aberto_nao_afeta_o_outro(conn, lote):
         "cada portal tem o próprio disjuntor"
 
 
+def test_sefaz_ma_nunca_abre_disjuntor(conn, lote):
+    estado = _registrar(conn, lote, "SEFAZ_MA", Desfecho.CAPTCHA, 8)
+
+    assert estado.estado == breaker.FECHADO
+    assert estado.aberturas == 0
+    assert breaker.pode_despachar(conn, "SEFAZ_MA") is True
+
+
+def test_sefaz_ma_fecha_pausa_antiga_ao_despachar(conn):
+    breaker.consultar(conn, "SEFAZ_MA")
+    conn.execute(
+        """
+        UPDATE breaker
+           SET estado = ?, aberto_ate = ?, aberturas = 5, motivo = ?
+         WHERE orgao = 'SEFAZ_MA'
+        """,
+        (breaker.ABERTO, tempo.daqui_a(3600), "pausa antiga"),
+    )
+
+    assert breaker.pode_despachar(conn, "SEFAZ_MA") is True
+
+    estado = breaker.consultar(conn, "SEFAZ_MA")
+    assert estado.estado == breaker.FECHADO
+    assert estado.aberturas == 0
+
+
+def test_despachar_orgao_isento_nao_escreve_a_toa(conn):
+    """Limpar a pausa é para quando há pausa.
+
+    `pode_despachar` roda a cada job; se ele reescrevesse a linha sempre,
+    seriam milhares de UPDATE por lote para concluir que não há nada a
+    apagar.
+    """
+    breaker.pode_despachar(conn, "SEFAZ_MA")           # cria e limpa a linha
+    antes = conn.execute(
+        "SELECT atualizado_em FROM breaker WHERE orgao = 'SEFAZ_MA'"
+    ).fetchone()["atualizado_em"]
+
+    conn.execute("UPDATE breaker SET atualizado_em = '1999-01-01T00:00:00Z' "
+                 "WHERE orgao = 'SEFAZ_MA'")
+    breaker.pode_despachar(conn, "SEFAZ_MA")
+
+    depois = conn.execute(
+        "SELECT atualizado_em FROM breaker WHERE orgao = 'SEFAZ_MA'"
+    ).fetchone()["atualizado_em"]
+    assert depois == "1999-01-01T00:00:00Z", (
+        "linha já limpa não deveria ser reescrita")
+    assert antes != depois
+
+
+def test_leitura_do_painel_nao_mostra_pausa_do_sefaz_ma(conn):
+    breaker.consultar(conn, "SEFAZ_MA")
+    conn.execute(
+        """
+        UPDATE breaker
+           SET estado = ?, aberto_ate = ?, aberturas = 5, motivo = ?
+         WHERE orgao = 'SEFAZ_MA'
+        """,
+        (breaker.ABERTO, tempo.daqui_a(3600), "pausa antiga"),
+    )
+
+    estado = breaker.consultar_leitura(conn, "SEFAZ_MA")
+
+    assert estado.estado == breaker.FECHADO
+    assert estado.aberturas == 0
+
+
 def test_cooldown_dobra_a_cada_reabertura(conn):
     primeiro = breaker.abrir(conn, "FAKE", "teste", P)
     breaker.fechar(conn, "FAKE")

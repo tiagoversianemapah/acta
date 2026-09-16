@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from cnd import cli
+from cnd.cli import lotes, telas
 
 
 def test_importar_respeita_config_do_banco(monkeypatch, tmp_path):
@@ -26,7 +26,7 @@ def test_importar_respeita_config_do_banco(monkeypatch, tmp_path):
     aba.append(["EMPRESA TESTE", "32.465.841/0001-60"])
     livro.save(planilha)
 
-    resultado = cli._importar(SimpleNamespace(
+    resultado = lotes.importar_planilha(SimpleNamespace(
         planilha=planilha,
         descricao="teste",
         abas=["ES"],
@@ -62,7 +62,7 @@ def test_painel_cria_banco_vazio_antes_de_subir(monkeypatch, tmp_path):
     chamadas = []
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: chamadas.append((args, kwargs)))
 
-    assert cli._painel(SimpleNamespace(host="127.0.0.1", porta=8000)) == 0
+    assert telas.subir_painel(SimpleNamespace(host="127.0.0.1", porta=8000)) == 0
 
     assert chamadas
     assert banco.exists()

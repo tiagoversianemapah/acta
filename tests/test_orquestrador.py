@@ -10,18 +10,18 @@ import threading
 from dataclasses import replace
 
 from cnd.adapters import fake
-from cnd.core import breaker, fila, ritmo
+from cnd.core import breaker, fila, ritmo, tempo
 from cnd.core.breaker import ParametrosBreaker
 from cnd.core.modelos import CONCLUSIVOS, Desfecho, ResultadoTentativa, Status
 from cnd.core.ritmo import ParametrosRitmo
 from cnd.infra.config import Config, ConfigAlertas, ConfigOrgao, ParametrosRetry
 from cnd.infra.db import caminho_pedido_parada
 from cnd.orquestrador.loop import (
-    Contexto,
     _consumir_pedido_de_parada,
     _nada_a_fazer,
     executar,
 )
+from cnd.orquestrador.worker import Contexto
 from tests.conftest import criar_job
 
 
@@ -47,9 +47,11 @@ class AdapterSequencial:
         pass
 
 
-def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
+def montar_config(
+    tmp_path, banco, simulacao: dict, workers: int = 1, codigo: str = "FAKE"
+) -> Config:
     orgao = ConfigOrgao(
-        codigo="FAKE",
+        codigo=codigo,
         ativo=True,
         adapter="fake",
         workers=workers,
@@ -76,8 +78,31 @@ def montar_config(tmp_path, banco, simulacao: dict, workers: int = 1) -> Config:
         pasta_evidencias=tmp_path / "evidencias",
         pasta_logs=tmp_path / "logs",
         alertas=ConfigAlertas(),          # SMTP vazio => alertas desligados
-        orgaos={"FAKE": orgao},
+        orgaos={codigo: orgao},
     )
+
+
+def test_orgao_com_captcha_de_ocr_nao_espera_para_retentar():
+    """CAPTCHA de OCR retenta na hora, mesmo com config antigo na máquina.
+
+    O backoff de captcha herdado (horas) faz sentido contra portal que
+    barra; contra erro de leitura nosso ele só para o lote. Este piso é o
+    que garante isso sem depender de o config.toml da máquina ser
+    atualizado.
+    """
+    from cnd.orquestrador.worker import Worker
+
+    retry = ParametrosRetry(max_tentativas=3, backoff_captcha_s=(3600.0, 7200.0))
+    orgao = ConfigOrgao(
+        codigo="SEFAZ_MA", ativo=True, adapter="fake", workers=1,
+        pacing=ParametrosRitmo(), breaker=ParametrosBreaker(), retry=retry,
+    )
+    worker = Worker.__new__(Worker)      # sem thread: só a regra de espera
+    worker.orgao = orgao
+
+    assert worker._espera_retry(Desfecho.CAPTCHA, 1) == 0.0
+    # Outro desfecho continua obedecendo o config.
+    assert worker._espera_retry(Desfecho.ERRO_TECNICO, 1) > 0.0
 
 
 def test_reserva_do_limite_pode_ser_cancelada(tmp_path):
@@ -201,6 +226,45 @@ def test_captcha_pune_o_ritmo_e_abre_o_disjuntor(conn, lote, tmp_path):
     assert presos == 0
 
 
+def test_captcha_do_sefaz_ma_nao_pune_ritmo_nem_abre_disjuntor(conn, lote, tmp_path):
+    for i in range(4):
+        criar_job(conn, lote, documento=f"{i:014d}", orgao="SEFAZ_MA")
+
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+        simulacao={"captcha_base": 1.0, "duracao_min_s": 0.0, "duracao_max_s": 0.0},
+        codigo="SEFAZ_MA",
+    )
+    executar(cfg, ate_esvaziar=True)
+
+    estado = ritmo.estado(conn, "SEFAZ_MA", cfg.orgaos["SEFAZ_MA"].pacing)
+    assert estado.intervalo_s == cfg.orgaos["SEFAZ_MA"].pacing.intervalo_inicial_s
+    assert breaker.consultar(conn, "SEFAZ_MA").estado == breaker.FECHADO
+    assert breaker.consultar(conn, "SEFAZ_MA").aberturas == 0
+
+
+def test_captcha_do_sefaz_ma_volta_sem_espera_longa(
+    conn, lote, tmp_path, monkeypatch
+):
+    criar_job(conn, lote, documento="00000000000001", orgao="SEFAZ_MA")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(Desfecho.CAPTCHA, mensagem_portal="OCR nao leu"),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {},
+        codigo="SEFAZ_MA",
+    )
+
+    executar(cfg, limite=1)
+
+    job = conn.execute(
+        "SELECT status, proxima_execucao_em FROM job"
+    ).fetchone()
+    assert job["status"] == Status.RETRY_WAIT
+    assert job["proxima_execucao_em"] <= tempo.agora_iso()
+
+
 def test_esgotar_tentativas_leva_a_failed(conn, lote, tmp_path):
     criar_job(conn, lote, documento="00000000000001", orgao="FAKE")
 
@@ -253,7 +317,7 @@ def test_bloqueio_106_faz_retentativa_rapida_e_recupera(
             mensagem_portal="PDF baixado",
         ),
     ])
-    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
     cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
 
     executar(cfg, ate_esvaziar=True)
@@ -285,7 +349,7 @@ def test_bloqueio_106_persistente_reagenda_sem_consumir_duas_tentativas(
             mensagem_portal="Nao foi possivel concluir a acao. 106 - 14/08/2026",
         ),
     ])
-    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
     cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
 
     executar(cfg, limite=1)
@@ -317,7 +381,7 @@ def test_bloqueio_005_faz_retentativa_rapida_e_recupera(
             mensagem_portal="PDF baixado",
         ),
     ])
-    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
     cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
 
     executar(cfg, ate_esvaziar=True)
@@ -343,7 +407,7 @@ def test_bloqueio_033_nao_usa_retentativa_rapida(conn, lote, tmp_path, monkeypat
             mensagem_portal="Nao foi possivel emitir a certidao. 033 - 14/08/2026",
         ),
     ])
-    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
     cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
 
     executar(cfg, limite=1)
@@ -367,7 +431,7 @@ def test_cnpj_com_005_nao_dispara_micro_retentativa(conn, lote, tmp_path, monkey
             mensagem_portal="cnpj 12.005.678/0001-99 nao foi possivel emitir",
         ),
     ])
-    monkeypatch.setattr("cnd.orquestrador.loop.carregar_adapter", lambda *_: adapter)
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
     cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {})
 
     executar(cfg, limite=1)

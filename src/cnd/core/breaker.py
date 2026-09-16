@@ -15,7 +15,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import timedelta
 
-from cnd.core import tempo
+from cnd.core import perfis, tempo
 from cnd.core.modelos import BLOQUEIOS, Desfecho
 
 FECHADO = "FECHADO"
@@ -35,6 +35,7 @@ ALIMENTAM_O_DISJUNTOR = BLOQUEIOS | {
 
 @dataclass(frozen=True)
 class ParametrosBreaker:
+    ativo: bool = True
     captchas_para_abrir: int = 3
     janela_jobs: int = 10
     erros_para_abrir: int = 5
@@ -86,6 +87,38 @@ def consultar(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
     return _estado_da_linha(linha)
 
 
+def ativo_para(orgao: str, p: ParametrosBreaker | None = None) -> bool:
+    # Órgão cujo captcha é nosso não tem o que o disjuntor proteja: ele
+    # existe para recuar diante de portal que barra, e esse não barra.
+    if perfis.captcha_lido_por_nos(orgao):
+        return False
+    return True if p is None else p.ativo
+
+
+def desativar(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
+    """Apaga qualquer pausa deste órgão e devolve o estado limpo.
+
+    Escreve só quando há o que apagar: `pode_despachar` chama isto a cada
+    job de um órgão isento, e um UPDATE por consulta é escrita no banco em
+    troca de nada.
+    """
+    atual = consultar(conn, orgao)
+    if (atual.estado == FECHADO and atual.aberturas == 0
+            and not atual.aberto_ate and not atual.motivo):
+        return atual
+
+    conn.execute(
+        """
+        UPDATE breaker
+           SET estado = ?, aberto_ate = NULL, aberturas = 0,
+               motivo = NULL, atualizado_em = ?
+         WHERE orgao = ?
+        """,
+        (FECHADO, tempo.agora_iso(), orgao),
+    )
+    return consultar(conn, orgao)
+
+
 def consultar_leitura(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
     """O mesmo estado, mas SEM nunca escrever.
 
@@ -99,6 +132,10 @@ def consultar_leitura(conn: sqlite3.Connection, orgao: str) -> EstadoBreaker:
     Órgão sem linha é órgão que ainda não rodou, e não rodar não é estar
     bloqueado: devolve fechado, que é a verdade.
     """
+    if not ativo_para(orgao):
+        return EstadoBreaker(estado=FECHADO, aberto_ate=None,
+                             aberturas=0, motivo=None)
+
     linha = conn.execute(
         "SELECT * FROM breaker WHERE orgao = ?", (orgao,)).fetchone()
     if linha is None:
@@ -130,12 +167,20 @@ def _aberto_ate_efetivo(linha: sqlite3.Row) -> str | None:
     return min(aberto_ate, limite)
 
 
-def pode_despachar(conn: sqlite3.Connection, orgao: str) -> bool:
+def pode_despachar(
+    conn: sqlite3.Connection,
+    orgao: str,
+    p: ParametrosBreaker | None = None,
+) -> bool:
     """Pode mandar um job agora?
 
     Se estava ABERTO e o cooldown venceu, promove para MEIO_ABERTO e
     libera exatamente uma sondagem.
     """
+    if not ativo_para(orgao, p):
+        desativar(conn, orgao)
+        return True
+
     linha = _garantir(conn, orgao)
     atual = _estado_da_linha(linha)
 
@@ -202,6 +247,9 @@ def abrir(conn: sqlite3.Connection, orgao: str, motivo: str,
           desfecho: Desfecho | str | None = None) -> EstadoBreaker:
     """Interrompe o órgão. O cooldown dobra a cada reabertura, até o teto —
     se o portal continua bloqueando, esperar mais é a resposta certa."""
+    if not ativo_para(orgao, p):
+        return desativar(conn, orgao)
+
     atual = consultar(conn, orgao)
     aberturas = atual.aberturas + 1
     base, teto = _faixa_cooldown(p, desfecho)
@@ -236,6 +284,9 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
     Devolve o estado resultante — o orquestrador usa isso para saber se
     precisa disparar alerta por e-mail.
     """
+    if not ativo_para(orgao, p):
+        return desativar(conn, orgao)
+
     _garantir(conn, orgao)
     atual = consultar(conn, orgao)
 
