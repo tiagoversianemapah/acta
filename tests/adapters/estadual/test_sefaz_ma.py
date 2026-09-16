@@ -53,6 +53,48 @@ FORM_HTML = (
 ).encode("iso-8859-1")
 
 
+AVISO_IE = ("Existe Inscrição Estadual ativa para este CPF/CNPJ. "
+            "Favor emitir pela Inscrição Estadual.")
+AVISO_IPVA = "Atenção: Existe pendência de IPVA ou de Auto de IPVA."
+AVISO_IMAGEM = "Código da imagem inválido."
+
+
+def _faixa(texto: str) -> str:
+    """A faixa de avisos como o portal a escreve — copiada do HTML real.
+
+    O dublê imita a MARCAÇÃO, e não só o texto, porque é a marcação que o
+    adapter usa para separar recusa de captcha errado. Dublê que responde
+    texto solto passaria mesmo se o adapter estivesse lendo o lugar errado.
+    """
+    return ('<div id="form1:msgs" class="pf-messages">'
+            '<div class="pf-messages-warn">'
+            '<span class="pf-messages-warn-icon"></span><ul><li>'
+            '<span class="pf-messages-warn-summary"></span>'
+            f'<span class="pf-messages-warn-detail">{texto}</span>'
+            '</li></ul></div></div>')
+
+
+class TestTextoDaResposta:
+    def test_css_da_pagina_nao_empurra_a_mensagem_para_fora(self):
+        """O recado do portal tem que caber no começo do texto limpo.
+
+        A tela de erro do MA abre com um bloco <style>; enquanto ele entrava no
+        texto, o `trecho` de 200 caracteres que vai ao Registro era só CSS e o
+        "Ocorreu um erro de sistema" ficava invisível (16/09/2026).
+        """
+        corpo = (
+            "<html><head><style>.bg { background-image: url(fundo.png); "
+            "background-repeat: repeat; } .rich-panel-body{ background: "
+            "transparent; } .coluna{ vertical-align: top; }</style></head>"
+            "<body><span>Ocorreu um erro de sistema.</span></body></html>"
+        ).encode("iso-8859-1")
+        texto = sefaz_ma.texto_da_resposta(
+            sefaz_ma.RespostaPortal(200, "text/html;charset=ISO-8859-1", corpo))
+
+        assert "background-image" not in texto
+        assert texto[:200].startswith("Ocorreu um erro de sistema.")
+
+
 class TestLeituraDoFormulario:
     def test_extrai_os_ids_e_o_captcha(self):
         f = sefaz_ma.ler_formulario(FORM_HTML)
@@ -259,12 +301,20 @@ class TestLacoDoCaptcha:
     @staticmethod
     def _validacao(estado: str):
         if estado == "devedor_utf8":
-            return _resposta("Este CPF/CNPJ é devedor.".encode(),
+            return _resposta(_faixa("Este CPF/CNPJ é devedor.").encode(),
                              "text/xml;charset=UTF-8")
         corpo = {
             "armada": sefaz_ma.RE_ARMADA,
             "captcha": sefaz_ma.RE_NAO_ARMADA,
-            "devedor": "Este CPF/CNPJ é devedor.",
+            # O portal manda o aviso JUNTO do if(false) — os três casos reais
+            # vistos até 16/09/2026, e o motivo de a regra ser a FAIXA e não
+            # a frase.
+            "devedor": _faixa("Este CPF/CNPJ é devedor.") + sefaz_ma.RE_NAO_ARMADA,
+            "exige_ie": _faixa(AVISO_IE) + sefaz_ma.RE_NAO_ARMADA,
+            "ipva": _faixa(AVISO_IPVA) + sefaz_ma.RE_NAO_ARMADA,
+            # Mesma faixa, sentido oposto: o portal está falando da LEITURA.
+            "imagem_invalida": (_faixa(AVISO_IMAGEM)
+                                + sefaz_ma.RE_NAO_ARMADA),
         }[estado]
         return _resposta(corpo.encode("iso-8859-1"), "text/xml")
 
@@ -273,8 +323,17 @@ class TestLacoDoCaptcha:
         if tipo == "pdf":
             return _resposta(b"%PDF-1.4 negativa", "application/pdf")
         if tipo == "devedor":
-            return _resposta("Este CPF/CNPJ é devedor.".encode("iso-8859-1"),
-                             "text/html")
+            return _resposta(_faixa("Este CPF/CNPJ é devedor.")
+                             .encode("iso-8859-1"), "text/html")
+        if tipo == "exige_ie":
+            return _resposta(_faixa(AVISO_IE).encode("iso-8859-1"), "text/html")
+        if tipo == "erro_de_sistema":
+            # A tela de erro do portal NÃO usa a faixa de avisos — é isso que
+            # a separa de uma recusa com motivo.
+            return _resposta(
+                "<html><body><span>Alerta</span> Ocorreu um erro de sistema. "
+                "java.lang.NullPointerException</body></html>"
+                .encode("iso-8859-1"), "text/html")
         return _resposta(b"<html>paginaErro</html>", status=302)
 
     def _portal(self, validacao="armada", emissao="pdf"):
@@ -328,11 +387,90 @@ class TestLacoDoCaptcha:
         assert r.desfecho == Desfecho.POSITIVA
         assert adapter._sessao_armada is True
 
+    def test_recusa_na_validacao_nao_vira_captcha(self, adapter, monkeypatch):
+        """Aviso do portal na VALIDAÇÃO fecha o item na hora, com o motivo.
+
+        É o caso que travou 33 itens em 16/09/2026: código certo, mas o portal
+        responde `if(false)` com o aviso, e o item retentava até acabar a
+        paciência do retry.
+        """
+        chamadas = []
+        monkeypatch.setattr(adapter, "_post", self._portal("exige_ie", "erro"))
+        monkeypatch.setattr(adapter, "_aprender",
+                            lambda *a: chamadas.append(a))
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.PENDENCIA_MANUAL
+        # O motivo do PORTAL, inteiro — quem abre o painel lê o que ele disse.
+        assert r.mensagem_portal == AVISO_IE
+        # Captcha estava certo: vale aprender a imagem em vez de descartá-la.
+        assert len(chamadas) == 1
+        # ...mas o portal recusou com if(false), então a sessão NÃO está armada.
+        assert adapter._sessao_armada is False
+
+    def test_recusa_desconhecida_tambem_fecha_o_item(self, adapter, monkeypatch):
+        """Mensagem que o código nunca viu não pode virar captcha errado.
+
+        O IPVA apareceu depois da Inscrição Estadual, no mesmo lote, e custou
+        mais um item queimando 36 imagens. A regra é a faixa de avisos, não a
+        frase — então a próxima mensagem do portal já cai de pé.
+        """
+        monkeypatch.setattr(adapter, "_post", self._portal("ipva", "erro"))
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert r.mensagem_portal == AVISO_IPVA
+
+    def test_aviso_de_imagem_invalida_pede_outra_imagem(self, adapter,
+                                                       monkeypatch):
+        """"Código da imagem inválido." é erro de LEITURA, não pendência.
+
+        Pendência é a empresa dever ou ter auto de IPVA — coisas que uma
+        pessoa resolve. Imagem mal lida o robô resolve sozinho, pedindo
+        outra: fechar o item aqui cria uma pendência que ninguém tem como
+        tratar, porque não existe pendência. Foram 17 itens assim em
+        16/09/2026, antes de esta separação existir.
+        """
+        adapter.tentativas_captcha = 3
+        monkeypatch.setattr(adapter, "_post",
+                            self._portal("imagem_invalida", "erro"))
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.CAPTCHA, "tem que continuar retentável"
+        # E o item mostra o que o PORTAL disse, não o nosso genérico.
+        assert r.mensagem_portal == AVISO_IMAGEM
+
+    def test_erro_de_sistema_do_portal_continua_retentavel(self, adapter,
+                                                           monkeypatch):
+        """Portal quebrado não é recusa: é para tentar de novo.
+
+        A tela de `NullPointerException` não usa a faixa de avisos, e é essa
+        diferença que impede um portal instável de fechar itens como se
+        tivesse respondido sobre a empresa.
+        """
+        adapter.tentativas_captcha = 2
+        monkeypatch.setattr(adapter, "_post",
+                            self._portal("captcha", "erro_de_sistema"))
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.CAPTCHA
+
+    def test_recusa_na_emissao_vira_pendencia_manual(self, adapter, monkeypatch):
+        """A recusa também pode chegar no POST do botão, e vale o mesmo."""
+        monkeypatch.setattr(adapter, "_post",
+                            self._portal("armada", "exige_ie"))
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.PENDENCIA_MANUAL
+        assert r.mensagem_portal == AVISO_IE
+        assert adapter._sessao_armada is True
+
     def test_portal_que_nunca_arma_vira_captcha(self, adapter, monkeypatch):
         adapter.tentativas_captcha = 3
         monkeypatch.setattr(adapter, "_post", self._portal("captcha", "erro"))
         r = adapter.emitir(self._doc())
         assert r.desfecho == Desfecho.CAPTCHA
+        assert r.evidencia is None
         assert adapter._sessao_armada is False
 
     def test_sessao_reutilizada_que_caiu_rearma_sozinha(self, adapter, monkeypatch):

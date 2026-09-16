@@ -191,6 +191,32 @@ def test_reenfileirar_recupera_quem_ficou_com_a_tela_ilegivel(conn, lote):
     assert linha["desfecho"] is None
 
 
+def test_reenfileirar_recupera_quem_o_portal_recusou_por_imagem(conn, lote):
+    """"Código da imagem inválido." também não é resposta sobre a empresa.
+
+    O portal do MA escreve isso na mesma faixa em que escreve "é devedor" ou
+    "existe pendência de IPVA", e por um build a diferença passou batida: 17
+    itens fecharam como pendência manual em 16/09/2026 por leitura de
+    captcha. Pendência que não existe ninguém tem como tratar — estes voltam.
+    """
+    criar_job(conn, lote)
+    job = fila.reivindicar(conn, "FAKE")
+    tentativa = fila.abrir_tentativa(conn, job, worker=0)
+    fila.fechar_tentativa(conn, tentativa, ResultadoTentativa(
+        Desfecho.PENDENCIA_MANUAL,
+        mensagem_portal="Código da imagem inválido.",
+    ))
+    fila.concluir(conn, job, ResultadoTentativa(Desfecho.PENDENCIA_MANUAL))
+
+    assert fila.reenfileirar_falhados(conn, "FAKE") == 1
+
+    linha = conn.execute(
+        "SELECT status, tentativas FROM job WHERE id = ?", (job.job_id,),
+    ).fetchone()
+    assert linha["status"] == Status.PENDING
+    assert linha["tentativas"] == 0
+
+
 def test_reenfileirar_nao_mexe_em_pendencia_manual_de_verdade(conn, lote):
     """Quem exige atendimento no e-CAC continua encerrado: reenviar só
     gastaria consulta para receber a mesma resposta."""
@@ -199,7 +225,7 @@ def test_reenfileirar_nao_mexe_em_pendencia_manual_de_verdade(conn, lote):
     tentativa = fila.abrir_tentativa(conn, job, worker=0)
     fila.fechar_tentativa(conn, tentativa, ResultadoTentativa(
         Desfecho.PENDENCIA_MANUAL,
-        mensagem_portal="o portal exige emitir pelo CNPJ da matriz",
+        mensagem_portal="Atenção: Existe pendência de IPVA ou de Auto de IPVA.",
     ))
     fila.concluir(conn, job, ResultadoTentativa(Desfecho.PENDENCIA_MANUAL))
 

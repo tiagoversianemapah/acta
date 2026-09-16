@@ -238,10 +238,17 @@ def recuperar_orfaos(conn: sqlite3.Connection) -> int:
     return cursor.rowcount
 
 
-# Como o adapter descreve a tela que não conseguiu ler. Itens encerrados
-# com esta mensagem não são resposta do órgão sobre a empresa: são consulta
-# perdida, e voltam para a fila junto com os que falharam.
+# Como os adapters descrevem uma consulta que NÃO produziu resposta do órgão
+# sobre a empresa. Item encerrado com uma destas mensagens é consulta
+# perdida, e volta para a fila junto com os que falharam.
+#
+#   · "não foi possível ler a tela" — o robô cego não leu o resultado;
+#   · "código da imagem inválido"   — o portal do MA recusou a LEITURA do
+#     captcha. Chegou a fechar 17 itens como pendência manual em 16/09/2026,
+#     e pendência que não existe ninguém tem como tratar.
 MENSAGEM_TELA_ILEGIVEL = "não foi possível ler a tela"
+MENSAGEM_CAPTCHA_RECUSADO = "código da imagem inválido"
+MENSAGENS_SEM_RESPOSTA = (MENSAGEM_TELA_ILEGIVEL, MENSAGEM_CAPTCHA_RECUSADO)
 
 
 def reenfileirar_falhados(
@@ -284,17 +291,19 @@ def reenfileirar_falhados(
     )
     total = cursor.rowcount
 
+    condicoes = " OR ".join(
+        "mensagem_portal LIKE ?" for _ in MENSAGENS_SEM_RESPOSTA)
     cursor = conn.execute(
         f"""
         UPDATE job SET status = ?, desfecho = NULL, tentativas = 0,
                        proxima_execucao_em = ?, atualizado_em = ?
          WHERE status = ? AND desfecho = ?{recorte}
            AND id IN (SELECT job_id FROM tentativa
-                       WHERE mensagem_portal LIKE ?)
+                       WHERE {condicoes})
         """,
         (Status.PENDING, agora, agora, Status.DONE,
          str(Desfecho.PENDENCIA_MANUAL), *filtros_args,
-         f"%{MENSAGEM_TELA_ILEGIVEL}%"),
+         *(f"%{mensagem}%" for mensagem in MENSAGENS_SEM_RESPOSTA)),
     )
     return total + cursor.rowcount
 

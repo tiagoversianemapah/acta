@@ -23,6 +23,12 @@ O caminho, por documento (página nova a cada consulta, por padrão):
         "é devedor"       -> POSITIVA (há débito; o portal não emite PDF)
         nem um nem outro  -> a leitura errou; pede outra imagem e tenta de novo
 
+A própria VALIDAÇÃO também responde por duas recusas do portal, e é preciso
+lê-las: com o código CERTO ela pode voltar "é devedor" ou "Existe Inscrição
+Estadual ativa para este CPF/CNPJ. Favor emitir pela Inscrição Estadual" —
+nos dois casos junto de um `if(false)` igualzinho ao de captcha errado. Quem
+olhar só o `if(true)` conclui "captcha errado" e retenta para sempre.
+
 Detalhe que custou depuração: para um devedor a validação responde `if(false)`
 — igual a captcha errado —, e o "é devedor" só aparece de fato no POST do
 botão. Por isso o botão decide, não a validação. E o charset importa: a
@@ -110,9 +116,30 @@ RE_CHARSET = re.compile(r"charset\s*=\s*['\"]?([^;\s'\"]+)", re.IGNORECASE)
 # Quando há débito, o portal não emite PDF: volta ao formulário com a faixa
 # "Este CPF/CNPJ é devedor." É a POSITIVA da SEFAZ-MA (conferido em 14/09/2026).
 RE_DEVEDOR = re.compile(r"cpf/cnpj e devedor|e devedor")
+# A faixa de avisos do JSF — onde o portal escreve o motivo de não emitir.
+# Vale por REGRA, não por mensagem conhecida: já apareceram "é devedor",
+# "Existe Inscrição Estadual ativa..." e "Existe pendência de IPVA ou de Auto
+# de IPVA", todas com `if(false)` igual ao de captcha errado. Cada uma custou
+# um lote travado até alguém ler o HTML. Reconhecer a FAIXA resolve também a
+# próxima, que ainda não vimos.
+RE_AVISO_PORTAL = re.compile(
+    r'<span class="pf-messages-[a-z]+-detail">(.*?)</span>',
+    re.IGNORECASE | re.DOTALL)
+
+# Nem todo aviso é recusa de cadastro: "Código da imagem inválido." é o
+# portal dizendo que a LEITURA errou, e a resposta certa é pedir outra
+# imagem. Fechar o item nesse caso é pior que o bug que a faixa veio
+# resolver — ele vira uma pendência que ninguém tem como tratar, porque não
+# há pendência nenhuma. Foram 17 itens assim em 16/09/2026.
+RE_AVISO_DE_CAPTCHA = re.compile(r"(codigo|imagem)[^.]{0,30}invalid")
 
 RE_TAG = re.compile(r"<[^>]+>")
-RE_SCRIPT = re.compile(r"<script\b.*?</script>", re.IGNORECASE | re.DOTALL)
+# `<style>` sai junto do `<script>`: as telas do portal abrem com meia dúzia
+# de regras CSS, e era isso que ocupava o `trecho` de 200 caracteres do log —
+# o "Ocorreu um erro de sistema" ficava logo DEPOIS do corte, invisível para
+# quem lia o Registro tentando entender a falha (16/09/2026).
+RE_SCRIPT = re.compile(r"<(script|style)\b.*?</\1>",
+                       re.IGNORECASE | re.DOTALL)
 
 # --- leitura do PDF ---------------------------------------------------------
 # "não constam débitos relativos aos tributos estaduais" é a linha operativa
@@ -165,6 +192,25 @@ def texto_da_resposta(resposta: RespostaPortal) -> str:
     sem_script = RE_SCRIPT.sub(" ", bruto)
     sem_tags = RE_TAG.sub(" ", sem_script)
     return " ".join(html.unescape(sem_tags).split())
+
+
+def aviso_do_portal(corpo: str) -> str:
+    """O que o portal escreveu na faixa de avisos, limpo. Vazio se não houve.
+
+    É o motivo específico — "Existe pendência de IPVA ou de Auto de IPVA.",
+    por exemplo — e é ele que vai para o item, sem paráfrase nossa: quem abre
+    o painel precisa ler o que o portal disse, não o nosso resumo dele.
+
+    A tela de erro de sistema do portal (o `NullPointerException`) NÃO usa
+    esta faixa, e é por isso que ela serve para separar "o portal recusou,
+    e disse por quê" de "o portal quebrou".
+    """
+    partes = []
+    for bruto in RE_AVISO_PORTAL.findall(corpo):
+        texto = " ".join(html.unescape(RE_TAG.sub(" ", bruto)).split())
+        if texto:
+            partes.append(texto)
+    return " ".join(partes)
 
 
 def ler_formulario(corpo: bytes) -> Formulario | None:
@@ -310,6 +356,7 @@ class AdapterSEFAZMA:
     _opener: object | None = field(default=None, repr=False)
     _banco: BancoCaptcha | None = field(default=None, repr=False)
     _viewstate: str = field(default=VIEWSTATE_PADRAO, repr=False)
+    _campo_captcha: str = field(default=CAMPO_CAPTCHA_PADRAO, repr=False)
     _ultimo_codigo: str = field(default="", repr=False)
     _sessao_armada: bool = field(default=False, repr=False)
 
@@ -320,6 +367,7 @@ class AdapterSEFAZMA:
             urllib.request.HTTPSHandler(context=_contexto_ssl()),
         )
         self._sessao_armada = False
+        self._campo_captcha = CAMPO_CAPTCHA_PADRAO
 
     def _garantir_banco(self) -> None:
         """Carrega o banco de captcha uma vez; banco vazio = não treinado."""
@@ -342,6 +390,7 @@ class AdapterSEFAZMA:
     def encerrar(self) -> None:
         self._opener = None
         self._sessao_armada = False
+        self._campo_captcha = CAMPO_CAPTCHA_PADRAO
 
     def emitir(self, doc: Documento) -> ResultadoTentativa:
         # Segunda porta contra CPF: a ingestão já recusa CPF para este órgão,
@@ -427,6 +476,7 @@ class AdapterSEFAZMA:
             self._sessao_armada = False
 
         assert self._banco is not None
+        ultimo_aviso = ""
         for tentativa in range(self.tentativas_captcha):
             formulario = self._nova_pagina(tentativa)
             if formulario is None:
@@ -442,9 +492,28 @@ class AdapterSEFAZMA:
             # na árvore do JSF e o portal responde 500. O captcha sobrevive à
             # troca (é da sessão, não da tela).
             self._trocar_para_cnpj(formulario)
+            estado, aviso = self._validar_captcha(formulario, doc, palpite)
+            ultimo_aviso = aviso or ultimo_aviso
             self._viewstate = formulario.viewstate
+            self._campo_captcha = formulario.campo_captcha
             self._ultimo_codigo = palpite
-            estado = self._validar_captcha(formulario, doc, palpite)
+
+            if estado == "recusa":
+                # Captcha certo; o portal é que não emite para esta empresa, e
+                # disse o motivo. Insistir não muda nada: é trabalho para uma
+                # pessoa, com o recado do portal em mãos — por isso ele vai
+                # inteiro para o item, em vez de virar "recusado pelo portal".
+                #
+                # A sessão NÃO fica armada: esta resposta veio com `if(false)`,
+                # ou seja, o portal recusou antes de liberar o botão. Dizer o
+                # contrário faria o próximo documento — no modo de sessão
+                # reaproveitada — gastar um POST que só volta erro de sistema.
+                self._aprender(imagem, palpite)
+                self._sessao_armada = False
+                log.info("portal_recusou", extra={"documento": doc.documento,
+                                                  "aviso": aviso[:200]})
+                return ResultadoTentativa(Desfecho.PENDENCIA_MANUAL,
+                                          mensagem_portal=aviso)
 
             if estado == "devedor":
                 # O "é devedor" já veio na validação: captcha certo, há débito.
@@ -473,8 +542,12 @@ class AdapterSEFAZMA:
             self._sessao_armada = False
 
         # Nenhuma imagem levou a uma resposta conclusiva. CAPTCHA é retentável e
-        # é o desfecho que o ritmo/disjuntor entendem como "recuar".
-        return ResultadoTentativa(Desfecho.CAPTCHA, mensagem_portal=ERRO_CAPTCHA)
+        # é o desfecho que o ritmo/disjuntor entendem como "recuar". Quando o
+        # portal chegou a dizer algo — "Código da imagem inválido." —, é a
+        # frase DELE que vai para o item: quem abre o painel precisa saber se
+        # o robô não leu a imagem ou se nem chegou a receber resposta.
+        return ResultadoTentativa(Desfecho.CAPTCHA,
+                                  mensagem_portal=ultimo_aviso or ERRO_CAPTCHA)
 
     def _nova_pagina(self, tentativa: int) -> Formulario | None:
         inicial = self._get(self.url_consulta)
@@ -487,9 +560,9 @@ class AdapterSEFAZMA:
     def _tentar_emitir(self, doc: Documento) -> ResultadoTentativa | None:
         """POSTa o botão e classifica a resposta.
 
-        NEGATIVA (PDF) e POSITIVA (devedor) são conclusivas. None significa
-        que não veio resposta útil — a sessão caiu —, e quem chamou decide
-        rearmar.
+        NEGATIVA (PDF), POSITIVA (devedor) e a recusa com motivo são
+        conclusivas. None significa que não veio resposta útil — sessão caída
+        ou erro de sistema do portal —, e quem chamou decide rearmar.
         """
         resposta = self._emitir_pdf(doc)
         if _e_pdf(resposta):
@@ -498,6 +571,13 @@ class AdapterSEFAZMA:
         if RE_DEVEDOR.search(_sem_acento(texto)):
             return ResultadoTentativa(Desfecho.POSITIVA,
                                       mensagem_portal="Este CPF/CNPJ é devedor.")
+        # Mesma regra da validação: aviso na faixa do portal é recusa com
+        # motivo, e o motivo vai inteiro para o item — menos quando o motivo
+        # é a própria leitura do captcha, que pede outra imagem.
+        aviso = aviso_do_portal(_decodificar_resposta(resposta))
+        if aviso and not RE_AVISO_DE_CAPTCHA.search(_sem_acento(aviso)):
+            return ResultadoTentativa(Desfecho.PENDENCIA_MANUAL,
+                                      mensagem_portal=aviso)
         log.warning("emissao_sem_pdf",
                     extra={"documento": doc.documento, "status": resposta.status,
                            "trecho": texto[:200]})
@@ -512,7 +592,9 @@ class AdapterSEFAZMA:
         resposta = self._abrir(
             urllib.request.Request(url, headers=self._headers()))
         try:
-            return Image.open(BytesIO(resposta.corpo))
+            imagem = Image.open(BytesIO(resposta.corpo))
+            imagem.load()
+            return imagem
         except Exception as erro:
             log.warning("captcha_ilegivel", extra={"erro": str(erro)[:200]})
             return None
@@ -538,15 +620,22 @@ class AdapterSEFAZMA:
                          codigo: str) -> str:
         """Confere o palpite no portal (AJAX do botão), sem gastar emissão.
 
-        Devolve um de três estados:
-          "devedor" — o portal já respondeu "Este CPF/CNPJ é devedor": o
-                      captcha estava CERTO, e o documento tem débito (POSITIVA).
+        Devolve `(estado, aviso)`, com o estado sendo um de quatro:
+          "devedor" — o portal respondeu "Este CPF/CNPJ é devedor": captcha
+                      CERTO, e há débito (POSITIVA).
+          "recusa"  — veio um aviso na faixa do portal: captcha CERTO também,
+                      e ele não vai emitir por algum motivo de cadastro. O
+                      texto dele volta em `aviso`.
           "armada"  — `if(true){...btn.click()}`: captcha certo, pode emitir.
-          "captcha" — `if(false)` e nada mais: a leitura errou; tente outra.
+          "captcha" — `if(false)` e faixa VAZIA: aí sim a leitura errou.
 
-        Reconhecer o "devedor" AQUI é o que impede confundir débito com captcha
-        errado: para um devedor o portal responde `if(false)` mesmo com o
-        código certo, e olhar só o `if(true)` faria o item retentar sem fim.
+        A regra que importa é a diferença entre as duas últimas. Uma recusa
+        do portal responde `if(false)` igual a um captcha errado, e olhar só
+        o `if(true)` faz o item retentar até acabar a paciência do retry:
+        aconteceu com 33 itens em 16/09/2026 ("Existe Inscrição Estadual
+        ativa...") e com mais um no mesmo lote ("Existe pendência de IPVA ou
+        de Auto de IPVA"). Reconhecer a FAIXA, e não cada frase, é o que faz
+        a próxima mensagem — que ainda não vimos — cair de pé.
         """
         dados = {
             "AJAXREQUEST": formulario.container,
@@ -559,21 +648,27 @@ class AdapterSEFAZMA:
         }
         resposta = self._post(dados)
         corpo = _decodificar_resposta(resposta)
-        # O "é devedor" é texto visível e pode vir com entidade (&eacute;), por
-        # isso comparamos sobre o texto limpo (sem tags, sem entidade, sem
-        # acento). Já o `if(true)` é JavaScript e vive no corpo cru.
-        if RE_DEVEDOR.search(_sem_acento(texto_da_resposta(resposta))):
-            return "devedor"
+        # O aviso é texto visível e pode vir com entidade (&eacute;), por isso
+        # é lido e limpo por `aviso_do_portal`. Já o `if(true)` é JavaScript e
+        # vive no corpo cru.
+        aviso = aviso_do_portal(corpo)
+        if aviso:
+            limpo = _sem_acento(aviso)
+            if RE_DEVEDOR.search(limpo):
+                return "devedor", aviso
+            if RE_AVISO_DE_CAPTCHA.search(limpo):
+                return "captcha", aviso
+            return "recusa", aviso
         if RE_ARMADA in corpo:
-            return "armada"
-        return "captcha"
+            return "armada", ""
+        return "captcha", ""
 
     def _emitir_pdf(self, doc: Documento) -> RespostaPortal:
         dados = {
             "form1": "form1",
             "form1:tipoEmissao": "2",
             CAMPO_CNPJ_PADRAO: doc.documento,
-            CAMPO_CAPTCHA_PADRAO: self._ultimo_codigo.upper(),
+            self._campo_captcha: self._ultimo_codigo.upper(),
             "javax.faces.ViewState": self._viewstate,
             "form1:btn": "Emitir Certidão",
         }
