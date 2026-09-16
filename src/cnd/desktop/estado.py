@@ -73,7 +73,7 @@ def ler_panorama(cfg: Config, lote: int | None = None) -> Panorama:
     """Uma foto do estado atual. Nunca levanta exceção: banco ausente ou
     ocupado devolve panorama vazio, e a tela mostra 'sem dados'.
 
-    `lote` escolhe a planilha; sem ele vale a que está sendo processada."""
+    `lote` escolhe a planilha; sem ele vale a que ainda tem fila real."""
     try:
         conn = conectar_leitura(cfg.banco)
     except Exception:

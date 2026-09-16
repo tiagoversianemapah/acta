@@ -19,8 +19,9 @@ import time
 import urllib.parse
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import (
+    FileResponse,
     HTMLResponse,
     JSONResponse,
     RedirectResponse,
@@ -770,6 +771,63 @@ def _certidao_do_item(item: dict) -> dict | None:
     }
 
 
+def _preparar_tentativas_para_tela(tentativas: list[dict],
+                                   local: bool = True) -> list[dict]:
+    """Liga o "abrir" da evidência só quando o arquivo está NESTA máquina.
+
+    O id da tentativa é de banco, e cada máquina tem o seu: no painel de uma
+    coordenadora, o mesmo id apontaria para outro arquivo daqui. Link errado
+    é pior que link nenhum, então máquina remota — e arquivo que já não
+    existe — continua mostrando só o caminho.
+    """
+    for tentativa in tentativas:
+        evidencia = str(tentativa.get("evidencia") or "")
+        if not evidencia or not local:
+            continue
+        if _caminho_de_evidencia(evidencia) is None:
+            continue
+        tentativa["evidencia_url"] = (
+            f"/evidencias/tentativa/{tentativa['id']}"
+        )
+        tentativa["evidencia_imagem"] = evidencia.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".webp")
+        )
+    return tentativas
+
+
+def _caminho_de_evidencia(valor: str) -> Path | None:
+    """O arquivo real de uma evidência, ou None se não dá para servir.
+
+    Servir caminho vindo do banco é servir o que o adapter escreveu; a
+    checagem de raiz é o que impede que um valor estranho vire leitura de
+    qualquer arquivo do disco.
+    """
+    alvo = Path(valor)
+    if not alvo.is_absolute():
+        alvo = RAIZ_PROJETO / alvo
+    try:
+        resolvido = alvo.resolve(strict=True)
+        raiz = cfg.pasta_evidencias.resolve()
+    except OSError:
+        return None
+    if not resolvido.is_relative_to(raiz):
+        return None
+    if not resolvido.is_file():
+        return None
+    return resolvido
+
+
+def _evidencia_local_da_tentativa(tentativa_id: int) -> Path | None:
+    with contextlib.closing(ler()) as conn:
+        linha = conn.execute(
+            "SELECT evidencia FROM tentativa WHERE id = ?",
+            (tentativa_id,),
+        ).fetchone()
+    if linha is None or not linha["evidencia"]:
+        return None
+    return _caminho_de_evidencia(linha["evidencia"])
+
+
 def _buscar_item(
     job_id: int, maquina_id: str | None
 ) -> tuple[dict | None, list[dict], dict | None, str]:
@@ -791,7 +849,12 @@ def _buscar_item(
                 tentativas = [
                     dict(linha) for linha in consultas.tentativas_do_job(conn, job_id)
                 ]
-                return item, tentativas, _certidao_do_item(item), rotulo
+                return (
+                    item,
+                    _preparar_tentativas_para_tela(tentativas),
+                    _certidao_do_item(item),
+                    rotulo,
+                )
 
         else:
             linhas = remoto.listar_itens(
@@ -804,7 +867,12 @@ def _buscar_item(
             item["maquina"] = rotulo
             item["documento_fmt"] = formatar(item.get("documento") or "")
             tentativas = remoto.tentativas_do_job(maquina_cfg, cfg.rede.senha, job_id)
-            return item, tentativas, _certidao_do_item(item), rotulo
+            return (
+                item,
+                _preparar_tentativas_para_tela(tentativas, local=False),
+                _certidao_do_item(item),
+                rotulo,
+            )
 
     return None, [], None, ""
 
@@ -864,6 +932,14 @@ def detalhe_job(
             ) if maquina or arquivo else "/jobs"
         ),
     })
+
+
+@app.get("/evidencias/tentativa/{tentativa_id}")
+def abrir_evidencia(tentativa_id: int):
+    caminho = _evidencia_local_da_tentativa(tentativa_id)
+    if caminho is None:
+        raise HTTPException(status_code=404, detail="Evidência não encontrada.")
+    return FileResponse(caminho)
 
 
 @app.get("/ping")

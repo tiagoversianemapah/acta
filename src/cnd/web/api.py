@@ -41,6 +41,18 @@ def _detalhes_do_breaker(cfg: Config, codigo: str, estado: breaker.EstadoBreaker
     }
 
 
+def _breaker_para_exibir(
+    cfg: Config, codigo: str, estado: breaker.EstadoBreaker
+) -> breaker.EstadoBreaker:
+    parametros = (
+        cfg.orgaos[codigo].breaker if codigo in cfg.orgaos
+        else breaker.ParametrosBreaker()
+    )
+    if breaker.ativo_para(codigo, parametros):
+        return estado
+    return breaker.EstadoBreaker(breaker.FECHADO, None, 0, None)
+
+
 def _robo_ativo_por_sinal(idade: float | None, limite_s: int) -> bool:
     ativo = idade is not None and idade <= limite_s
     if ativo and maquina.processo_robo_rodando() is False:
@@ -78,7 +90,7 @@ def montar(obter_config: Callable[[], Config],
         """Panorama da máquina: robô, lote atual e situação de cada órgão.
 
         `lote` escolhe de qual planilha são os números. Sem ele, vale a que
-        está sendo processada — ver consultas.lote_em_foco.
+        ainda tem fila real — ver consultas.lote_em_foco.
         """
         cfg = obter_config()
         adapter_cego = next(
@@ -97,7 +109,9 @@ def montar(obter_config: Callable[[], Config],
                 # `consultar_leitura`: esta rota abre o banco só para
                 # ler, e `consultar` cria a linha do órgão quando ela
                 # não existe. Ver breaker.consultar_leitura.
-                estado_breaker = breaker.consultar_leitura(conn, codigo)
+                estado_breaker = _breaker_para_exibir(
+                    cfg, codigo, breaker.consultar_leitura(conn, codigo)
+                )
                 estado_recuperacao = recuperacao.estado(conn, codigo)
                 # Estacionada, cancelada ou na frente da fila. Vai por órgão
                 # porque é assim que se controla: a mesma planilha tem RFB e

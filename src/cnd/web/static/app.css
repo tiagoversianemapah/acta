@@ -442,6 +442,7 @@
     border-radius:999px;background:#fff;color:#5F3D05;font-weight:700;
   }
   .bloqueios .tempo-pill b{display:inline;margin:0 .18rem 0 0;color:#7A5008}
+  .bloqueio-acoes{margin-top:.35rem}
   .texto-alerta{color:var(--ambar);font-weight:700}
 
   .grade-operacional{
@@ -523,6 +524,11 @@
   }
   .num{text-align:right;font-variant-numeric:tabular-nums}
   .retorno{max-width:520px;color:var(--texto-2);font-size:12.5px;word-break:break-word}
+  .evidencia-celula{min-width:116px}
+  .mini-evidencia{
+    display:block;width:96px;height:54px;object-fit:contain;background:#fff;
+    border:1px solid var(--linha);border-radius:6px;
+  }
   table.ficha td:first-child{width:38%;color:var(--texto-2);font-size:12.5px}
   table.ficha td:last-child{font-weight:700}
 

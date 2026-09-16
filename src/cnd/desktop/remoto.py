@@ -324,6 +324,44 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         lotes = []
         em_execucao = None
         situacao_da_fila = {}
+
+    def _orgao_para_dict(r) -> dict:
+        parametros = (
+            cfg.orgaos[r.orgao].breaker if r.orgao in cfg.orgaos
+            else breaker.ParametrosBreaker()
+        )
+        estado_breaker = breaker.EstadoBreaker(
+            r.breaker_estado, r.breaker_ate, r.breaker_aberturas,
+            r.breaker_motivo,
+        )
+        if not breaker.ativo_para(r.orgao, parametros):
+            estado_breaker = breaker.EstadoBreaker(breaker.FECHADO, None, 0, None)
+        pausa_s = breaker.cooldown_atual_s(estado_breaker, parametros)
+        return {
+            "orgao": r.orgao,
+            # Estacionada, cancelada ou priorizada. Precisa vir por aqui
+            # também, e não só pelo /api/estado: quando o console É a
+            # máquina do robô, a tela lê deste caminho — e sem isto os
+            # botões da fila apareciam todos como se nada estivesse
+            # estacionado.
+            "situacao_fila": situacao_da_fila.get(r.orgao, controle.ATIVA),
+            "rotulo": (cfg.orgaos[r.orgao].rotulo if r.orgao in cfg.orgaos
+                       else nome_do_orgao(r.orgao)),
+            "total": r.total, "concluidos": r.concluidos,
+            "pendentes": r.pendentes, "em_execucao": r.em_execucao,
+            "falhados": r.falhados, "por_desfecho": r.por_desfecho,
+            "percentual": round(r.percentual, 1), "intervalo_s": r.intervalo_s,
+            "por_hora": r.ritmo_por_hora,
+            "eta_horas": eta_horas(r),
+            "disjuntor": estado_breaker.estado,
+            "disjuntor_motivo": estado_breaker.motivo,
+            "disjuntor_ate": estado_breaker.aberto_ate,
+            "disjuntor_aberturas": estado_breaker.aberturas,
+            "disjuntor_pausa_s": pausa_s,
+            "disjuntor_pausa": rotulo_duracao(pausa_s),
+            "ultima_tentativa": r.ultima_tentativa,
+        }
+
     # Sem AnyDesk no cartão local: é o computador em que a pessoa já está,
     # e oferecer acesso remoto a si mesmo só confundiria.
     esta = Maquina(cfg.rede.nome or platform.node(), "")
@@ -349,42 +387,7 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         "certidoes": maquina.certidoes(cfg.pasta_certidoes),
         "ultimo_sinal_ha_s": (round(panorama.robo_idade_s)
                               if panorama.robo_idade_s is not None else None),
-        "orgaos": [{
-            "orgao": r.orgao,
-            # Estacionada, cancelada ou priorizada. Precisa vir por aqui
-            # também, e não só pelo /api/estado: quando o console É a
-            # máquina do robô, a tela lê deste caminho — e sem isto os
-            # botões da fila apareciam todos como se nada estivesse
-            # estacionado.
-            "situacao_fila": situacao_da_fila.get(r.orgao, controle.ATIVA),
-            "rotulo": (cfg.orgaos[r.orgao].rotulo if r.orgao in cfg.orgaos
-                       else nome_do_orgao(r.orgao)),
-            "total": r.total, "concluidos": r.concluidos,
-            "pendentes": r.pendentes, "em_execucao": r.em_execucao,
-            "falhados": r.falhados, "por_desfecho": r.por_desfecho,
-            "percentual": round(r.percentual, 1), "intervalo_s": r.intervalo_s,
-            "por_hora": r.ritmo_por_hora,
-            "eta_horas": eta_horas(r),
-            "disjuntor": r.breaker_estado, "disjuntor_motivo": r.breaker_motivo,
-            "disjuntor_ate": r.breaker_ate,
-            "disjuntor_aberturas": r.breaker_aberturas,
-            "disjuntor_pausa_s": (
-                pausa_s := breaker.cooldown_atual_s(
-                    breaker.EstadoBreaker(
-                        r.breaker_estado,
-                        r.breaker_ate,
-                        r.breaker_aberturas,
-                        r.breaker_motivo,
-                    ),
-                    (
-                        cfg.orgaos[r.orgao].breaker if r.orgao in cfg.orgaos
-                        else breaker.ParametrosBreaker()
-                    ),
-                )
-            ),
-            "disjuntor_pausa": rotulo_duracao(pausa_s),
-            "ultima_tentativa": r.ultima_tentativa,
-        } for r in panorama.resumos],
+        "orgaos": [_orgao_para_dict(r) for r in panorama.resumos],
     })
 
 

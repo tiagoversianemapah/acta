@@ -115,7 +115,21 @@
             {% endif %}
           </td>
           <td class="retorno">{{ t.mensagem_portal or 'sem mensagem' }}</td>
-          <td class="mono muted">{{ t.evidencia or '-' }}</td>
+          <td class="evidencia-celula">
+            {% if t.evidencia_url %}
+              {% if t.evidencia_imagem %}
+                <a href="{{ t.evidencia_url }}" target="_blank" rel="noopener"
+                   title="{{ t.evidencia }}">
+                  <img class="mini-evidencia" src="{{ t.evidencia_url }}"
+                       alt="Evidencia da tentativa {{ t.numero }}">
+                </a>
+              {% else %}
+                <a href="{{ t.evidencia_url }}" target="_blank" rel="noopener">Abrir</a>
+              {% endif %}
+            {% else %}
+              <span class="mono muted">{{ t.evidencia or '-' }}</span>
+            {% endif %}
+          </td>
         </tr>
       {% else %}
         <tr><td colspan="6"><div class="vazio">Ainda não foi processado.</div></td></tr>

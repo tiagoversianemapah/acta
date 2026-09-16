@@ -354,9 +354,14 @@
                 <span class="tempo-pill"><b>Faltam</b> <span data-countdown="{{ b.disjuntor_ate }}"></span></span>
               </span>
             {% endif %}
-            {# Sem botão aqui: "Retomar agora", na barra do topo, faz o mesmo
-               e está sempre no lugar. Dois botões para a mesma ação obrigam
-               a decidir qual apertar quando não há decisão nenhuma. #}
+            {% if selecionada_idx is not none %}
+            <form class="bloqueio-acoes" method="post"
+                  action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ b.orgao }}/retomar">
+              <button class="botao mini" title="Fecha esta pausa automática e continua a fila">
+                {{ icone_acao('retomar') }}<span>Continuar</span>
+              </button>
+            </form>
+            {% endif %}
           </div>
         {% endfor %}
       </div>
@@ -463,8 +468,18 @@
                     <small class="linha-menor">retoma às <span data-retoma-hora="{{ r.disjuntor_ate }}"></span></small>
                   {% endif %}
                 {% endif %}
-                {% if lote_id and selecionada.local %}
+                {% if r.disjuntor == 'ABERTO' or (lote_id and selecionada.local) %}
                 <div class="acoes-fila">
+                  {% if r.disjuntor == 'ABERTO' and selecionada_idx is not none %}
+                    <form method="post"
+                          action="/acoes/maquina/{{ selecionada_idx }}/breaker/{{ r.orgao }}/retomar">
+                      <button class="botao mini"
+                              title="Fecha esta pausa automática e continua a fila">
+                        Continuar
+                      </button>
+                    </form>
+                  {% endif %}
+                  {% if lote_id and selecionada.local %}
                   {% if r.situacao_fila == 'ATIVA' %}
                     <button class="botao mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
                             data-acao="estacionar" data-label="Estacionar">Estacionar</button>
@@ -481,6 +496,7 @@
                     <button class="botao mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
                             data-acao="retomar" data-label="Retomar">Retomar</button>
                     {% endif %}
+                  {% endif %}
                   {% endif %}
                 </div>
                 {% endif %}

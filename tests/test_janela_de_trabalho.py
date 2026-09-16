@@ -66,6 +66,21 @@ def _encher_a_fila(conn) -> None:
     criar_job(conn, 1, documento="11222333000181")
 
 
+def test_painel_mostra_continuar_quando_orgao_esta_pausado(painel):
+    from cnd.core import breaker
+
+    cliente, conn = painel
+    conn.execute("INSERT INTO lote (id, descricao) VALUES (1, 'teste')")
+    criar_job(conn, 1, documento="11222333000181", orgao="RFB_PJ")
+    breaker.abrir(conn, "RFB_PJ", "teste", breaker.ParametrosBreaker())
+    conn.commit()
+
+    pagina = cliente.get("/").text
+
+    assert "Continuar" in pagina
+    assert "/acoes/maquina/0/breaker/RFB_PJ/retomar" in pagina
+
+
 class TestPing:
     """Devolve 503 só quando há trabalho parado.
 
