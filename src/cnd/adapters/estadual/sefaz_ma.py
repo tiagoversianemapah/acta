@@ -517,22 +517,38 @@ class AdapterSEFAZMA:
 
             if estado == "devedor":
                 # O "é devedor" já veio na validação: captcha certo, há débito.
+                #
+                # E a sessão NÃO fica armada: esta resposta vem com `if(false)`
+                # como qualquer recusa. Conferido no portal em 16/09/2026 —
+                # emitir logo depois, para este documento ou para outro, só
+                # devolve o erro de sistema. Enquanto isto dizia o contrário, o
+                # documento seguinte (no modo de sessão reaproveitada) gastava
+                # um POST para descobrir isso sozinho.
                 self._aprender(imagem, palpite)
-                self._sessao_armada = True
+                self._sessao_armada = False
                 log.info("devedor", extra={"documento": doc.documento})
                 return ResultadoTentativa(
                     Desfecho.POSITIVA,
                     mensagem_portal="Este CPF/CNPJ é devedor.")
 
-            # Aqui está o pulo do gato: mesmo quando a validação diz `if(false)`
-            # (que também é a resposta de um DEVEDOR, não só de captcha errado),
-            # tentamos EMITIR e deixamos a resposta do botão decidir — PDF é
-            # NEGATIVA, "é devedor" é POSITIVA. Só se o botão não devolver nada
-            # útil é que a leitura de fato errou, e aí tentamos outra imagem.
+            if aviso:
+                # O portal já disse que a leitura não serve ("Código da imagem
+                # inválido."). Tentar emitir com ela só rende o erro de sistema
+                # dele — medido —, então vale mais pedir outra imagem na hora.
+                self._sessao_armada = False
+                continue
+
+            # Aqui está o pulo do gato: quando a validação diz `if(false)` e
+            # NÃO diz por quê, tentamos EMITIR e deixamos a resposta do botão
+            # decidir — PDF é NEGATIVA, "é devedor" é POSITIVA. Só se o botão
+            # não devolver nada útil é que a leitura de fato errou, e aí
+            # tentamos outra imagem.
             resultado = self._tentar_emitir(doc)
             if resultado is not None:
                 self._aprender(imagem, palpite)
-                self._sessao_armada = True
+                # Armada é o que o portal disse, não o que deu certo: só o
+                # `if(true)` libera as emissões seguintes sem novo captcha.
+                self._sessao_armada = estado == "armada"
                 log.info("emitido",
                          extra={"tentativas": tentativa + 1,
                                 "desfecho": str(resultado.desfecho),

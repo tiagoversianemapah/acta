@@ -363,7 +363,10 @@ class TestLacoDoCaptcha:
         r = adapter.emitir(self._doc())
         assert r.desfecho == Desfecho.POSITIVA
         assert r.caminho_pdf is None
-        assert adapter._sessao_armada is True
+        # Não arma: a resposta de devedor vem com if(false) como qualquer
+        # recusa, e emitir logo depois só devolve erro de sistema — conferido
+        # no portal em 16/09/2026.
+        assert adapter._sessao_armada is False
 
     def test_devedor_utf8_na_validacao_vira_positiva(self, adapter, monkeypatch):
         monkeypatch.setattr(adapter, "_post", self._portal("devedor_utf8",
@@ -385,7 +388,9 @@ class TestLacoDoCaptcha:
         monkeypatch.setattr(adapter, "_post", self._portal("captcha", "devedor"))
         r = adapter.emitir(self._doc())
         assert r.desfecho == Desfecho.POSITIVA
-        assert adapter._sessao_armada is True
+        # A emissão deu certo, mas o portal nunca disse if(true): sem isso a
+        # próxima emissão precisa de captcha novo.
+        assert adapter._sessao_armada is False
 
     def test_recusa_na_validacao_nao_vira_captcha(self, adapter, monkeypatch):
         """Aviso do portal na VALIDAÇÃO fecha o item na hora, com o motivo.
@@ -439,6 +444,30 @@ class TestLacoDoCaptcha:
         assert r.desfecho == Desfecho.CAPTCHA, "tem que continuar retentável"
         # E o item mostra o que o PORTAL disse, não o nosso genérico.
         assert r.mensagem_portal == AVISO_IMAGEM
+
+    def test_imagem_invalida_nao_gasta_o_post_do_botao(self, adapter,
+                                                       monkeypatch):
+        """Quando o portal diz que a leitura não serve, pede-se outra imagem.
+
+        O "pulo do gato" — emitir mesmo com if(false) — existe para quando o
+        portal não diz POR QUE recusou. Dizendo, insistir só rende o erro de
+        sistema dele, medido em 16/09/2026: é um POST por imagem, doze por
+        documento, para descobrir o que ele já tinha falado.
+        """
+        adapter.tentativas_captcha = 3
+        emissoes = []
+        portal = self._portal("imagem_invalida", "erro")
+
+        def contando(dados, content_type=None):
+            if "form1:btn" in dados:
+                emissoes.append(dados)
+            return portal(dados, content_type)
+
+        monkeypatch.setattr(adapter, "_post", contando)
+        r = adapter.emitir(self._doc())
+
+        assert r.desfecho == Desfecho.CAPTCHA
+        assert emissoes == [], "não devia ter tentado emitir"
 
     def test_erro_de_sistema_do_portal_continua_retentavel(self, adapter,
                                                            monkeypatch):
