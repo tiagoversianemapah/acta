@@ -128,6 +128,84 @@ def test_pdf_extraido_do_dom_fecha_modal_para_reaproveitar_formulario(
     assert fechados == [pagina]
 
 
+class TestPrintsDaFalha:
+    """Quantas fotos de tela o robo cego pode deixar por documento.
+
+    Uma. O print e a unica forma de explicar uma falha num robo que enxerga
+    por imagem, mas so a ultima tentativa interessa - e sao imagens de tela
+    cheia, que num lote de mil itens viram pasta cheia para sempre.
+    """
+
+    def _adapter(self, tmp_path):
+        cfg = SimpleNamespace(
+            pasta_certidoes=tmp_path / "certidoes",
+            pasta_evidencias=tmp_path / "evidencias",
+        )
+        return sefaz_es.AdapterSEFAZES(orgao="SEFAZ_ES", cfg=cfg)
+
+    @staticmethod
+    def _doc():
+        return Documento(1, CNPJ, "CNPJ", "EMPRESA TESTE", lote_id=9)
+
+    def _pasta(self, adapter, doc):
+        return adapter.cfg.pasta_evidencias / "SEFAZ_ES" / doc.documento
+
+    def test_print_novo_apaga_o_anterior(self, tmp_path, monkeypatch):
+        from PIL import Image
+
+        adapter = self._adapter(tmp_path)
+        doc = self._doc()
+        monkeypatch.setattr(sefaz_es.tela, "capturar",
+                            lambda: Image.new("RGB", (4, 4), "white"))
+
+        primeiro = adapter._print(doc, "sem-pdf")
+        segundo = adapter._print(doc, "erro")
+
+        assert primeiro is not None and segundo is not None
+        assert not primeiro.exists(), "a foto velha tinha de ter saido"
+        assert segundo.exists()
+        assert len(list(self._pasta(adapter, doc).glob("*.png"))) == 1
+
+    def test_limpeza_nao_leva_o_pdf_da_positiva(self, tmp_path, monkeypatch):
+        """A POSITIVA guarda o PDF nesta mesma pasta, e ele e o entregavel."""
+        from PIL import Image
+
+        adapter = self._adapter(tmp_path)
+        doc = self._doc()
+        monkeypatch.setattr(sefaz_es.tela, "capturar",
+                            lambda: Image.new("RGB", (4, 4), "white"))
+        adapter._print(doc, "sem-pdf")
+        pdf = self._pasta(adapter, doc) / "certidao.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        adapter._apagar_prints(doc)
+
+        assert pdf.exists()
+        assert list(self._pasta(adapter, doc).glob("*.png")) == []
+
+    def test_pdf_entregue_apaga_as_fotos_das_tentativas(self, tmp_path,
+                                                       monkeypatch):
+        from PIL import Image
+
+        adapter = self._adapter(tmp_path)
+        doc = self._doc()
+        monkeypatch.setattr(sefaz_es.tela, "capturar",
+                            lambda: Image.new("RGB", (4, 4), "white"))
+        adapter._print(doc, "sem-pdf")
+        baixado = tmp_path / "evidencias" / "baixado.pdf"
+        baixado.parent.mkdir(parents=True, exist_ok=True)
+        baixado.write_bytes(b"%PDF-1.4")
+        monkeypatch.setattr(
+            sefaz_es, "ler_pdf",
+            lambda caminho, _msg: sefaz_es.ResultadoTentativa(
+                Desfecho.NEGATIVA, caminho_pdf=caminho),
+        )
+
+        adapter._classificar_pdf_salvo(baixado, doc, "ok")
+
+        assert list(self._pasta(adapter, doc).glob("*.png")) == []
+
+
 class TestClassificarPdfSalvo:
     """O roteamento do PDF depois de salvo pelo visualizador.
 

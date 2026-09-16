@@ -256,7 +256,8 @@ class TestJanelaDoEdge:
     def test_pdf_do_cego_usa_leitor_sem_playwright(self, monkeypatch, tmp_path):
         baixado = tmp_path / "baixado.pdf"
         baixado.write_bytes(b"%PDF")
-        cfg = SimpleNamespace(pasta_certidoes=tmp_path / "certidoes")
+        cfg = SimpleNamespace(pasta_certidoes=tmp_path / "certidoes",
+                              pasta_evidencias=tmp_path / "evidencias")
         doc = SimpleNamespace(lote_id=1, documento="12345678000199", nome="EMPRESA")
         adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
         chamadas = []
@@ -646,6 +647,48 @@ class TestCabecalhoDeCookiesGrande:
         adapter = AdapterRFBCego("RFB_PJ", cfg, tmp_path, tmp_path / "cal.json")
         adapter._calibragem = _calibragem()
         return adapter
+
+    def test_print_novo_apaga_o_anterior(self, tmp_path, monkeypatch):
+        """Uma foto de tela por documento, e nao uma por tentativa.
+
+        Este e o adapter de maior volume do robo: a cada item que erra doze
+        vezes eram doze imagens de tela cheia paradas na pasta para sempre.
+        """
+        from PIL import Image
+
+        from cnd.adapters.federal.rfb import cego as modulo
+
+        adapter = self._adapter(tmp_path)
+        doc = Documento(1, "11222333000181", "CNPJ", "EMPRESA", lote_id=1)
+        monkeypatch.setattr(modulo.tela, "capturar",
+                            lambda: Image.new("RGB", (4, 4), "white"))
+
+        primeiro = adapter._print(doc, "sem-pdf")
+        segundo = adapter._print(doc, "erro")
+        pasta = tmp_path / "RFB_PJ" / doc.documento
+
+        assert primeiro is not None and segundo is not None
+        assert not primeiro.exists()
+        assert segundo.exists()
+        assert len(list(pasta.glob("*.png"))) == 1
+
+    def test_limpeza_nao_leva_pdf_da_pasta(self, tmp_path, monkeypatch):
+        from PIL import Image
+
+        from cnd.adapters.federal.rfb import cego as modulo
+
+        adapter = self._adapter(tmp_path)
+        doc = Documento(1, "11222333000181", "CNPJ", "EMPRESA", lote_id=1)
+        monkeypatch.setattr(modulo.tela, "capturar",
+                            lambda: Image.new("RGB", (4, 4), "white"))
+        adapter._print(doc, "sem-pdf")
+        pdf = tmp_path / "RFB_PJ" / doc.documento / "certidao.pdf"
+        pdf.write_bytes(b"%PDF-1.4")
+
+        adapter._apagar_prints(doc)
+
+        assert pdf.exists()
+        assert list(pdf.parent.glob("*.png")) == []
 
     def test_pagina_do_nginx_e_reconhecida(self):
         assert _classificar_texto_portal(PAGINA_400) == "cookies"

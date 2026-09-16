@@ -1633,6 +1633,9 @@ class AdapterSEFAZES:
     def _classificar_pdf_salvo(
         self, caminho: Path, doc: Documento, mensagem: str
     ) -> ResultadoTentativa:
+        # O portal entregou o documento: as fotos das tentativas que falharam
+        # antes perderam a pergunta que respondiam.
+        self._apagar_prints(doc)
         resultado = ler_pdf(caminho, mensagem)
         if resultado.desfecho not in COM_PDF:
             return resultado
@@ -1645,9 +1648,17 @@ class AdapterSEFAZES:
         return replace(resultado, caminho_pdf=destino, evidencia=None)
 
     def _print(self, doc: Documento, motivo: str, imagem=None) -> Path | None:
+        """Guarda a foto da tela que explica esta falha. Uma por documento.
+
+        Num robo que enxerga por imagem, o print e a unica forma de dizer o
+        que aconteceu - mas so a ULTIMA tentativa interessa, e as anteriores
+        ja foram respondidas por ela. Sem esta regra, um CNPJ que erra doze
+        vezes deixa doze fotos de tela cheia na pasta, para sempre.
+        """
         try:
             pasta = self.cfg.pasta_evidencias / self.orgao / doc.documento
             pasta.mkdir(parents=True, exist_ok=True)
+            self._apagar_prints(doc)
             marca = time.strftime("%Y%m%d-%H%M%S")
             caminho = pasta / f"{marca}-{motivo}.png"
             (imagem or tela.capturar()).save(caminho)
@@ -1655,6 +1666,26 @@ class AdapterSEFAZES:
         except Exception:
             log.exception("falha_ao_salvar_print")
             return None
+
+    def _apagar_prints(self, doc: Documento) -> None:
+        """Descarta as fotos de tela deste documento.
+
+        So `*.png`: o PDF de uma POSITIVA mora nesta mesma pasta - e o
+        entregavel dela -, e nao pode sumir junto com a foto de uma falha.
+
+        Limpeza e bonus: ela roda no caminho de SUCESSO, e derrubar uma
+        certidao ja emitida por causa de um arquivo que nao deu para apagar
+        seria trocar o essencial pelo acessorio.
+        """
+        try:
+            pasta = self.cfg.pasta_evidencias / self.orgao / doc.documento
+            if not pasta.exists():
+                return
+            for caminho in pasta.glob("*.png"):
+                with contextlib.suppress(OSError):
+                    caminho.unlink()
+        except Exception as erro:
+            log.warning("falha_ao_apagar_prints", extra={"erro": str(erro)[:200]})
 
 def _achar_edge() -> str:
     candidatos = [

@@ -1109,15 +1109,26 @@ class AdapterRFBCego:
 
         Reaproveita a leitura já validada contra um PDF real da Receita.
         """
+        # A certidão saiu: as fotos das tentativas que falharam antes
+        # perderam a pergunta que respondiam.
+        self._apagar_prints(doc)
         destino = caminho_certidao(self.cfg.pasta_certidoes, doc.lote_id,
                                    self.orgao, doc.documento, nome=doc.nome)
         shutil.move(str(baixado), str(destino))
         return ler_pdf(destino, "PDF baixado (adapter cego)")
 
     def _print(self, doc: Documento, motivo: str, imagem=None) -> Path | None:
+        """Guarda a foto da tela que explica esta falha. Uma por documento.
+
+        Num robô que enxerga por imagem, o print é a única forma de dizer o
+        que aconteceu — mas só a ÚLTIMA tentativa interessa, e as anteriores
+        já foram respondidas por ela. Aqui pesa mais que nos outros órgãos:
+        é o adapter de maior volume, e são fotos de tela cheia.
+        """
         try:
             pasta = self.cfg.pasta_evidencias / self.orgao / doc.documento
             pasta.mkdir(parents=True, exist_ok=True)
+            self._apagar_prints(doc)
             marca = time.strftime("%Y%m%d-%H%M%S")
             caminho = pasta / f"{marca}-{motivo}.png"
             (imagem or tela.capturar()).save(caminho)
@@ -1125,6 +1136,27 @@ class AdapterRFBCego:
         except Exception:
             log.exception("falha_ao_salvar_print")
             return None
+
+    def _apagar_prints(self, doc: Documento) -> None:
+        """Descarta as fotos de tela deste documento.
+
+        Só `*.png`: o PDF de uma positiva mora nesta mesma pasta — e é o
+        entregável dela —, e não pode sumir junto com a foto de uma falha.
+
+        Limpeza é bônus, como o aprendizado do captcha: ela roda no caminho
+        de SUCESSO, e derrubar uma certidão já emitida por causa de um
+        arquivo que não deu para apagar seria trocar o essencial pelo
+        acessório.
+        """
+        try:
+            pasta = self.cfg.pasta_evidencias / self.orgao / doc.documento
+            if not pasta.exists():
+                return
+            for caminho in pasta.glob("*.png"):
+                with contextlib.suppress(OSError):
+                    caminho.unlink()
+        except Exception as erro:
+            log.warning("falha_ao_apagar_prints", extra={"erro": str(erro)[:200]})
 
 
 def _edge_rodando() -> bool:
