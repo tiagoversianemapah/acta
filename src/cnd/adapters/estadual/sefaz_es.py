@@ -27,6 +27,7 @@ import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from typing import ClassVar
 
 from cnd.adapters.federal.rfb.cego import (
     Calibragem,
@@ -411,6 +412,10 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
 
 @dataclass
 class AdapterSEFAZES:
+    # Mouse, teclado e tela de verdade: divide a tela com as outras
+    # automações cegas (orquestrador/vez_da_tela.py).
+    usa_tela: ClassVar[bool] = True
+
     orgao: str
     cfg: Config
     caminho_calibragem: Path = Path("data/calibragem/sefaz_es.json")

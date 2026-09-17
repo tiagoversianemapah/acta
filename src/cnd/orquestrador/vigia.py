@@ -14,11 +14,11 @@ from __future__ import annotations
 import time
 
 from cnd.core import breaker, fila, recuperacao, tempo
-from cnd.core.modelos import Status
 from cnd.infra import alertas
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.log import obter
 from cnd.orquestrador import vigilancia
+from cnd.orquestrador.vez_da_tela import VezDaTela
 
 log = obter("orquestrador")
 
@@ -40,9 +40,12 @@ class Vigia:
     precisa ser avisado.
     """
 
-    def __init__(self, cfg: Config, orgaos: list[ConfigOrgao]) -> None:
+    def __init__(self, cfg: Config, orgaos: list[ConfigOrgao],
+                 vez_da_tela: VezDaTela | None = None) -> None:
         self.cfg = cfg
         self.orgaos = orgaos
+        # Para não acusar de travada a automação cega que só espera a vez.
+        self.vez_da_tela = vez_da_tela
         self._proxima = 0.0
         self._falhas_vistas_ate = tempo.agora_iso()
 
@@ -72,10 +75,7 @@ class Vigia:
         if not p.ativa:
             return
 
-        falhados = conn.execute(
-            "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status = ?",
-            (orgao.codigo, Status.FAILED),
-        ).fetchone()["n"]
+        falhados = fila.falhas_em_filas_ativas(conn, orgao.codigo)
 
         if not falhados:
             # Lote fechado: a contagem recomeça, senão o próximo herdaria a
@@ -96,7 +96,8 @@ class Vigia:
             })
             return
 
-        devolvidos = fila.reenfileirar_falhados(conn, orgao.codigo)
+        devolvidos = fila.reenfileirar_falhados(conn, orgao.codigo,
+                                                somente_ativas=True)
         novo = recuperacao.registrar_rodada(conn, orgao.codigo, p)
         log.warning("recuperacao_automatica", extra={
             "orgao": orgao.codigo,
@@ -182,8 +183,13 @@ class Vigia:
         processo vivo. O heartbeat sozinho não pega este caso."""
         parado_ha = vigilancia.minutos_sem_progresso(conn, orgao.codigo)
         chave = f"travado:{orgao.codigo}"
+        esperando_a_tela = (
+            self.vez_da_tela is not None
+            and self.vez_da_tela.dispensa_cobranca(
+                orgao.codigo, vigilancia.MINUTOS_SEM_PROGRESSO * 60))
 
-        if parado_ha is None or parado_ha < vigilancia.MINUTOS_SEM_PROGRESSO:
+        if (parado_ha is None or parado_ha < vigilancia.MINUTOS_SEM_PROGRESSO
+                or esperando_a_tela):
             alertas.fechar_incidente(
                 self.cfg.alertas, chave,
                 f"{orgao.codigo} normalizado",
@@ -209,9 +215,11 @@ class Vigia:
             o_que_fazer = ("Nada agora — o robô está de castigo e retoma "
                            "sozinho. Se passar de 2h assim, avise.")
 
-        pendentes = conn.execute(
-            "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status IN "
-            "('PENDING','RETRY_WAIT')", (orgao.codigo,)).fetchone()["n"]
+        from cnd.web import consultas
+
+        # Sem planilha estacionada ou cancelada: o número do aviso é o que o
+        # robô ainda vai fazer, não o que está parado por decisão de alguém.
+        pendentes = consultas.pendentes(conn, [orgao.codigo])
 
         alertas.abrir_incidente(
             self.cfg.alertas, chave,

@@ -488,8 +488,10 @@ nome    = "RECEITA FEDERAL - PESSOA FISICA"
 # Mesmo portal da PJ, mesma contagem de emissões por janela.
 emissoes_por_sessao = 1
 
-# O mouse é um só: RFB_PJ e RFB_PF não podem rodar ligados na mesma máquina.
-# Os dois matam e reabrem o Edge a cada item.
+# O mouse é um só. RFB_PJ, RFB_PF, SEFAZ_ES e CRF podem ficar ligadas juntas: elas
+# usam a tela uma de cada vez, na ordem da fila — a primeira termina a dela, a
+# pausada cede a vez, e quem retoma reabre o próprio Edge. Ver
+# orquestrador/vez_da_tela.py.
 
 [orgaos.RFB_PF.pacing]
 intervalo_inicial_s = 12.0

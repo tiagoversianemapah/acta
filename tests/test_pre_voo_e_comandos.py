@@ -51,7 +51,9 @@ class TestPreVooDeDisco:
     def test_lote_que_nao_cabe_e_recusado(self, conn, lote, cfg, monkeypatch):
         from cnd.infra import maquina
 
-        criar_job(conn, lote, documento="11222333000181")
+        # RFB_PJ: a automação ligada no config de exemplo. Item de automação
+        # desligada não vai ser emitido, e não entra na conta do disco.
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PJ")
         self._pdfs(cfg, 1, kb=100)
         # Disco com 1 MB livre contra um item de ~100 KB e folga de 2x.
         monkeypatch.setattr(

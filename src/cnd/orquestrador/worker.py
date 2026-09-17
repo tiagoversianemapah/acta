@@ -10,6 +10,7 @@ threads é `loop.executar`.
 """
 from __future__ import annotations
 
+import contextlib
 import threading
 import time
 from dataclasses import dataclass, field, replace
@@ -28,12 +29,16 @@ from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.db import conectar
 from cnd.infra.log import obter
 from cnd.orquestrador import retentativa
+from cnd.orquestrador.vez_da_tela import VezDaTela
 
 log = obter("orquestrador")
 
 PAUSA_SEM_TRABALHO_S = 5.0
 PAUSA_BREAKER_ABERTO_S = 15.0
 PAUSA_FORA_DA_JANELA_S = 60.0
+# Curta de propósito: é o tempo que a automação seguinte leva para perceber
+# que a tela ficou livre — ou que a primeira da fila voltou a precisar dela.
+PAUSA_AGUARDANDO_A_TELA_S = 3.0
 INTERVALO_HEARTBEAT_S = 60.0
 
 
@@ -63,6 +68,9 @@ class Contexto:
     cfg: Config
     parar: threading.Event
     limite: int | None = None        # teto de jobs nesta execução (pilotos)
+    # Uma só para todos os workers: é o que faz as automações cegas usarem
+    # a tela uma de cada vez. Ver orquestrador/vez_da_tela.py.
+    vez_da_tela: VezDaTela = field(default_factory=VezDaTela)
     _feitos: int = 0
     _trava: threading.Lock = field(default_factory=threading.Lock)
 
@@ -100,13 +108,22 @@ class Worker(threading.Thread):
         self.conn = None
         self.adapter: AdapterOrgao | None = None
         self._ultimo_heartbeat = 0.0
+        # Mexe no mouse e na tela de verdade? Então divide a tela com as
+        # outras automações cegas. Quem diz é o adapter (`usa_tela`).
+        self.usa_tela = False
+        self._esperando_a_vez = False
 
     # ------------------------------------------------------------------
     def run(self) -> None:
         self.conn = conectar(self.ctx.cfg.banco)
         try:
             self.adapter = carregar_adapter(self.orgao, self.ctx.cfg)
-            self.adapter.preparar()
+            self.usa_tela = bool(getattr(self.adapter, "usa_tela", False))
+            if self.usa_tela:
+                self.ctx.vez_da_tela.preparar(self.orgao.codigo,
+                                              self.adapter.preparar)
+            else:
+                self.adapter.preparar()
         except Exception as erro:
             log.error("adapter_nao_carregou",
                       extra={"orgao": self.orgao.codigo, "erro": str(erro)})
@@ -128,6 +145,8 @@ class Worker(threading.Thread):
             while not self.ctx.parar.is_set():
                 self._passo()
         finally:
+            if self.usa_tela:
+                self.ctx.vez_da_tela.anunciar(self.orgao.codigo, None)
             try:
                 self.adapter.encerrar()
             finally:
@@ -140,6 +159,7 @@ class Worker(threading.Thread):
         self._bater_ponto()
 
         if not tempo.dentro_da_janela(self.orgao.pacing.janela_ativa):
+            self._sair_da_disputa_pela_tela()
             self.ctx.parar.wait(PAUSA_FORA_DA_JANELA_S)
             return
 
@@ -157,7 +177,13 @@ class Worker(threading.Thread):
                 "retoma_em": estado.aberto_ate,
                 "dica": "use --reiniciar-ritmo para zerar",
             })
+            # Pausado não segura a tela: a automação seguinte da fila
+            # trabalha enquanto esta espera o disjuntor.
+            self._sair_da_disputa_pela_tela()
             self.ctx.parar.wait(PAUSA_BREAKER_ABERTO_S)
+            return
+
+        if self.usa_tela and not self._chegou_a_vez():
             return
 
         if not self.ctx.reservar_vaga():
@@ -210,24 +236,90 @@ class Worker(threading.Thread):
             fila.devolver(self.conn, job)
             return
 
-        tentativa_id = fila.abrir_tentativa(self.conn, job, self.numero)
-        inicio = time.monotonic()
-        resultado = self._emitir_com_retentativa_rapida(job)
-        duracao = time.monotonic() - inicio
+        with self._tela():
+            if self.ctx.parar.is_set():
+                # Parada pedida enquanto esperava a tela: o item volta para a
+                # fila em vez de sair mais uma consulta.
+                self.ctx.cancelar_reserva()
+                fila.devolver(self.conn, job)
+                return
 
-        fila.fechar_tentativa(self.conn, tentativa_id, resultado)
-        log.info("tentativa", extra={
-            "job": job.job_id,
-            "orgao": self.orgao.codigo,
-            "documento": job.doc.documento,
-            "desfecho": str(resultado.desfecho),
-            "tentativa": job.tentativas + 1,
-            "duracao_s": round(duracao, 3),
-        })
+            tentativa_id = fila.abrir_tentativa(self.conn, job, self.numero)
+            inicio = time.monotonic()
+            resultado = self._emitir_com_retentativa_rapida(job)
+            duracao = time.monotonic() - inicio
 
-        self._ajustar_ritmo(resultado.desfecho)
-        self._avaliar_breaker(resultado.desfecho)
-        self._encerrar_job(job, resultado)
+            fila.fechar_tentativa(self.conn, tentativa_id, resultado)
+            log.info("tentativa", extra={
+                "job": job.job_id,
+                "orgao": self.orgao.codigo,
+                "documento": job.doc.documento,
+                "desfecho": str(resultado.desfecho),
+                "tentativa": job.tentativas + 1,
+                "duracao_s": round(duracao, 3),
+            })
+
+            # Dentro da tela: em desfecho retentável o ajuste de ritmo
+            # reinicia a sessão, e isso abre e fecha o Edge.
+            self._ajustar_ritmo(resultado.desfecho)
+            self._avaliar_breaker(resultado.desfecho)
+            self._encerrar_job(job, resultado)
+
+    # ------------------------------------------------------------------
+    # A tela compartilhada (só automações cegas)
+    # ------------------------------------------------------------------
+    def _chegou_a_vez(self) -> bool:
+        """Anuncia onde este órgão está na fila e diz se pode usar a tela.
+
+        False já inclui a espera: quem chama só precisa voltar.
+        """
+        vez = self.ctx.vez_da_tela
+        ordem = fila.ordem_na_fila(self.conn, self.orgao.codigo)
+        vez.anunciar(self.orgao.codigo, ordem)
+
+        if ordem is None:
+            self._esperando_a_vez = False
+            self.ctx.parar.wait(PAUSA_SEM_TRABALHO_S)
+            return False
+
+        if vez.e_a_vez(self.orgao.codigo):
+            if self._esperando_a_vez:
+                log.info("vez_da_tela_chegou", extra={"orgao": self.orgao.codigo})
+            self._esperando_a_vez = False
+            return True
+
+        # Log só na mudança: repetido a cada 3s, esconderia o resto.
+        if not self._esperando_a_vez:
+            log.info("aguardando_a_vez_da_tela", extra={
+                "orgao": self.orgao.codigo,
+                "primeira_da_fila": vez.primeira(),
+            })
+            self._esperando_a_vez = True
+        self.ctx.parar.wait(PAUSA_AGUARDANDO_A_TELA_S)
+        return False
+
+    def _sair_da_disputa_pela_tela(self) -> None:
+        if self.usa_tela:
+            self.ctx.vez_da_tela.anunciar(self.orgao.codigo, None)
+            self._esperando_a_vez = False
+
+    def _tela(self):
+        if not self.usa_tela:
+            return contextlib.nullcontext()
+        return self.ctx.vez_da_tela.usar(self.orgao.codigo,
+                                         self._reabrir_navegador)
+
+    def _reabrir_navegador(self) -> None:
+        """A tela veio de outra automação, que pode ter fechado nosso Edge.
+
+        Falhar aqui não derruba o worker: a consulta seguinte tenta mesmo
+        assim, e o que der errado nela vira desfecho com evidência.
+        """
+        try:
+            self.adapter.reiniciar_sessao()
+        except Exception:
+            log.exception("falha_ao_reabrir_navegador_na_vez_da_tela",
+                          extra={"orgao": self.orgao.codigo})
 
     # ------------------------------------------------------------------
     def _emitir_no_adapter(self, job) -> ResultadoTentativa:

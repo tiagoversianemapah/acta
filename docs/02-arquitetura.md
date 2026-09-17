@@ -26,7 +26,10 @@ sem calibragem e sem coordenada de tela. Ver
 
 Consequência prática: **não é servidor**. O robô cego assume o mouse e o teclado
 de verdade, e por isso a máquina precisa de sessão gráfica logada e destravada —
-ninguém pode usá-la enquanto ele roda.
+ninguém pode usá-la enquanto ele roda. Com mais de uma automação cega ligada na
+mesma máquina, elas **usam a tela uma de cada vez, na ordem da fila**
+(`orquestrador/vez_da_tela.py`) — o CRF junto, porque abre um Edge visível que
+os cegos fechariam; as de HTTP seguem em paralelo.
 
 ## 2. Componentes
 

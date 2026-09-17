@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from math import ceil
 
@@ -420,17 +421,37 @@ def rotulo_duracao(segundos: int | float | None) -> str:
     return f"{horas} h {resto} min"
 
 
-def pendentes(conn: sqlite3.Connection) -> int:
-    """Itens esperando processamento, em qualquer órgão.
+def pendentes(conn: sqlite3.Connection,
+              orgaos: Iterable[str] | None = None) -> int:
+    """Itens que o robô ainda vai processar.
 
     É o que define a JANELA DE TRABALHO do sistema. O robô não é um serviço
     de pé o ano inteiro: é tarefa mensal, e ficar parado é o estado normal
     na maior parte do mês. Só faz sentido cobrar que ele esteja de pé quando
     existe algo para fazer — e é esta contagem que diz isso.
+
+    Planilha estacionada ou cancelada não conta, e `orgaos` restringe às
+    automações ligadas. Sem isso, a retomada automática religava o robô a
+    cada 5 minutos por causa de itens que ele nunca pega — de automação
+    desligada no config.toml, ou de planilha parada — e ele subia, via que
+    não havia nada e encerrava (17/09/2026).
     """
+    orgaos = None if orgaos is None else tuple(orgaos)
+    if orgaos is not None and not orgaos:
+        return 0
+    recorte = ("" if orgaos is None else
+               f" AND j.orgao IN ({', '.join('?' for _ in orgaos)})")
     return conn.execute(
-        "SELECT COUNT(*) AS n FROM job WHERE status IN (?, ?)",
-        (Status.PENDING, Status.RETRY_WAIT),
+        f"""
+        SELECT COUNT(*) AS n
+          FROM job j
+          LEFT JOIN fila_controle c
+                 ON c.lote_id = j.lote_id AND c.orgao = j.orgao
+         WHERE j.status IN (?, ?)
+           AND COALESCE(c.situacao, ?) = ?{recorte}
+        """,
+        (Status.PENDING, Status.RETRY_WAIT, controle.ATIVA, controle.ATIVA,
+         *(orgaos or ())),
     ).fetchone()["n"]
 
 

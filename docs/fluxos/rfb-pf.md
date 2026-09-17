@@ -102,5 +102,16 @@ A evidência de cada falha fica em `data/evidencias/RFB_PF/{cpf}/`.
 
 ## Operação
 
-O mouse é um só, e os dois adapters matam e reabrem o Edge a cada item.
-**`RFB_PJ` e `RFB_PF` não podem rodar ligados na mesma máquina.**
+O mouse é um só. As automações cegas — RFB PJ, RFB PF e SEFAZ-ES — e o CRF,
+que abre um Edge visível, podem ficar ligadas na mesma máquina porque
+**usam a tela uma de cada vez**, na
+ordem da fila ([vez_da_tela.py](../../src/cnd/orquestrador/vez_da_tela.py)):
+
+- a planilha que chegou primeiro (ou foi mandada "Rodar agora") termina a
+  fila dela antes da seguinte começar;
+- se ela pausar — disjuntor, fora da janela de horário ou só retentativas
+  para mais tarde —, a seguinte usa a tela no meio-tempo;
+- quando ela volta a ter item, a tela volta para ela no fim do item em
+  andamento, e quem retoma a tela reabre o próprio Edge.
+
+GO e MA falam HTTP e rodam em paralelo com qualquer uma delas.

@@ -40,6 +40,28 @@ class TestContagemDaFila:
     def test_banco_vazio_nao_tem_fila(self, conn):
         assert consultas.pendentes(conn) == 0
 
+    def test_planilha_estacionada_ou_cancelada_nao_conta(self, conn, lote):
+        """O robô nunca pega esses itens. Contados, o painel religava o robô
+        de 5 em 5 minutos para nada (17/09/2026)."""
+        from cnd.core import controle
+
+        criar_job(conn, lote, documento="11222333000181")
+        assert consultas.pendentes(conn) == 1
+
+        controle.definir(conn, lote, "FAKE", controle.ESTACIONADA)
+        assert consultas.pendentes(conn) == 0
+
+        controle.definir(conn, lote, "FAKE", controle.CANCELADA)
+        assert consultas.pendentes(conn) == 0
+
+    def test_automacao_desligada_nao_conta(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PJ")
+        criar_job(conn, lote, documento="11444777000161", orgao="SEFAZ_ES")
+
+        assert consultas.pendentes(conn, ["RFB_PF", "SEFAZ_ES"]) == 1
+        assert consultas.pendentes(conn, []) == 0
+        assert consultas.pendentes(conn) == 2
+
 
 @pytest.fixture
 def painel(monkeypatch, tmp_path):
@@ -62,8 +84,10 @@ def painel(monkeypatch, tmp_path):
 
 
 def _encher_a_fila(conn) -> None:
+    # RFB_PJ porque é a automação LIGADA no config de exemplo: item de
+    # automação desligada não é trabalho do robô e não conta na fila.
     conn.execute("INSERT INTO lote (id, descricao) VALUES (1, 'teste')")
-    criar_job(conn, 1, documento="11222333000181")
+    criar_job(conn, 1, documento="11222333000181", orgao="RFB_PJ")
 
 
 def test_painel_mostra_continuar_quando_orgao_esta_pausado(painel):

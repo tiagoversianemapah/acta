@@ -98,12 +98,78 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
 
 
 def ha_trabalho(conn: sqlite3.Connection, orgao: str) -> bool:
-    """Existe algo pendente ou aguardando retry para este órgão?"""
+    """Existe algo que o robô AINDA VAI pegar neste órgão?
+
+    Item de planilha estacionada ou cancelada não conta: `reivindicar` nunca
+    o entrega. Contado, o robô ficava de pé sem fazer nada, esperando um
+    trabalho que não vinha (17/09/2026). O que já está em RUNNING conta
+    sempre — estacionar não interrompe o item em andamento.
+    """
     linha = conn.execute(
-        "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status IN (?, ?, ?)",
-        (orgao, Status.PENDING, Status.RUNNING, Status.RETRY_WAIT),
+        """
+        SELECT COUNT(*) AS n
+          FROM job j
+          LEFT JOIN fila_controle c
+                 ON c.lote_id = j.lote_id AND c.orgao = j.orgao
+         WHERE j.orgao = ?
+           AND (j.status = ?
+                OR (j.status IN (?, ?) AND COALESCE(c.situacao, ?) = ?))
+        """,
+        (orgao, Status.RUNNING, Status.PENDING, Status.RETRY_WAIT,
+         controle.ATIVA, controle.ATIVA),
     ).fetchone()
     return linha["n"] > 0
+
+
+def falhas_em_filas_ativas(conn: sqlite3.Connection, orgao: str) -> int:
+    """Itens FAILED que a recuperação automática ainda vai devolver.
+
+    Só de planilha ativa: a estacionada ou cancelada não é devolvida
+    (`reenfileirar_falhados(somente_ativas=True)`), então segurar o robô de
+    pé por causa dela seria esperar o que não vem.
+    """
+    return conn.execute(
+        """
+        SELECT COUNT(*) AS n
+          FROM job j
+          LEFT JOIN fila_controle c
+                 ON c.lote_id = j.lote_id AND c.orgao = j.orgao
+         WHERE j.orgao = ? AND j.status = ?
+           AND COALESCE(c.situacao, ?) = ?
+        """,
+        (orgao, Status.FAILED, controle.ATIVA, controle.ATIVA),
+    ).fetchone()["n"]
+
+
+def ordem_na_fila(conn: sqlite3.Connection,
+                  orgao: str) -> tuple[int, int, int] | None:
+    """Onde a fila deste órgão está na fila de TODAS as automações de tela.
+
+    None quando não há item para pegar AGORA: nada pendente, só
+    retentativas agendadas para depois, ou planilha estacionada/cancelada.
+
+    A ordem é a da chegada das planilhas, com "Rodar agora" na frente —
+    a mesma que `reivindicar` usa dentro de um órgão, estendida entre os
+    órgãos. Menor vem primeiro. Ver orquestrador/vez_da_tela.py.
+    """
+    linha = conn.execute(
+        """
+        SELECT MAX(COALESCE(c.prioridade, 0)) AS prioridade,
+               MIN(j.lote_id) AS lote, MIN(j.id) AS primeiro
+          FROM job j
+          LEFT JOIN fila_controle c
+                 ON c.lote_id = j.lote_id AND c.orgao = j.orgao
+         WHERE j.orgao = ?
+           AND j.status IN (?, ?)
+           AND j.proxima_execucao_em <= ?
+           AND COALESCE(c.situacao, ?) = ?
+        """,
+        (orgao, Status.PENDING, Status.RETRY_WAIT, tempo.agora_iso(),
+         controle.ATIVA, controle.ATIVA),
+    ).fetchone()
+    if linha is None or linha["primeiro"] is None:
+        return None
+    return (-int(linha["prioridade"]), int(linha["lote"]), int(linha["primeiro"]))
 
 
 # --------------------------------------------------------------------------
@@ -256,7 +322,7 @@ MENSAGENS_SEM_RESPOSTA = (MENSAGEM_TELA_ILEGIVEL, MENSAGEM_CAPTCHA_RECUSADO)
 
 def reenfileirar_falhados(
     conn: sqlite3.Connection, orgao: str | None = None,
-    lote_id: int | None = None,
+    lote_id: int | None = None, somente_ativas: bool = False,
 ) -> int:
     """Devolve para a fila o que não teve resposta, zerando as tentativas.
 
@@ -272,10 +338,20 @@ def reenfileirar_falhados(
         mostra nada, porque nunca houve pendência.
 
     Usado pelo painel depois que a causa da falha foi corrigida.
+
+    `somente_ativas` deixa de fora as planilhas estacionadas e canceladas.
+    É o que a recuperação automática usa: planilha parada por decisão de
+    quem opera não volta a andar sozinha.
     """
     agora = tempo.agora_iso()
     filtros: list[str] = []
     filtros_args: list = []
+    if somente_ativas:
+        filtros.append(
+            "NOT EXISTS (SELECT 1 FROM fila_controle c "
+            "WHERE c.lote_id = job.lote_id AND c.orgao = job.orgao "
+            "AND c.situacao <> ?)")
+        filtros_args.append(controle.ATIVA)
     if orgao:
         filtros.append("orgao = ?")
         filtros_args.append(orgao)

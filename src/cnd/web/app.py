@@ -248,7 +248,8 @@ async def vigiar_orquestrador() -> None:
         try:
             with contextlib.closing(ler()) as conn:
                 idade = heartbeat.segundos_desde(conn, "orquestrador")
-                na_fila = consultas.pendentes(conn)
+                na_fila = consultas.pendentes(
+                    conn, (o.codigo for o in cfg.ativos()))
             limite = cfg.alertas.heartbeat_timeout_s
             mudo = idade is not None and idade > limite
             # Robô parado porque ALGUÉM mandou parar não é incidente, e
@@ -964,7 +965,8 @@ def ping():
     try:
         with contextlib.closing(ler()) as conn:
             idade = heartbeat.segundos_desde(conn, "orquestrador")
-            pendentes = consultas.pendentes(conn)
+            pendentes = consultas.pendentes(
+                conn, (o.codigo for o in cfg.ativos()))
     except Exception as erro:
         return JSONResponse({"ok": False, "motivo": f"banco inacessível: {erro}"},
                             status_code=503)

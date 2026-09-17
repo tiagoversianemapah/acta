@@ -21,7 +21,6 @@ import threading
 import time
 
 from cnd.core import fila
-from cnd.core.modelos import Status
 from cnd.infra import heartbeat
 from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.config import carregar as carregar_config
@@ -85,7 +84,7 @@ def _conferir_espaco(conn, cfg: Config) -> str:
     from cnd.infra import maquina
     from cnd.web import consultas
 
-    pendentes = consultas.pendentes(conn)
+    pendentes = consultas.pendentes(conn, (o.codigo for o in cfg.ativos()))
     if not pendentes:
         return ""
 
@@ -127,10 +126,7 @@ def _falhas_a_recuperar(conn, orgao: ConfigOrgao) -> int:
     """
     if not orgao.recuperacao.ativa:
         return 0
-    return conn.execute(
-        "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status = ?",
-        (orgao.codigo, Status.FAILED),
-    ).fetchone()["n"]
+    return fila.falhas_em_filas_ativas(conn, orgao.codigo)
 
 
 def _nada_a_fazer(conn, ativos: list[ConfigOrgao]) -> bool:
@@ -213,7 +209,7 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
         "workers": len(threads),
     })
 
-    vigia = vigia_mod.Vigia(cfg, ativos)
+    vigia = vigia_mod.Vigia(cfg, ativos, vez_da_tela=ctx.vez_da_tela)
     # A carência conta do início, e não da última consulta: o caso que ela
     # protege é justamente o do robô que sobe sem nada para fazer.
     pode_encerrar_em = time.monotonic() + CARENCIA_ANTES_DE_ENCERRAR_S

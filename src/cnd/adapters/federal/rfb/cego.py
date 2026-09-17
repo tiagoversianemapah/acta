@@ -327,6 +327,9 @@ class AdapterRFBCego:
     pontos_necessarios: ClassVar[tuple[str, ...]] = PONTOS_NECESSARIOS
     ponto_documento: ClassVar[str] = "campo_cnpj"
     padrao_pdf: ClassVar[str] = "Certidao-{documento}*.pdf"
+    # Mouse, teclado e tela de verdade: divide a tela com as outras
+    # automações cegas (orquestrador/vez_da_tela.py).
+    usa_tela: ClassVar[bool] = True
 
     orgao: str
     cfg: Config

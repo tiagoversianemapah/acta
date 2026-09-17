@@ -18,7 +18,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
-from cnd.core import tempo
+from cnd.core import fila, tempo
 from cnd.core.modelos import Status
 
 # Sem nada concluído por este tempo, com fila cheia, é sinal de travamento.
@@ -169,11 +169,9 @@ def minutos_sem_progresso(conn: sqlite3.Connection, orgao: str) -> float | None:
     Devolve None quando não há mais o que fazer — fila vazia não é
     travamento, é serviço terminado.
     """
-    pendentes = conn.execute(
-        "SELECT COUNT(*) AS n FROM job WHERE orgao = ? AND status IN (?, ?, ?)",
-        (orgao, Status.PENDING, Status.RUNNING, Status.RETRY_WAIT),
-    ).fetchone()["n"]
-    if not pendentes:
+    # A mesma pergunta que segura o robô de pé: item de planilha estacionada
+    # ou cancelada não é trabalho, e "parado" por causa dele é alarme falso.
+    if not fila.ha_trabalho(conn, orgao):
         return None
 
     ultima = conn.execute(
