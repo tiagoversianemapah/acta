@@ -6,6 +6,7 @@ entao a mesma calibragem continua valendo em resolucoes parecidas.
 """
 from __future__ import annotations
 
+import contextlib
 import subprocess
 import time
 from collections.abc import Callable
@@ -13,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from cnd.adapters.federal.rfb.cego import AdapterRFBCego, Calibragem, _achar_edge
-from cnd.infra import entrada_real, tela
+from cnd.infra import entrada_real, perfil_edge, tela
 
 SEGUNDOS_IMOVEL = 2.5
 TOLERANCIA_PX = 4
@@ -318,6 +319,12 @@ def _abrir_portal(perfil: PerfilCalibragem) -> tuple[int, int, int, int] | None:
     subprocess.run(["taskkill", "/IM", perfil.executavel, "/F"],
                    capture_output=True, check=False)
     time.sleep(2)
+    # Edge morto à força volta com a bolha "Restaurar páginas" por cima do
+    # portal, e um clique nela no meio da calibragem abre as abas antigas
+    # (visto em 17/09/2026). O robô já marca a saída como limpa ao fechar o
+    # Edge; a calibragem não marcava.
+    with contextlib.suppress(Exception):
+        perfil_edge.marcar_saida_limpa()
 
     if perfil.janela:
         largura, altura = perfil.janela

@@ -77,6 +77,19 @@ def test_celula_vazia_tem_motivo_proprio(tmp_path):
         "data de nascimento vazia ou ilegível (use dd/mm/aaaa)"] * 2
 
 
+def test_titulo_com_dn_no_meio_de_outra_palavra_nao_e_nascimento(tmp_path):
+    """Só "D.N." inteiro vale: "Endereço (DN)" ou "ADN" não são a data."""
+    caminho = _planilha(
+        tmp_path, ["Nome", "CPF", "ADNX"],
+        ["WALDO", "030.102.361-15", "22/02/1948"],
+    )
+
+    leitura = ler(caminho, abas=["PF"], orgao="RFB_PF")
+
+    assert leitura.itens == []
+    assert "não tem a coluna" in leitura.rejeitados[0].motivo
+
+
 def test_data_no_futuro_e_recusada(tmp_path):
     caminho = _planilha(
         tmp_path, ["Nome", "CPF", "Nascimento"],
@@ -139,7 +152,7 @@ def test_banco_antigo_ganha_a_coluna_ao_abrir(tmp_path):
 
 
 def test_titulo_vindo_de_sistema_e_reconhecido(tmp_path):
-    for titulo in ("DT_NASCIMENTO", "DataNascimento", "Nasc."):
+    for titulo in ("DT_NASCIMENTO", "DataNascimento", "Nasc.", "D.N.", "DN"):
         caminho = _planilha(
             tmp_path, ["Nome", "CPF", titulo],
             ["WALDO", "030.102.361-15", "22/02/1948"],

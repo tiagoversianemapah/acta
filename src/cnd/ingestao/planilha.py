@@ -94,10 +94,12 @@ def _coluna_nascimento(cabecalho) -> int | None:
     pegaria a competência que as abas da carteira trazem na coluna C — e
     numa planilha reimportada meses depois ela já parece data de nascimento.
     Substring, e não palavra inteira, para aceitar o que vem de sistema:
-    "DT_NASCIMENTO", "DataNascimento", "Nasc.".
+    "DT_NASCIMENTO", "DataNascimento", "Nasc.". E "D.N.", que é como a
+    planilha de pessoas físicas do escritório chama a coluna (17/09/2026).
     """
     for indice, titulo in enumerate(cabecalho or ()):
-        if "nasc" in _sem_acento(titulo):
+        normalizado = _sem_acento(titulo)
+        if "nasc" in normalizado or re.sub(r"[^a-z]", "", normalizado) == "dn":
             return indice
     return None
 

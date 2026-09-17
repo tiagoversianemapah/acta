@@ -20,6 +20,19 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Atualizar e trocar uma instalacao que existe, nao criar uma. Em 17/09/2026
+# a maquina nao tinha C:\ACTA: o script encerrou os processos do ACTA dela,
+# copiou a pasta _internal COM O NOME ACTA (Copy-Item para destino que nao
+# existe renomeia) e deixou um cnd.exe que nao abre. Conferir antes de
+# baixar e antes de parar qualquer coisa.
+if (-not (Test-Path (Join-Path $Pasta "cnd.exe"))) {
+    throw ("Nao achei o ACTA instalado em $Pasta (falta cnd.exe). Nada foi " +
+           "baixado nem parado. Se ele esta em outra pasta, rode de novo com " +
+           "-Pasta ""<pasta>""; se a maquina nao tem ACTA, instale antes " +
+           "(docs/07-instalacao-nas-maquinas.md).")
+}
+
 $zip = Join-Path $env:TEMP "acta-atualizacao.zip"
 $tmp = Join-Path $env:TEMP "acta-atualizacao"
 
