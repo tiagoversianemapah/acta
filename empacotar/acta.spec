@@ -66,6 +66,7 @@ ocultos = [
     # Escolhidos pelo config.toml e importados por nome — o PyInstaller não
     # tem como enxergar isso lendo o código.
     "cnd.adapters.federal.rfb.cego",
+    "cnd.adapters.federal.rfb.cego_pf",
     "cnd.adapters.federal.crf",
     "cnd.adapters.estadual.sefaz_go",
     "cnd.adapters.estadual.sefaz_es",

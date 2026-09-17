@@ -33,6 +33,7 @@ MODULOS_POR_ADAPTER = {
     "rfb_cego": "cnd.adapters.federal.rfb.cego",
     "rfb_matriz": "cnd.adapters.federal.rfb.matriz",
     "rfb_pdf": "cnd.adapters.federal.rfb.pdf",
+    "rfb_pf": "cnd.adapters.federal.rfb.cego_pf",
     "rfb_pj": "cnd.adapters.federal.rfb.pj",
     "sefaz_es": "cnd.adapters.estadual.sefaz_es",
     "sefaz_go": "cnd.adapters.estadual.sefaz_go",

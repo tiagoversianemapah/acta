@@ -1837,8 +1837,8 @@ class Aplicativo(ctk.CTk):
             exemplos = "\n".join(
                 f"  linha {r['linha']}: {r['valor']} — {r['motivo']}"
                 for r in resposta.get("rejeitados", [])[:8])
-            corpo += (f"\n\n{_numero(rejeitados)} não entraram (documento "
-                      f"inválido ou repetido):\n{exemplos}")
+            corpo += (f"\n\n{_numero(rejeitados)} não entraram (o motivo "
+                      f"vai em cada linha):\n{exemplos}")
         messagebox.showinfo("Planilha enviada", corpo)
         self._recarregar_saude()
 

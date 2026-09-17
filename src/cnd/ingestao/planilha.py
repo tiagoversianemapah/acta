@@ -5,8 +5,11 @@ virar uma API ou um sistema contábil, troca-se só este arquivo.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
+import unicodedata
 from dataclasses import dataclass, field
+from datetime import date, datetime
 from pathlib import Path
 
 from openpyxl import load_workbook
@@ -34,6 +37,14 @@ ORGAO_PARA_TIPO: dict[str, str] = {
     orgao: tipo for orgao, tipo in ABA_PARA_ORGAO.values()
 }
 
+# Automações cujo formulário não emite sem a data de nascimento. A linha que
+# chega sem ela é recusada JÁ na importação: deixá-la entrar só adiaria o
+# problema para o robô, que abriria o portal para não ter o que digitar.
+EXIGEM_NASCIMENTO = frozenset({"RFB_PF"})
+
+RE_DATA_BR = re.compile(r"^\s*(\d{1,2})/(\d{1,2})/(\d{4})\s*$")
+RE_DATA_ISO = re.compile(r"^\s*(\d{4})-(\d{2})-(\d{2})")
+
 
 def abas_da_planilha(caminho: Path) -> list[tuple[str, int]]:
     """Nome e quantidade de linhas de cada aba, para a tela oferecer a escolha.
@@ -51,12 +62,59 @@ def abas_da_planilha(caminho: Path) -> list[tuple[str, int]]:
         livro.close()
 
 
+def _sem_acento(texto) -> str:
+    ascii_puro = (unicodedata.normalize("NFKD", str(texto or ""))
+                  .encode("ascii", "ignore").decode("ascii"))
+    return " ".join(ascii_puro.lower().split())
+
+
+def _ler_data(valor) -> date | None:
+    """Data de uma célula: a do Excel ou texto dd/mm/aaaa. Senão, None."""
+    if isinstance(valor, datetime):
+        return valor.date()
+    if isinstance(valor, date):
+        return valor
+    texto = str(valor or "")
+    try:
+        if achado := RE_DATA_BR.match(texto):
+            dia, mes, ano = (int(g) for g in achado.groups())
+            return date(ano, mes, dia)
+        if achado := RE_DATA_ISO.match(texto):
+            ano, mes, dia = (int(g) for g in achado.groups())
+            return date(ano, mes, dia)
+    except ValueError:
+        return None
+    return None
+
+
+def _coluna_nascimento(cabecalho) -> int | None:
+    """A coluna cujo título fala em nascimento.
+
+    Só pelo título, e de propósito: adivinhar pela primeira data da linha
+    pegaria a competência que as abas da carteira trazem na coluna C — e
+    numa planilha reimportada meses depois ela já parece data de nascimento.
+    Substring, e não palavra inteira, para aceitar o que vem de sistema:
+    "DT_NASCIMENTO", "DataNascimento", "Nasc.".
+    """
+    for indice, titulo in enumerate(cabecalho or ()):
+        if "nasc" in _sem_acento(titulo):
+            return indice
+    return None
+
+
+def _nascimento_da_linha(linha, coluna: int | None) -> date | None:
+    if coluna is None or len(linha) <= coluna:
+        return None
+    return _ler_data(linha[coluna])
+
+
 @dataclass(frozen=True)
 class Item:
     orgao: str
     tipo_documento: str
     documento: str
     nome: str
+    data_nascimento: date | None = None
 
 
 @dataclass(frozen=True)
@@ -106,10 +164,11 @@ def ler(caminho: Path, abas: list[str] | None = None,
                 continue
             destino, tipo = ABA_PARA_ORGAO[chave]
         orgao_da_aba = destino
-        planilha = livro[nome_aba]
+        linhas = livro[nome_aba].iter_rows(values_only=True)
+        # linha 1 é o cabeçalho: não vira item, mas diz onde está o nascimento
+        coluna_nascimento = _coluna_nascimento(next(linhas, None))
 
-        # linha 1 é o cabeçalho, então começa da 2
-        for numero, linha in enumerate(planilha.iter_rows(min_row=2, values_only=True), start=2):
+        for numero, linha in enumerate(linhas, start=2):
             if not linha or all(c is None for c in linha):
                 continue
 
@@ -131,9 +190,37 @@ def ler(caminho: Path, abas: list[str] | None = None,
                 )
                 continue
 
+            nascimento = (_nascimento_da_linha(linha, coluna_nascimento)
+                          if tipo == "CPF" else None)
+            if orgao_da_aba in EXIGEM_NASCIMENTO:
+                # Dois motivos, e não um: coluna faltando se resolve uma vez
+                # na planilha inteira; célula vazia, linha a linha.
+                if coluna_nascimento is None:
+                    resultado.rejeitados.append(
+                        Rejeitado(chave, numero, str(bruto), nome,
+                                  "a aba não tem a coluna 'Data de Nascimento': "
+                                  "a Receita não emite a certidão de CPF sem ela")
+                    )
+                    continue
+                if nascimento is None:
+                    resultado.rejeitados.append(
+                        Rejeitado(chave, numero, str(bruto), nome,
+                                  "data de nascimento vazia ou ilegível "
+                                  "(use dd/mm/aaaa)")
+                    )
+                    continue
+                if nascimento > date.today():
+                    resultado.rejeitados.append(
+                        Rejeitado(chave, numero, str(bruto), nome,
+                                  f"data de nascimento no futuro: "
+                                  f"{nascimento:%d/%m/%Y}")
+                    )
+                    continue
+
             vistos.add((orgao_da_aba, documento))
             resultado.itens.append(
-                Item(orgao_da_aba, tipo, documento, nome or documento))
+                Item(orgao_da_aba, tipo, documento, nome or documento,
+                     nascimento))
 
     livro.close()
     return resultado
@@ -156,10 +243,17 @@ def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
         lote_id = cursor.lastrowid
 
         for item in leitura.itens:
+            # Importação sem data não apaga a que já está guardada: o CPF que
+            # entrar por outra automação não pode desarmar a Receita PF.
             conn.execute(
-                "INSERT INTO empresa (documento, tipo_documento, nome) VALUES (?, ?, ?) "
-                "ON CONFLICT (documento) DO UPDATE SET nome = excluded.nome",
-                (item.documento, item.tipo_documento, item.nome),
+                "INSERT INTO empresa (documento, tipo_documento, nome, data_nascimento) "
+                "VALUES (?, ?, ?, ?) "
+                "ON CONFLICT (documento) DO UPDATE SET nome = excluded.nome, "
+                "data_nascimento = COALESCE(excluded.data_nascimento, "
+                "empresa.data_nascimento)",
+                (item.documento, item.tipo_documento, item.nome,
+                 item.data_nascimento.isoformat() if item.data_nascimento
+                 else None),
             )
             empresa_id = conn.execute(
                 "SELECT id FROM empresa WHERE documento = ?", (item.documento,)

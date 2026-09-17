@@ -80,8 +80,8 @@ def test_o_tipo_do_documento_vem_do_orgao(planilha, tmp_path):
     livro = Workbook()
     aba = livro.active
     aba.title = "Pessoas"
-    aba.append(["Nome", "Documento"])
-    aba.append(["FULANO", CPF_OK])
+    aba.append(["Nome", "Documento", "Data de Nascimento"])
+    aba.append(["FULANO", CPF_OK, "22/02/1948"])
     caminho = tmp_path / "pf.xlsx"
     livro.save(caminho)
 

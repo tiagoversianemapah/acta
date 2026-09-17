@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from cnd.adapters.federal.rfb.cego import Calibragem, _achar_edge
+from cnd.adapters.federal.rfb.cego import AdapterRFBCego, Calibragem, _achar_edge
 from cnd.infra import entrada_real, tela
 
 SEGUNDOS_IMOVEL = 2.5
@@ -64,6 +64,20 @@ PASSOS_RFB = (
      "     e onde a faixa de aviso aparece quando o portal recusa"),
 )
 
+PASSOS_RFB_PF = (
+    ("campo_cpf",
+     "o CAMPO branco onde se digita o CPF (escrito 'Informe o CPF')"),
+    ("campo_nascimento",
+     "o CAMPO branco da data de nascimento, ao lado do CPF"),
+    ("botao_emitir",
+     "o botao azul 'EMITIR CERTIDAO', no canto inferior direito"),
+    ("fundo_pagina",
+     "uma area BRANCA e vazia da pagina (a margem ao lado do formulario)"),
+    ("faixa_alerta",
+     "o topo da pagina, na altura de 'Servicos da Receita Federal' -\n"
+     "     e onde a faixa de aviso aparece quando o portal recusa"),
+)
+
 PASSOS_SEFAZ_ES = (
     ("menu_cnd",
      "o item do menu lateral 'Certidao Negativa de Debito'"),
@@ -103,6 +117,30 @@ def _perfil(orgao: str | None = None) -> PerfilCalibragem:
             },
         )
 
+    if chave in {"rfb_pf", "receita_pf"}:
+        from cnd.adapters.federal.rfb import cego as rfb_cego
+        from cnd.adapters.federal.rfb import cego_pf
+
+        return PerfilCalibragem(
+            codigo="rfb_pf",
+            nome="Receita Federal - Pessoa Fisica",
+            url=cego_pf.URL_FORMULARIO,
+            titulo_janela=rfb_cego.TITULO_JANELA,
+            executavel=rfb_cego.EXECUTAVEL_NAVEGADOR,
+            passos=PASSOS_RFB_PF,
+            pontos_necessarios=cego_pf.PONTOS_NECESSARIOS,
+            cores_esperadas={
+                "campo_cpf": ("claro (campo branco)", _claro),
+                "campo_nascimento": ("claro (campo branco)", _claro),
+                "botao_emitir": ("azul do botao", _parece_botao),
+                "fundo_pagina": ("claro (pagina)", _claro),
+                "botao_emitir_nova": ("azul do botao", _parece_botao),
+            },
+            pontos_condicionais={
+                "botao_emitir_nova": "so aparece com a janelinha aberta",
+            },
+        )
+
     if chave in {"sefaz_es", "sefazespiritosanto", "es"}:
         from cnd.adapters.estadual import sefaz_es
 
@@ -128,7 +166,8 @@ def _perfil(orgao: str | None = None) -> PerfilCalibragem:
         )
 
     raise ValueError(
-        f"Orgao sem perfil de calibragem: {orgao}. Use RFB_CEGO ou SEFAZ_ES."
+        f"Orgao sem perfil de calibragem: {orgao}. "
+        f"Use RFB_CEGO, RFB_PF ou SEFAZ_ES."
     )
 
 
@@ -305,8 +344,14 @@ def _abrir_portal(perfil: PerfilCalibragem) -> tuple[int, int, int, int] | None:
         entrada_real.maximizar(perfil.titulo_janela, perfil.executavel)
     else:
         subprocess.Popen([_achar_edge(), "--start-maximized", perfil.url])
-        print("\n  abrindo o Edge maximizado...", flush=True)
+        print("\n  abrindo o Edge maximizado, no monitor principal...", flush=True)
         time.sleep(9)
+        # O Edge reabre no último monitor usado. Com dois monitores, a
+        # calibragem saía no secundário — menor e às vezes com outra escala —
+        # e bastava a janela mudar de monitor para os pontos ficarem fora
+        # dela (17/09/2026). Com um monitor só, isto não muda nada.
+        entrada_real.posicionar_janela(perfil.titulo_janela, perfil.executavel,
+                                       entrada_real.area_util())
         entrada_real.maximizar(perfil.titulo_janela, perfil.executavel)
     time.sleep(1)
 
@@ -318,6 +363,30 @@ def _abrir_portal(perfil: PerfilCalibragem) -> tuple[int, int, int, int] | None:
     else:
         print("  AVISO: nao localizei a janela do Edge pelo titulo.", flush=True)
     return janela
+
+
+def _janela_mudou(inicial: tuple[int, int, int, int] | None,
+                  final: tuple[int, int, int, int] | None) -> str | None:
+    """A janela do fim não é a mesma em que os pontos foram medidos?
+
+    Os pontos são conferidos, um a um, contra a janela aberta no começo. No
+    fim, a janela é procurada de novo — e o Edge devolve a MAIOR que tiver.
+    Se alguém arrastou a janela para outro monitor, ou abriu outra janela do
+    Edge no meio, os pontos certos pareciam "fora da janela", todos de uma
+    vez, e o recado não dizia o porquê (17/09/2026).
+    """
+    if inicial is None or final is None:
+        return None
+    if not AdapterRFBCego._janela_desalinhada(final, inicial):
+        return None
+    return (
+        f"a janela do Edge mudou durante a calibragem: os pontos foram "
+        f"medidos na janela em ({inicial[0]}, {inicial[1]}) de "
+        f"{inicial[2]}x{inicial[3]}, e no fim ela estava em "
+        f"({final[0]}, {final[1]}) de {final[2]}x{final[3]}.\n"
+        f"      Feche as outras janelas do Edge e, do começo ao fim, use só a "
+        f"janela que a calibragem abriu - sem arrastar e sem mudar o tamanho."
+    )
 
 
 def _preparar_formulario_sefaz_es(
@@ -355,6 +424,34 @@ def _medir_ponto_condicional(
         print("    3. espere a janelinha 'Certidao Valida Encontrada' abrir")
         print()
         print("  NAO clique em 'Emitir Nova Certidao' - so vamos apontar para ele.")
+        print("  Use ESTA mesma janela do Edge: nao abra outra, nao arraste para")
+        print("  outro monitor e nao mude o tamanho dela.")
+        input("  Enter quando a janelinha estiver aberta... ")
+
+        pontos["botao_emitir_nova"] = _ler_ponto_valido(
+            perfil,
+            "botao_emitir_nova",
+            "o botao azul 'EMITIR NOVA CERTIDAO' da janelinha",
+            janela,
+            pontos,
+        )
+        return
+
+    if perfil.codigo == "rfb_pf":
+        print()
+        print("-" * 70)
+        print("  FALTA UM: o botao 'EMITIR NOVA CERTIDAO'.")
+        print("  Ele so aparece quando a pessoa ja tem certidao valida.")
+        print()
+        print("  Faca agora, com a sua mao, na janela do Edge:")
+        print("    1. digite o CPF e a data de nascimento de alguem que JA")
+        print("       tenha certidao emitida (um que o robo ja emitiu serve)")
+        print("    2. clique em 'Emitir Certidao'")
+        print("    3. espere a janelinha 'Certidao Valida Encontrada' abrir")
+        print()
+        print("  NAO clique em 'Emitir Nova Certidao' - so vamos apontar para ele.")
+        print("  Use ESTA mesma janela do Edge: nao abra outra, nao arraste para")
+        print("  outro monitor e nao mude o tamanho dela.")
         input("  Enter quando a janelinha estiver aberta... ")
 
         pontos["botao_emitir_nova"] = _ler_ponto_valido(
@@ -413,7 +510,13 @@ def conferir(origem: Path, destino_imagem: Path,
         janela = entrada_real.retangulo_janela(perfil.titulo_janela,
                                                perfil.executavel) or janela
 
-    imagem = tela.capturar().convert("RGB")
+    foto = tela.capturar()
+    # A marca é desenhada em coordenada da FOTO; a cor é lida em coordenada
+    # de tela. Com dois monitores as duas diferem pela origem da área de
+    # trabalho — e o `convert` não leva o `info` junto.
+    origem_x, origem_y = foto.info.get("origem", (0, 0))
+    imagem = foto.convert("RGB")
+    imagem.info["origem"] = (origem_x, origem_y)
     desenho = ImageDraw.Draw(imagem)
 
     print()
@@ -435,6 +538,7 @@ def conferir(origem: Path, destino_imagem: Path,
               f"esperado: {rotulo}")
 
         contorno = (255, 0, 0) if not ok else (0, 170, 0)
+        x, y = x - origem_x, y - origem_y
         desenho.ellipse([x - 26, y - 26, x + 26, y + 26],
                         outline=contorno, width=5)
         desenho.line([x - 40, y, x + 40, y], fill=contorno, width=2)
@@ -469,6 +573,9 @@ def calibrar(destino: Path, orgao: str | None = None) -> Calibragem:
     print()
     if perfil.codigo == "rfb_cego":
         print("  Tenha a mao o CNPJ 32874104000111 - voce vai precisar dele no fim.")
+    elif perfil.codigo == "rfb_pf":
+        print("  Tenha a mao CPF e data de nascimento de alguem com certidao")
+        print("  ja emitida - voce vai precisar deles no fim.")
     elif perfil.codigo == "sefaz_es":
         print("  Tenha a mao um CNPJ que emita certidao no ES.")
         print("  A etapa final abre uma emissao real para medir o visor do PDF.")
@@ -513,11 +620,17 @@ def calibrar(destino: Path, orgao: str | None = None) -> Calibragem:
 
     _medir_ponto_condicional(perfil, janela, pontos)
 
+    inicial = janela
     janela = entrada_real.retangulo_janela(perfil.titulo_janela,
                                            perfil.executavel) or janela
-    problemas = _validar(pontos, cor_fundo or (0, 0, 0), janela,
-                         perfil.pontos_necessarios,
-                         tuple(perfil.pontos_condicionais))
+    if mudou := _janela_mudou(inicial, janela):
+        # Um recado só, com a causa: listar cada ponto "fora da janela"
+        # esconderia que o problema é a janela, e não os pontos.
+        problemas = [mudou]
+    else:
+        problemas = _validar(pontos, cor_fundo or (0, 0, 0), janela,
+                             perfil.pontos_necessarios,
+                             tuple(perfil.pontos_condicionais))
 
     print()
     print("=" * 70)

@@ -33,6 +33,7 @@ import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import ClassVar
 
 from cnd.adapters.federal.rfb import matriz as rfb_matriz
 from cnd.adapters.federal.rfb.pdf import ler_pdf
@@ -319,6 +320,14 @@ class Calibragem:
 
 @dataclass
 class AdapterRFBCego:
+    # O que muda de um formulário da Receita para outro. O resto — sessão
+    # por emissão, leitura da faixa e do texto, cookies, PDF — é o mesmo
+    # portal, e o adapter de pessoa física herda tudo (ver `cego_pf`).
+    url_formulario: ClassVar[str] = URL_FORMULARIO
+    pontos_necessarios: ClassVar[tuple[str, ...]] = PONTOS_NECESSARIOS
+    ponto_documento: ClassVar[str] = "campo_cnpj"
+    padrao_pdf: ClassVar[str] = "Certidao-{documento}*.pdf"
+
     orgao: str
     cfg: Config
     pasta_downloads: Path
@@ -338,9 +347,10 @@ class AdapterRFBCego:
     # ------------------------------------------------------------------
     def preparar(self) -> None:
         self._calibragem = Calibragem.carregar(self.caminho_calibragem)
-        self._calibragem.conferir()
+        self._calibragem.conferir(pontos_necessarios=self.pontos_necessarios)
         self._abrir_navegador()
-        self._calibragem.conferir(self._janela())
+        self._calibragem.conferir(self._janela(),
+                                  pontos_necessarios=self.pontos_necessarios)
 
     def _abrir_navegador(self) -> None:
         """Abre o Edge como uma pessoa abriria: só o executável e uma URL.
@@ -353,7 +363,7 @@ class AdapterRFBCego:
         self.encerrar()
         self._emissoes_na_sessao = 0
         subprocess.Popen([_achar_edge(), "--new-window", "--start-maximized",
-                          URL_FORMULARIO])
+                          self.url_formulario])
         # Espera a janela existir, em vez de dormir um tempo fixo. Eram 9
         # segundos por abertura, e com uma abertura por item isso sozinho
         # respondia por quase 3 horas num lote de 2.800.
@@ -627,7 +637,7 @@ class AdapterRFBCego:
         self._ultimo_texto_portal = None
         self._renovar_sessao_se_gasta()
         self._focar()
-        entrada_real.ir_para_url(URL_FORMULARIO)
+        entrada_real.ir_para_url(self.url_formulario)
         if not self._esperar_formulario() and self._recusado_por_cookies():
             # Sem esta saída, o robô digitaria o CNPJ na página de erro do
             # nginx e esperaria 45 segundos por um PDF impossível — foi o que
@@ -636,12 +646,7 @@ class AdapterRFBCego:
 
         self._limpar_downloads_antigos(documento)
 
-        # Digitar o CNPJ
-        self._exigir_foco()
-        entrada_real.clicar(*self._ponto("campo_cnpj"))
-        time.sleep(random.uniform(0.2, 0.5))
-        entrada_real.limpar_campo()
-        entrada_real.digitar(documento)
+        self._preencher_formulario(documento)
         time.sleep(random.uniform(0.7, 1.8))     # confere o que digitou
 
         # Enviar
@@ -656,6 +661,15 @@ class AdapterRFBCego:
             # Regra de negócio: sempre emitir nova. A certidão vale 180
             # dias, mas quem recebe exige emissão do mês corrente.
             log.info("modal_certidao_vigente", extra={"orgao": self.orgao})
+            if "botao_emitir_nova" not in self._calibragem.pontos:
+                # Obrigatório na calibragem, mas uma feita antes de ele passar
+                # a ser pode não tê-lo. Clicar num ponto que não existe seria
+                # clicar às cegas.
+                raise CalibragemAusente(
+                    "o portal abriu a janela de certidão vigente, mas o botão "
+                    "'Emitir Nova Certidão' não foi calibrado: rode "
+                    "`cnd calibrar` de novo e meça-o"
+                )
             time.sleep(random.uniform(*PAUSA_ANTES_EMITIR_NOVA_S))
             self._exigir_foco()
             entrada_real.clicar(*self._ponto("botao_emitir_nova"))
@@ -667,6 +681,19 @@ class AdapterRFBCego:
             )
 
         return reacao, caminho_baixado
+
+    def _preencher_formulario(self, documento: str) -> None:
+        """Digita o documento no campo calibrado.
+
+        Separado do `_submeter` porque é a única parte do ciclo que muda de
+        um formulário da Receita para outro: o de CPF ainda pede a data de
+        nascimento.
+        """
+        self._exigir_foco()
+        entrada_real.clicar(*self._ponto(self.ponto_documento))
+        time.sleep(random.uniform(0.2, 0.5))
+        entrada_real.limpar_campo()
+        entrada_real.digitar(documento)
 
     def _renovar_sessao_se_gasta(self) -> None:
         """Janela nova quando a atual já emitiu o que o portal tolera.
@@ -736,7 +763,8 @@ class AdapterRFBCego:
         campo = botao = None
         while time.monotonic() < limite:
             imagem = tela.capturar()
-            campo = tela.cor_media(imagem, *self._ponto("campo_cnpj"), raio=5)
+            campo = tela.cor_media(imagem, *self._ponto(self.ponto_documento),
+                                   raio=5)
             botao = tela.cor_media(imagem, *self._ponto("botao_emitir"), raio=5)
             if tela.brilho(campo) > BRILHO_DO_CAMPO and _parece_botao(botao):
                 log.info("formulario_pronto",
@@ -851,7 +879,7 @@ class AdapterRFBCego:
 
     def _pdf_pronto(self, documento: str) -> Path | None:
         """PDF já terminado de baixar, ou None."""
-        for arquivo in self.pasta_downloads.glob(f"Certidao-{documento}*.pdf"):
+        for arquivo in self._pdfs_do_documento(documento):
             try:
                 tamanho = arquivo.stat().st_size
             except OSError:
@@ -865,6 +893,19 @@ class AdapterRFBCego:
             except OSError:
                 continue
         return None
+
+    def _pdfs_do_documento(self, documento: str) -> list[Path]:
+        """PDFs da pasta de downloads com ESTE documento no nome.
+
+        O número precisa estar solto, sem outro dígito colado: os 11 dígitos
+        de um CPF cabem dentro dos 14 de um CNPJ, e o padrão da PF aceita
+        qualquer nome. Sem isto, a certidão de uma empresa esquecida na pasta
+        seria entregue como a de uma pessoa — sem erro nenhum.
+        """
+        solto = re.compile(rf"(?<!\d){re.escape(documento)}(?!\d)")
+        return [arquivo for arquivo in self.pasta_downloads.glob(
+                    self.padrao_pdf.format(documento=documento))
+                if solto.search(arquivo.stem)]
 
     def _pontos_do_modal(self) -> list[tuple[int, int]]:
         janela = self._janela()
@@ -884,7 +925,7 @@ class AdapterRFBCego:
 
     def _limpar_downloads_antigos(self, documento: str) -> None:
         """Um PDF da tentativa anterior faria o robô achar que deu certo."""
-        for antigo in self.pasta_downloads.glob(f"Certidao-{documento}*.pdf"):
+        for antigo in self._pdfs_do_documento(documento):
             with contextlib.suppress(OSError):
                 antigo.unlink()
 
@@ -1180,10 +1221,16 @@ def _achar_edge() -> str:
 
 
 def criar(orgao: ConfigOrgao, cfg: Config) -> AdapterRFBCego:
+    return criar_com(AdapterRFBCego, orgao, cfg)
+
+
+def criar_com(classe: type[AdapterRFBCego], orgao: ConfigOrgao,
+              cfg: Config) -> AdapterRFBCego:
+    """Monta qualquer adapter cego da Receita a partir do config."""
     from cnd.infra.db import RAIZ_PROJETO
 
     pasta = orgao.extras.get("pasta_downloads")
-    return AdapterRFBCego(
+    return classe(
         orgao=orgao.codigo,
         cfg=cfg,
         pasta_downloads=Path(pasta) if pasta else (Path.home() / "Downloads"),

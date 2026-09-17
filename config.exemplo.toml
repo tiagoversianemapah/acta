@@ -478,5 +478,51 @@ backoff_bloqueio_s = [300, 900, 1800]
 
 [orgaos.RFB_PF]
 ativo   = false
+# Robô cego, como a PJ: o formulário de CPF também barra Playwright (código
+# 106 nos dois CPFs tentados em 17/09/2026). Calibre com
+# `cnd calibrar --orgao RFB_PF` antes de ligar.
 adapter = "rfb_pf"
 workers = 1
+nome    = "RECEITA FEDERAL - PESSOA FISICA"
+# pasta_downloads = "C:/Users/tiago/Downloads"   # padrão: Downloads do usuário
+# Mesmo portal da PJ, mesma contagem de emissões por janela.
+emissoes_por_sessao = 1
+
+# O mouse é um só: RFB_PJ e RFB_PF não podem rodar ligados na mesma máquina.
+# Os dois matam e reabrem o Edge a cada item.
+
+[orgaos.RFB_PF.pacing]
+intervalo_inicial_s = 12.0
+intervalo_piso_s    = 4.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.35
+janela_ativa        = "00:00-24:00"
+
+[orgaos.RFB_PF.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+cooldown_erro_inicial_s = 5
+cooldown_erro_maximo_s  = 60
+pendentes_para_pausar   = 3
+cooldown_pendente_s     = 1800
+
+[orgaos.RFB_PF.recuperacao]         # igual à PJ — ver a explicação lá
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.RFB_PF.retry]               # igual à PJ — ver a explicação lá
+max_tentativas     = 3
+backoff_erro_s     = [5, 30, 120]
+backoff_captcha_s  = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+retentativa_bloqueio_s = [30, 90]

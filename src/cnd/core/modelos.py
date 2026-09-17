@@ -79,6 +79,9 @@ class Documento:
     tipo: str               # 'CNPJ' | 'CPF'
     nome: str
     lote_id: int = 0        # usado só para organizar a pasta dos PDFs
+    # Só a Receita PF usa: o formulário de CPF não emite sem ela. Vem da
+    # planilha, porque o portal não tem de onde tirá-la.
+    data_nascimento: date | None = None
 
 
 @dataclass(frozen=True)

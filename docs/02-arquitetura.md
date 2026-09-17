@@ -15,8 +15,9 @@ dependência externa de infraestrutura — ver
 é justamente o que a fronteira do adapter isola. Hoje há duas técnicas em uso, e
 a diferença nasceu do portal e não de preferência: a Receita **detecta**
 automação de navegador (teste A/B em 07/08/2026, mesmo CNPJ e mesmo IP — a
-consulta manual passou e a do robô tomou bloqueio 106), e a SEFAZ-ES não libera
-Turnstile em Playwright/CDP. Por isso `rfb_cego` e `sefaz_es` abrem o Edge comum
+consulta manual passou e a do robô tomou bloqueio 106; o formulário de CPF deu
+o mesmo 106 ao Playwright em 17/09/2026), e a SEFAZ-ES não libera
+Turnstile em Playwright/CDP. Por isso `rfb_cego`, `rfb_pf` e `sefaz_es` abrem o Edge comum
 e mexem no **mouse e no teclado do Windows** por cima, via `SendInput`, lendo a
 tela por pixel. O CRF da Caixa usa ShieldSquare/Radware, que barra `urllib` mas
 **não** barrou o Playwright dirigindo o Edge, então o `crf` é **por elemento** —
@@ -78,7 +79,7 @@ Processo único, dono de todas as decisões de **quando** e **o quê** executar:
 ### 2.4 Workers
 
 - Concorrência inicial: **1 worker por órgão** (`[orgaos.*] workers`).
-- **Receita Federal (`rfb_cego`) e SEFAZ-ES (`sefaz_es`)** — sem navegador automatizado. O Edge comum é
+- **Receita Federal (`rfb_cego` para CNPJ, `rfb_pf` para CPF) e SEFAZ-ES (`sefaz_es`)** — sem navegador automatizado. O Edge comum é
   dirigido por `SendInput`: cursor em curva de Bézier com tremor, cliques do
   sistema, digitação tecla por tecla (a máscara do campo de CNPJ é acionada por
   tecla, e preencher de uma vez faz o portal recusar documento válido). Enxerga
@@ -179,8 +180,9 @@ acta/
 │   │   ├── calibragem.py      # ensina ao robô cego onde ficam os campos
 │   │   ├── fake.py            # órgão de mentira, para ensaiar sem portal
 │   │   ├── federal/
-│   │   │   ├── rfb/           # um órgão em quatro peças, agrupadas
+│   │   │   ├── rfb/           # um órgão em várias peças, agrupadas
 │   │   │   │   ├── cego.py    # Receita Federal PJ, por mouse e teclado reais ← ativo
+│   │   │   │   ├── cego_pf.py # Receita Federal PF, o mesmo robô cego no formulário de CPF
 │   │   │   │   ├── pj.py      # o mesmo portal por Playwright — DETECTADO, desligado
 │   │   │   │   ├── matriz.py  # leitura da certidão da matriz
 │   │   │   │   └── pdf.py     # leitura do PDF da Receita

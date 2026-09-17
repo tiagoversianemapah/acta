@@ -12,15 +12,39 @@ from PIL import ImageGrab, ImageStat
 
 
 def capturar(caminho: Path | None = None):
-    """Foto da tela inteira. Se `caminho` vier, salva junto."""
-    imagem = ImageGrab.grab(all_screens=False)
+    """Foto de TODOS os monitores. Se `caminho` vier, salva junto.
+
+    Era só o principal. Com o Edge num segundo monitor — à esquerda, onde as
+    coordenadas são negativas —, todo ponto caía fora da foto e a cor saía
+    (0, 0, 0): a calibragem recusava a "página escura" e o robô não veria
+    formulário nem faixa (17/09/2026). O mouse já trabalhava na área de
+    trabalho inteira; faltava a foto acompanhar.
+
+    A foto começa no canto da área de trabalho, não no (0, 0) da tela
+    principal, e esse deslocamento vai junto em `info["origem"]`. Com um
+    monitor só, a origem é (0, 0) e nada muda.
+    """
+    # Importado aqui, e não no topo: é ele que liga a leitura por monitor
+    # do DPI, e a foto precisa sair na mesma escala das coordenadas do mouse.
+    from cnd.infra.entrada_real import tela_virtual
+
+    origem_x, origem_y, _largura, _altura = tela_virtual()
+    imagem = ImageGrab.grab(all_screens=True)
+    imagem.info["origem"] = (origem_x, origem_y)
     if caminho:
         caminho.parent.mkdir(parents=True, exist_ok=True)
         imagem.save(caminho)
     return imagem
 
 
+def _na_imagem(imagem, x: int, y: int) -> tuple[int, int]:
+    """Coordenada de tela para coordenada dentro da foto."""
+    origem_x, origem_y = getattr(imagem, "info", {}).get("origem", (0, 0))
+    return int(x) - origem_x, int(y) - origem_y
+
+
 def cor_em(imagem, x: int, y: int) -> tuple[int, int, int]:
+    x, y = _na_imagem(imagem, x, y)
     largura, altura = imagem.size
     x = max(0, min(int(x), largura - 1))
     y = max(0, min(int(y), altura - 1))
@@ -30,6 +54,7 @@ def cor_em(imagem, x: int, y: int) -> tuple[int, int, int]:
 
 def cor_media(imagem, x: int, y: int, raio: int = 6) -> tuple[int, int, int]:
     """Média de uma vizinhança — imune a um pixel isolado de borda ou texto."""
+    x, y = _na_imagem(imagem, x, y)
     largura, altura = imagem.size
     esquerda = max(0, x - raio)
     topo = max(0, y - raio)

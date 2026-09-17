@@ -94,7 +94,7 @@ def montar(obter_config: Callable[[], Config],
         """
         cfg = obter_config()
         adapter_cego = next(
-            (o.adapter for o in cfg.ativos() if o.adapter in {"rfb_cego", "sefaz_es"}),
+            (o.adapter for o in cfg.ativos() if o.adapter in {"rfb_cego", "rfb_pf", "sefaz_es"}),
             "rfb_cego",
         )
         with contextlib.closing(abrir_leitura()) as conn:

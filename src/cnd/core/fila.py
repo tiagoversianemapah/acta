@@ -7,6 +7,7 @@ garante que dois workers nunca peguem o mesmo item — ver ADR-002.
 from __future__ import annotations
 
 import sqlite3
+from datetime import date
 
 from cnd.core import controle, tempo
 from cnd.core.modelos import (
@@ -44,7 +45,7 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
         linha = conn.execute(
             """
             SELECT j.id, j.lote_id, j.tentativas, j.empresa_id,
-                   e.documento, e.tipo_documento, e.nome
+                   e.documento, e.tipo_documento, e.nome, e.data_nascimento
               FROM job j
               JOIN empresa e ON e.id = j.empresa_id
               -- LEFT JOIN, e COALESCE no lugar do NULL: quase nenhuma
@@ -90,6 +91,8 @@ def reivindicar(conn: sqlite3.Connection, orgao: str) -> JobReivindicado | None:
             tipo=linha["tipo_documento"],
             nome=linha["nome"],
             lote_id=linha["lote_id"],
+            data_nascimento=(date.fromisoformat(linha["data_nascimento"])
+                             if linha["data_nascimento"] else None),
         ),
     )
 

@@ -1,0 +1,72 @@
+# Config ISOLADO para o piloto da Receita PF nesta máquina, sem tocar na base
+# de produção: banco e pastas próprios, só o RFB_PF ligado. Ritmo, disjuntor,
+# tentativas e recuperação são os mesmos da RFB_PJ.
+#
+# O robô é cego: ele toma o mouse e o teclado. Ninguém mexe no computador
+# enquanto os comandos 1 e 3 rodam.
+#
+#   1. python -m cnd.cli calibrar --orgao RFB_PF
+#   2. python -m cnd.cli importar data/teste_rfb_pf/teste-pf.xlsx --abas CPF --config config.rfb-pf-teste.toml
+#   3. python -m cnd.cli rodar --config config.rfb-pf-teste.toml --ate-esvaziar
+#
+# Os PDFs saem em data/teste_rfb_pf/certidoes/, e os prints de falha em
+# data/teste_rfb_pf/evidencias/RFB_PF/{cpf}/.
+
+[geral]
+banco = "data/teste_rfb_pf/cnd.db"
+pasta_certidoes = "data/teste_rfb_pf/certidoes"
+pasta_evidencias = "data/teste_rfb_pf/evidencias"
+pasta_logs = "data/teste_rfb_pf/logs"
+
+[rede]
+papel = "robo"
+senha = ""
+
+[alertas]
+metodo = "teams"
+teams_webhook = ""
+
+[orgaos.RFB_PF]
+ativo = true
+adapter = "rfb_pf"
+workers = 1
+nome = "RECEITA FEDERAL - PESSOA FISICA"
+emissoes_por_sessao = 1
+
+[orgaos.RFB_PF.pacing]
+intervalo_inicial_s = 12.0
+intervalo_piso_s = 4.0
+intervalo_teto_s = 600.0
+acelera_apos = 20
+fator_aceleracao = 0.85
+fator_punicao = 3.0
+fator_punicao_bloqueio = 1.4
+jitter = 0.35
+janela_ativa = "00:00-24:00"
+
+[orgaos.RFB_PF.breaker]
+captchas_para_abrir = 3
+janela_jobs = 10
+erros_para_abrir = 5
+cooldown_inicial_s = 1800
+cooldown_maximo_s = 9000
+cooldown_erro_inicial_s = 5
+cooldown_erro_maximo_s = 60
+pendentes_para_pausar = 3
+cooldown_pendente_s = 1800
+
+# Recuperação e tentativas iguais às da RFB_PJ: o portal é o mesmo, e o
+# piloto precisa mostrar como o robô se comporta de verdade.
+[orgaos.RFB_PF.recuperacao]
+ativa = true
+espera_inicial_s = 1800
+fator = 2.0
+espera_maxima_s = 21600
+avisar_apos = 5
+
+[orgaos.RFB_PF.retry]
+max_tentativas = 3
+backoff_erro_s = [5, 30, 120]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+retentativa_bloqueio_s = [30, 90]

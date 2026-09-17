@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS empresa (
     id             INTEGER PRIMARY KEY,
     documento      TEXT NOT NULL UNIQUE,
     tipo_documento TEXT NOT NULL CHECK (tipo_documento IN ('CNPJ','CPF')),
-    nome           TEXT NOT NULL
+    nome           TEXT NOT NULL,
+    -- AAAA-MM-DD. Só CPF tem, e só a Receita PF usa: o formulário dela não
+    -- emite sem a data. Bancos anteriores ganham a coluna em db.criar_schema.
+    data_nascimento TEXT
 );
 
 CREATE TABLE IF NOT EXISTS lote (

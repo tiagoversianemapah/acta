@@ -197,7 +197,9 @@ e o robô morre ao subir o worker.
    - `maquinas = []` — máquina de robô não consulta ninguém
    - o órgão que ela atende, em `[orgaos.*]`, com `nome` de exibição
 3. calibre o robô cego naquela tela:
-   `cnd.exe calibrar` para Receita, ou
+   `cnd.exe calibrar` para Receita PJ,
+   `cnd.exe calibrar --orgao RFB_PF` para Receita PF (é outro formulário,
+   com o campo da data de nascimento), ou
    `cnd.exe calibrar --orgao SEFAZ_ES` para Espírito Santo. A calibragem é
    guardada em proporções da janela, mas a posição dos campos ainda depende do
    zoom e da resolução dela;

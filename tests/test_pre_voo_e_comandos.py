@@ -109,9 +109,9 @@ class TestComandosPelaRede:
             'adapter = "crf"\n'
             "workers = 1\n"
             "\n"
-            "[orgaos.RFB_PF]\n"
+            "[orgaos.SEFAZ_DF]\n"
             "ativo = false\n"
-            'adapter = "rfb_pf"\n'
+            'adapter = "sefaz_df"\n'
             "workers = 1\n",
             encoding="utf-8",
         )
@@ -166,14 +166,14 @@ class TestComandosPelaRede:
             monkeypatch, tmp_path)
         with cliente:
             resposta = cliente.post(
-                "/api/orgao/RFB_PF/ativo",
+                "/api/orgao/SEFAZ_DF/ativo",
                 headers={"X-CND-Senha": "segredo"},
                 data={"ativo": "true"},
             )
 
         assert resposta.status_code == 409
-        assert "Adapter rfb_pf não existe" in resposta.json()["detail"]
-        assert carregar_config(arquivo).orgaos["RFB_PF"].ativo is False
+        assert "Adapter sefaz_df não existe" in resposta.json()["detail"]
+        assert carregar_config(arquivo).orgaos["SEFAZ_DF"].ativo is False
 
     def test_area_bloqueada_recusa_com_motivo(self, monkeypatch, tmp_path):
         """O robô move o mouse de verdade; com a estação bloqueada ele

@@ -73,3 +73,29 @@ def garantir(caminho: Path | None = None) -> None:
 def criar_schema(conn: sqlite3.Connection) -> None:
     """Cria as tabelas. Seguro chamar sempre que o sistema iniciar."""
     conn.executescript(CAMINHO_SCHEMA.read_text(encoding="utf-8"))
+    _acrescentar_colunas(conn)
+
+
+# Colunas que nasceram depois de haver banco em produção. O `CREATE TABLE IF
+# NOT EXISTS` do schema não mexe em tabela que já existe, então sem isto a
+# máquina atualizada abriria o banco antigo e quebraria no primeiro SELECT
+# que pedisse a coluna nova.
+COLUNAS_ACRESCENTADAS = (
+    ("empresa", "data_nascimento", "TEXT"),
+)
+
+
+def _acrescentar_colunas(conn: sqlite3.Connection) -> None:
+    for tabela, coluna, tipo in COLUNAS_ACRESCENTADAS:
+        existentes = {linha[1] for linha in
+                      conn.execute(f"PRAGMA table_info({tabela})")}
+        if coluna in existentes:
+            continue
+        try:
+            conn.execute(f"ALTER TABLE {tabela} ADD COLUMN {coluna} {tipo}")
+        except sqlite3.OperationalError as erro:
+            # O aplicativo e o robô sobem juntos e os dois passam por aqui:
+            # quem chegar segundo encontra a coluna que o outro acabou de
+            # criar. Não é falha — é a migração já feita.
+            if "duplicate column" not in str(erro).lower():
+                raise
