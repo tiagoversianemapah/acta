@@ -983,7 +983,10 @@ def ping():
     }
     if not vivo:
         corpo["motivo"] = (
-            f"{pendentes} itens na fila e o robô nunca foi iniciado"
+            # Sem sinal nenhum: ou nunca rodou, ou encerrou de propósito e
+            # apagou o dele (infra/heartbeat.apagar). Para quem lê de fora, o
+            # que importa é o mesmo: não há robô trabalhando esta fila.
+            f"{pendentes} itens na fila e o robô não está em execução"
             if idade is None else
             f"{pendentes} itens na fila e sem sinal de vida há "
             f"{idade / 60:.0f} minutos")
@@ -1142,7 +1145,8 @@ async def _salvar_planilha_temporaria(arquivo: UploadFile) -> Path:
 
 
 def _importar_planilha_local(caminho: Path, aba: str = "",
-                             orgao: str = "", nome: str = "") -> dict:
+                             orgao: str = "", nome: str = "",
+                             pares: list[tuple[str, str]] | None = None) -> dict:
     from cnd.ingestao.planilha import importar
 
     conn = conectar(cfg.banco)
@@ -1152,6 +1156,7 @@ def _importar_planilha_local(caminho: Path, aba: str = "",
         lote_id, leitura = importar(
             conn, caminho, f"Importacao de {nome_lote}",
             [aba] if aba else None, orgao or None, arquivo_origem=nome_lote,
+            pares=pares,
         )
         resposta = {
             "lote": lote_id,
@@ -1355,22 +1360,36 @@ async def acao_confirmar_planilha(
         criados = rejeitados = 0
         detalhes: list[dict] = []
         ultimo_lote = None
-        for aba, escolhido in pares:
-            if cfg.rede.maquinas:
-                if indice is None or not (0 <= indice < len(cfg.rede.maquinas)):
-                    raise ValueError("Máquina não encontrada.")
-                resposta = remoto.enviar_planilha(
-                    cfg.rede.maquinas[indice], caminho, cfg.rede.senha,
-                    aba=aba, orgao=escolhido, nome=guardada["nome"])
-            else:
-                if indice not in (0, None) or not cfg.rede.roda_robo:
-                    raise ValueError("Máquina não encontrada.")
-                resposta = _importar_planilha_local(
-                    caminho, aba, escolhido, guardada["nome"])
+
+        def somar(resposta: dict) -> None:
+            nonlocal criados, rejeitados, ultimo_lote
             criados += int(resposta.get("criados") or 0)
             rejeitados += int(resposta.get("total_rejeitados") or 0)
             detalhes.extend(resposta.get("rejeitados") or [])
             ultimo_lote = int(resposta.get("lote") or 0) or ultimo_lote
+
+        # Todas as abas num lote só: a planilha é uma. Ver planilha.importar.
+        if cfg.rede.maquinas:
+            if indice is None or not (0 <= indice < len(cfg.rede.maquinas)):
+                raise ValueError("Máquina não encontrada.")
+            maquina_destino = cfg.rede.maquinas[indice]
+            resposta = remoto.enviar_planilha(
+                maquina_destino, caminho, cfg.rede.senha,
+                nome=guardada["nome"], pares=pares)
+            somar(resposta)
+            if "pares" not in resposta:
+                # Robô de versão anterior: importou só a primeira aba. As
+                # outras vão uma por uma, como antes — lotes separados, mas
+                # nenhuma aba perdida.
+                for aba, escolhido in pares[1:]:
+                    somar(remoto.enviar_planilha(
+                        maquina_destino, caminho, cfg.rede.senha,
+                        aba=aba, orgao=escolhido, nome=guardada["nome"]))
+        else:
+            if indice not in (0, None) or not cfg.rede.roda_robo:
+                raise ValueError("Máquina não encontrada.")
+            somar(_importar_planilha_local(
+                caminho, nome=guardada["nome"], pares=pares))
 
         resumo = {"criados": criados, "total_rejeitados": rejeitados,
                   "rejeitados": detalhes}
@@ -1627,17 +1646,25 @@ def _sufixo_download(orgaos: tuple[str, ...]) -> str:
     return "_" + re.sub(r"[^0-9a-z_]+", "_", orgaos[0].lower()).strip("_")
 
 
-@app.get("/relatorio/{mes}.xlsx")
-def baixar_relatorio(request: Request, mes: str):
-    """Planilha do mês, opcionalmente filtrada por automações.
+def _sufixo_do_recorte(lote: int | None) -> str:
+    """No nome do arquivo: de qual planilha ele é, quando não é o mês."""
+    return "" if lote is None else f"_planilha{lote}"
 
-    Mesmo recorte do pacote de certidões e da tela: quem marca Receita e
-    SEFAZ-GO espera receber só essas automações no arquivo.
+
+@app.get("/relatorio/{mes}.xlsx")
+def baixar_relatorio(request: Request, mes: str, lote: int | None = None):
+    """Resultado de cada empresa, em Excel.
+
+    `lote` entrega só a PLANILHA ENVIADA, que é o padrão da tela: quem
+    manda um arquivo quer o resultado dele, e não de tudo o que a máquina
+    já fez no mês. Sem `lote`, vale o mês inteiro. Os dois aceitam o
+    recorte por automação, o mesmo do pacote de certidões.
     """
     orgaos = _orgaos_do_download(request)
     with contextlib.closing(ler()) as conn:
-        conteudo = relatorio.gerar_bytes(conn, relatorio.Recorte(mes, orgaos))
-    sufixo = _sufixo_download(orgaos)
+        conteudo = relatorio.gerar_bytes(
+            conn, relatorio.Recorte(mes, orgaos, lote=lote))
+    sufixo = _sufixo_do_recorte(lote) + _sufixo_download(orgaos)
     return Response(
         conteudo,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1649,8 +1676,12 @@ def baixar_relatorio(request: Request, mes: str):
 @app.get("/certidoes/{mes}.zip")
 def baixar_pdfs(
     request: Request, mes: str, somente_negativas: bool = False,
+    lote: int | None = None,
 ):
-    """Pacote das certidões emitidas no mês (`2026-08`), por automações.
+    """Pacote dos PDFs das certidões.
+
+    `?lote=` entrega as certidões daquela PLANILHA ENVIADA — o padrão da
+    tela. Sem ele, vale o mês (`2026-08`), que é a entrega mensal fechada.
 
     `?somente_negativas=1` deixa de fora as CPEN, para quem precisa só das
     empresas totalmente limpas. Repetir `?orgao=...` entrega só as
@@ -1661,9 +1692,9 @@ def baixar_pdfs(
         conteudo = relatorio.zipar_pdfs(
             conn, mes, somente_negativas,
             nomes={codigo: o.rotulo for codigo, o in cfg.orgaos.items()},
-            orgao=orgaos)
+            orgao=orgaos, lote=lote)
     sufixo = "_negativas" if somente_negativas else ""
-    sufixo = _sufixo_download(orgaos) + sufixo
+    sufixo = _sufixo_do_recorte(lote) + _sufixo_download(orgaos) + sufixo
     return Response(
         conteudo, media_type="application/zip",
         headers={"Content-Disposition":

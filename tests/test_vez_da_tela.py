@@ -28,52 +28,78 @@ from tests.conftest import criar_job
 # A regra, sem thread nenhuma
 # ---------------------------------------------------------------------------
 def test_automacoes_que_dividem_a_tela():
-    """Cegas e o CRF, que abre Edge visível. GO e MA são HTTP e ficam soltas."""
-    from cnd.adapters.estadual import sefaz_go, sefaz_ma
-    from cnd.adapters.estadual.sefaz_es import AdapterSEFAZES
-    from cnd.adapters.federal.crf import AdapterCRF
-    from cnd.adapters.federal.rfb.cego import AdapterRFBCego
-    from cnd.adapters.federal.rfb.cego_pf import AdapterRFBPFCego
+    """Cegas e o CRF, que abre Edge visível. GO e MA são HTTP e ficam soltas.
 
-    for classe in (AdapterRFBCego, AdapterRFBPFCego, AdapterSEFAZES, AdapterCRF):
-        assert classe.usa_tela is True, classe.__name__
-    for modulo in (sefaz_go, sefaz_ma):
-        adapters = [v for v in vars(modulo).values()
-                    if isinstance(v, type) and v.__name__.startswith("Adapter")]
-        assert adapters, modulo.__name__
-        assert not any(getattr(a, "usa_tela", False) for a in adapters)
+    O aviso é do MÓDULO: o orquestrador precisa saber quem disputa a tela
+    antes de instanciar adapter nenhum — instanciar já abre navegador.
+    """
+    from cnd.adapters.base import usa_tela
+
+    for adapter in ("rfb_cego", "rfb_pf", "sefaz_es", "crf"):
+        assert usa_tela(adapter) is True, adapter
+    for adapter in ("sefaz_go", "sefaz_ma", "fake"):
+        assert usa_tela(adapter) is False, adapter
+
+
+def _vez(conn, *orgaos) -> VezDaTela:
+    vez = VezDaTela()
+    vez.registrar(orgaos)
+    return vez
 
 
 class TestAVez:
-    def test_primeira_da_fila_tem_a_vez(self):
-        vez = VezDaTela()
-        vez.anunciar("RFB_PF", (0, 1, 10))
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
+    def test_primeira_da_fila_tem_a_vez(self, conn, lote):
+        """A planilha que chegou primeiro manda, e não quem perguntou antes."""
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
 
-        assert vez.e_a_vez("RFB_PF")
-        assert not vez.e_a_vez("SEFAZ_ES")
+        assert vez.quem_tem_a_vez(conn) == "RFB_PF"
 
-    def test_pausada_sai_da_disputa_e_a_seguinte_trabalha(self):
-        vez = VezDaTela()
-        vez.anunciar("RFB_PF", (0, 1, 10))
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
+    def test_rodar_agora_fura_a_fila_da_tela(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        controle.priorizar(conn, depois, "SEFAZ_ES")
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
 
-        vez.anunciar("RFB_PF", None)          # disjuntor abriu
+        assert vez.quem_tem_a_vez(conn) == "SEFAZ_ES"
 
-        assert vez.e_a_vez("SEFAZ_ES")
+    def test_pausada_sai_da_disputa_e_a_seguinte_trabalha(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
 
-    def test_quando_a_primeira_volta_a_vez_volta_para_ela(self):
-        vez = VezDaTela()
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
-        assert vez.e_a_vez("SEFAZ_ES")
+        vez.impedir("RFB_PF")                 # disjuntor abriu
 
-        vez.anunciar("RFB_PF", (0, 1, 10))    # pausa acabou
+        assert vez.quem_tem_a_vez(conn) == "SEFAZ_ES"
 
-        assert vez.e_a_vez("RFB_PF")
-        assert not vez.e_a_vez("SEFAZ_ES")
+        vez.impedir("RFB_PF", False)          # a pausa acabou
+        assert vez.quem_tem_a_vez(conn) == "RFB_PF"
 
-    def test_quem_nao_anunciou_nao_tem_a_vez(self):
-        assert not VezDaTela().e_a_vez("RFB_PF")
+    def test_so_retentativa_para_depois_nao_segura_a_tela(self, conn, lote):
+        job = criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        conn.execute("UPDATE job SET status = ?, proxima_execucao_em = ? "
+                     "WHERE id = ?", (Status.RETRY_WAIT, tempo.daqui_a(600), job))
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
+
+        assert vez.quem_tem_a_vez(conn) == "SEFAZ_ES"
+
+    def test_sem_fila_ninguem_tem_a_vez(self, conn):
+        assert _vez(conn, "RFB_PF", "SEFAZ_ES").quem_tem_a_vez(conn) is None
+
+    def test_planilha_estacionada_nao_segura_a_tela(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        controle.definir(conn, lote, "RFB_PF", controle.ESTACIONADA)
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
+
+        assert vez.quem_tem_a_vez(conn) == "SEFAZ_ES"
 
 
 class TestUsoDaTela:
@@ -262,10 +288,17 @@ class AdapterDeTela:
         pass
 
 
+# O adapter é escolhido pelo NOME, e é o nome que diz se o órgão disputa a
+# tela (adapters/base.usa_tela). O objeto em si é trocado pelo de teste.
+ADAPTERS = {"RFB_PF": "rfb_pf", "RFB_PJ": "rfb_cego", "SEFAZ_ES": "sefaz_es",
+            "CRF": "crf", "SEFAZ_GO": "sefaz_go"}
+
+
 def _config(tmp_path, banco, codigos) -> Config:
     orgaos = {
         codigo: ConfigOrgao(
-            codigo=codigo, ativo=True, adapter="fake", workers=1,
+            codigo=codigo, ativo=True, adapter=ADAPTERS.get(codigo, "fake"),
+            workers=1,
             pacing=ParametrosRitmo(intervalo_inicial_s=0.01, intervalo_piso_s=0.01,
                                    intervalo_teto_s=0.05, jitter=0.0),
             breaker=ParametrosBreaker(cooldown_inicial_s=0, cooldown_maximo_s=0),
@@ -343,23 +376,25 @@ def test_primeira_da_fila_retoma_a_tela_quando_volta(conn, lote, tmp_path,
 # O vigia não acusa de travada quem só espera a vez
 # ---------------------------------------------------------------------------
 class TestVigiaNaoAcusaQuemEspera:
-    def test_esperando_a_vez_dispensa_cobranca(self):
-        vez = VezDaTela()
-        vez.anunciar("RFB_PF", (0, 1, 10))
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
+    def test_esperando_a_vez_dispensa_cobranca(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="SEFAZ_ES")
+        vez = _vez(conn, "RFB_PF", "SEFAZ_ES")
 
-        assert vez.dispensa_cobranca("SEFAZ_ES", 1800)
-        assert not vez.dispensa_cobranca("RFB_PF", 1800), "a da vez é cobrada"
+        assert vez.dispensa_cobranca("SEFAZ_ES", 1800, conn)
+        assert not vez.dispensa_cobranca("RFB_PF", 1800, conn), "a da vez é cobrada"
 
-    def test_quem_acabou_de_receber_a_tela_tem_carencia(self):
-        vez = VezDaTela()
+    def test_quem_acabou_de_receber_a_tela_tem_carencia(self, conn, lote):
+        criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_ES")
+        vez = _vez(conn, "SEFAZ_ES")
         vez.preparar("RFB_PF", lambda: None)
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
         with vez.usar("SEFAZ_ES", lambda: None):
             pass
 
-        assert vez.dispensa_cobranca("SEFAZ_ES", 1800)
-        assert not vez.dispensa_cobranca("SEFAZ_ES", 0.0), "passada a carência, cobra"
+        assert vez.dispensa_cobranca("SEFAZ_ES", 1800, conn)
+        assert not vez.dispensa_cobranca("SEFAZ_ES", 0.0, conn), \
+            "passada a carência, cobra"
 
     def test_vigia_nao_abre_incidente_de_travada_para_quem_espera(
         self, conn, lote, tmp_path, monkeypatch
@@ -367,7 +402,10 @@ class TestVigiaNaoAcusaQuemEspera:
         from cnd.orquestrador import vigia as modulo_vigia
         from cnd.orquestrador import vigilancia
 
-        criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_ES")
+        primeiro = _novo_lote(conn)
+        criar_job(conn, primeiro, documento="11444777000161", orgao="RFB_PF")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11222333000181", orgao="SEFAZ_ES")
         monkeypatch.setattr(vigilancia, "minutos_sem_progresso",
                             lambda *_: 240.0)          # 4h sem concluir
         abertos = []
@@ -377,8 +415,7 @@ class TestVigiaNaoAcusaQuemEspera:
                             lambda *_a, **_k: None)
         cfg = _config(tmp_path, _banco(conn), ["RFB_PF", "SEFAZ_ES"])
         vez = VezDaTela()
-        vez.anunciar("RFB_PF", (0, 1, 10))
-        vez.anunciar("SEFAZ_ES", (0, 2, 20))
+        vez.registrar(["RFB_PF", "SEFAZ_ES"])
 
         modulo_vigia.Vigia(cfg, list(cfg.orgaos.values()), vez_da_tela=vez) \
             ._avisar_travamento(conn, cfg.orgaos["SEFAZ_ES"])

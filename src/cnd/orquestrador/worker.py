@@ -17,6 +17,7 @@ from dataclasses import dataclass, field, replace
 
 from cnd.adapters.base import AdapterOrgao
 from cnd.adapters.base import carregar as carregar_adapter
+from cnd.adapters.base import usa_tela as usa_tela_o_adapter
 from cnd.core import breaker, fila, perfis, ritmo, tempo
 from cnd.core.modelos import (
     CONCLUSIVOS,
@@ -117,14 +118,17 @@ class Worker(threading.Thread):
     def run(self) -> None:
         self.conn = conectar(self.ctx.cfg.banco)
         try:
+            self.usa_tela = usa_tela_o_adapter(self.orgao.adapter)
             self.adapter = carregar_adapter(self.orgao, self.ctx.cfg)
-            self.usa_tela = bool(getattr(self.adapter, "usa_tela", False))
             if self.usa_tela:
                 self.ctx.vez_da_tela.preparar(self.orgao.codigo,
                                               self.adapter.preparar)
             else:
                 self.adapter.preparar()
         except Exception as erro:
+            # Sai da disputa pela tela: adapter que não subiu nunca vai
+            # trabalhar, e a fila dele seguraria a vez das outras.
+            self._sair_da_disputa_pela_tela()
             log.error("adapter_nao_carregou",
                       extra={"orgao": self.orgao.codigo, "erro": str(erro)})
             alertas.abrir_incidente(
@@ -145,8 +149,7 @@ class Worker(threading.Thread):
             while not self.ctx.parar.is_set():
                 self._passo()
         finally:
-            if self.usa_tela:
-                self.ctx.vez_da_tela.anunciar(self.orgao.codigo, None)
+            self._sair_da_disputa_pela_tela()
             try:
                 self.adapter.encerrar()
             finally:
@@ -269,30 +272,32 @@ class Worker(threading.Thread):
     # A tela compartilhada (só automações cegas)
     # ------------------------------------------------------------------
     def _chegou_a_vez(self) -> bool:
-        """Anuncia onde este órgão está na fila e diz se pode usar a tela.
+        """Diz se este órgão pode usar a tela agora.
 
-        False já inclui a espera: quem chama só precisa voltar.
+        False já inclui a espera: quem chama só precisa voltar. Quem decide
+        é a ordem da fila no banco, igual para todos os workers.
         """
         vez = self.ctx.vez_da_tela
-        ordem = fila.ordem_na_fila(self.conn, self.orgao.codigo)
-        vez.anunciar(self.orgao.codigo, ordem)
+        vez.impedir(self.orgao.codigo, False)
+        dono = vez.quem_tem_a_vez(self.conn)
 
-        if ordem is None:
-            self._esperando_a_vez = False
-            self.ctx.parar.wait(PAUSA_SEM_TRABALHO_S)
-            return False
-
-        if vez.e_a_vez(self.orgao.codigo):
+        if dono == self.orgao.codigo:
             if self._esperando_a_vez:
                 log.info("vez_da_tela_chegou", extra={"orgao": self.orgao.codigo})
             self._esperando_a_vez = False
             return True
 
+        if dono is None:
+            # Ninguém tem item pronto, nem este órgão: espera como quem não
+            # tem trabalho, sem ocupar a tela.
+            self._esperando_a_vez = False
+            self.ctx.parar.wait(PAUSA_SEM_TRABALHO_S)
+            return False
+
         # Log só na mudança: repetido a cada 3s, esconderia o resto.
         if not self._esperando_a_vez:
             log.info("aguardando_a_vez_da_tela", extra={
-                "orgao": self.orgao.codigo,
-                "primeira_da_fila": vez.primeira(),
+                "orgao": self.orgao.codigo, "primeira_da_fila": dono,
             })
             self._esperando_a_vez = True
         self.ctx.parar.wait(PAUSA_AGUARDANDO_A_TELA_S)
@@ -300,7 +305,7 @@ class Worker(threading.Thread):
 
     def _sair_da_disputa_pela_tela(self) -> None:
         if self.usa_tela:
-            self.ctx.vez_da_tela.anunciar(self.orgao.codigo, None)
+            self.ctx.vez_da_tela.impedir(self.orgao.codigo, True)
             self._esperando_a_vez = False
 
     def _tela(self):
@@ -372,7 +377,7 @@ class Worker(threading.Thread):
 
     def _ajustar_ritmo(self, desfecho: Desfecho) -> None:
         if desfecho == Desfecho.CAPTCHA:
-            if perfis.captcha_lido_por_nos(self.orgao.codigo):
+            if perfis.captcha_sem_castigo(self.orgao.codigo):
                 estado = ritmo.estado(self.conn, self.orgao.codigo, self.orgao.pacing)
                 log.info("ritmo_mantido", extra={"orgao": self.orgao.codigo,
                                                  "desfecho": str(desfecho),
@@ -462,7 +467,7 @@ class Worker(threading.Thread):
         # backoff antigo de captcha (horas) no config.toml dela, e esperar
         # horas por um erro de leitura nosso seria parar o lote à toa.
         if (desfecho == Desfecho.CAPTCHA
-                and perfis.captcha_lido_por_nos(self.orgao.codigo)):
+                and perfis.captcha_sem_castigo(self.orgao.codigo)):
             return 0.0
         return self.orgao.retry.espera(desfecho, tentativa)
 

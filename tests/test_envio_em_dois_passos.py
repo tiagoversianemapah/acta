@@ -378,3 +378,173 @@ def test_token_desconhecido_nao_quebra(painel):
     assert r.status_code == 303
     erro = up.parse_qs(up.urlparse(r.headers["location"]).query)["erro"][0]
     assert "não encontrada" in erro
+
+
+# ---------------------------------------------------------------------------
+# Uma planilha, um lote — mesmo com várias abas e várias automações
+# ---------------------------------------------------------------------------
+def _lotes_e_orgaos(banco):
+    from cnd.infra.db import conectar_leitura
+    with conectar_leitura(banco) as conn:
+        linhas = conn.execute("SELECT lote_id, orgao FROM job").fetchall()
+    return ({linha["lote_id"] for linha in linhas},
+            sorted({linha["orgao"] for linha in linhas}))
+
+
+def test_varias_abas_e_automacoes_viram_um_lote_so(painel, planilha):
+    """Importada aba por aba, a carteira virava um lote por automação com o
+    mesmo nome, e o painel mostrava só um deles (17/09/2026)."""
+    cliente, modulo = painel
+    token = _enviar(cliente, planilha)
+
+    cliente.post(f"/planilha/{token}/confirmar", follow_redirects=False,
+                 data={"orgao__RFB": "RFB_PJ", "orgao__Clientes GO": "SEFAZ_GO"})
+
+    lotes, orgaos = _lotes_e_orgaos(modulo.cfg.banco)
+    assert len(lotes) == 1
+    assert orgaos == ["RFB_PJ", "SEFAZ_GO"]
+
+
+def test_mesma_empresa_em_duas_abas_da_mesma_automacao_entra_uma_vez(tmp_path):
+    from cnd.ingestao.planilha import ler_pares
+
+    livro = Workbook()
+    for titulo in ("RFB", "RFB extra"):
+        folha = livro.create_sheet(titulo)
+        folha.append(["Empresa", "CNPJ"])
+        folha.append(["EMPRESA A", CNPJ_A])
+    caminho = tmp_path / "dupla.xlsx"
+    livro.save(caminho)
+
+    leitura = ler_pares(caminho, [("RFB", "RFB_PJ"), ("RFB extra", "RFB_PJ"),
+                                  ("RFB extra", "CRF")])
+
+    assert [(i.orgao, i.documento) for i in leitura.itens] == [
+        ("RFB_PJ", CNPJ_A), ("CRF", CNPJ_A)]
+    assert "outra aba" in leitura.rejeitados[0].motivo
+
+
+def test_api_do_robo_importa_os_pares_num_lote(monkeypatch, tmp_path, planilha):
+    import json
+
+    from cnd.infra.config import ConfigRede, carregar
+    from cnd.infra.db import garantir
+    from cnd.web import app as modulo
+
+    banco = tmp_path / "robo.db"
+    garantir(banco)
+    monkeypatch.setattr(modulo, "cfg", replace(
+        carregar(), banco=banco, rede=ConfigRede(nome="PC 01", senha="s")))
+    with fastapi_testclient.TestClient(modulo.app) as cliente:
+        r = cliente.post(
+            "/api/planilha", headers={"X-CND-Senha": "s"},
+            files={"arquivo": (planilha.name, planilha.read_bytes())},
+            data={"pares": json.dumps([["RFB", "RFB_PJ"],
+                                       ["Clientes GO", "SEFAZ_GO"]])})
+
+    assert r.status_code == 200, r.text
+    assert r.json()["pares"] == 2 and r.json()["criados"] == 2
+    lotes, orgaos = _lotes_e_orgaos(banco)
+    assert len(lotes) == 1 and orgaos == ["RFB_PJ", "SEFAZ_GO"]
+
+
+def test_envio_remoto_leva_os_pares_e_a_primeira_aba(monkeypatch, tmp_path):
+    """A primeira aba também vai solta, para um robô antigo importar algo."""
+    import json
+
+    from cnd.desktop import remoto
+    from cnd.infra.config import Maquina
+
+    arquivo = tmp_path / "carteira.xlsx"
+    arquivo.write_bytes(b"x")
+    visto = {}
+
+    class Resposta:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b'{"pares": 2, "criados": 2, "rejeitados": [], "total_rejeitados": 0}'
+
+    def abrir(pedido, timeout):
+        visto["corpo"] = pedido.data.decode("utf-8", errors="ignore")
+        return Resposta()
+
+    monkeypatch.setattr(remoto.urllib.request, "urlopen", abrir)
+
+    remoto.enviar_planilha(Maquina("Robo", "http://robo:8000"), arquivo, "s",
+                           nome="carteira.xlsx",
+                           pares=[("RFB", "RFB_PJ"), ("Clientes GO", "SEFAZ_GO")])
+
+    campo = lambda nome: re.search(  # noqa: E731
+        rf'name="{nome}"\r\n\r\n(.*?)\r\n------acta', visto["corpo"], re.DOTALL
+    ).group(1)
+    assert json.loads(campo("pares")) == [["RFB", "RFB_PJ"], ["Clientes GO", "SEFAZ_GO"]]
+    assert campo("aba") == "RFB" and campo("orgao") == "RFB_PJ"
+
+
+def test_robo_antigo_recebe_as_abas_restantes_uma_por_uma(monkeypatch, tmp_path,
+                                                         planilha):
+    """Robô sem a versão nova ignora `pares` e importa só a primeira aba.
+    Sem a chave "pares" na resposta, o painel manda as outras."""
+    from cnd.desktop import remoto
+    from cnd.infra.config import ConfigRede, Maquina, carregar
+    from cnd.infra.db import garantir
+    from cnd.web import app as modulo
+
+    banco = tmp_path / "console.db"
+    garantir(banco)
+    monkeypatch.setattr(modulo, "cfg", replace(
+        carregar(), banco=banco,
+        rede=ConfigRede(nome="console", senha="", papel="console",
+                        maquinas=(Maquina("PC 01", "http://robo:8000"),))))
+    chamadas = []
+
+    def enviar(_maquina, _arquivo, _senha, aba="", orgao="", nome="", pares=None):
+        chamadas.append((aba, orgao, bool(pares)))
+        return {"lote": len(chamadas), "criados": 1, "rejeitados": [],
+                "total_rejeitados": 0}          # sem "pares": robô antigo
+
+    monkeypatch.setattr(remoto, "enviar_planilha", enviar)
+    with fastapi_testclient.TestClient(modulo.app) as cliente:
+        token = _enviar(cliente, planilha)
+        r = cliente.post(f"/planilha/{token}/confirmar?maquina=0",
+                         follow_redirects=False,
+                         data={"orgao__RFB": "RFB_PJ",
+                               "orgao__Clientes GO": "SEFAZ_GO"})
+
+    assert r.status_code == 303
+    assert chamadas == [("", "", True), ("Clientes GO", "SEFAZ_GO", False)]
+    mensagem = up.parse_qs(up.urlparse(r.headers["location"]).query)["mensagem"][0]
+    assert "2 item(ns)" in mensagem
+
+
+def test_pares_invalidos_sao_recusados_com_motivo(monkeypatch, tmp_path, planilha):
+    """Campo vindo torto não pode virar lote pela metade nem traceback."""
+    from cnd.infra.config import ConfigRede, carregar
+    from cnd.infra.db import garantir
+    from cnd.web import app as modulo
+
+    banco = tmp_path / "robo.db"
+    garantir(banco)
+    monkeypatch.setattr(modulo, "cfg", replace(
+        carregar(), banco=banco, rede=ConfigRede(nome="PC 01", senha="s")))
+
+    with fastapi_testclient.TestClient(modulo.app) as cliente:
+        def enviar(pares: str):
+            return cliente.post(
+                "/api/planilha", headers={"X-CND-Senha": "s"},
+                files={"arquivo": (planilha.name, planilha.read_bytes())},
+                data={"pares": pares})
+
+        quebrado = enviar("isso não é json")
+        vazio = enviar('[["RFB", ""]]')
+
+    assert quebrado.status_code == 400 and "pares" in quebrado.json()["detail"]
+    assert vazio.status_code == 400
+    from cnd.infra.db import conectar_leitura
+    with conectar_leitura(banco) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM job").fetchone()[0] == 0

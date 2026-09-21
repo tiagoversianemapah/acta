@@ -355,7 +355,10 @@ tempo_formulario_s = 20.0
 espera_turnstile_s = 5.0
 tempo_reacao_s = 60.0
 tempo_salvar_pdf_s = 25.0
-tentativas_turnstile = 4
+# Uma so. Vendo o Turnstile, o robo abandona a sessao: o worker fecha o Edge,
+# abre outro e tenta de novo na hora. Insistir no botao gastava minutos numa
+# janela que o portal ja marcou (18/09/2026).
+tentativas_turnstile = 1
 
 # Por que este orgao comeca desligado. O adapter e cego: abre Edge comum,
 # usa mouse/teclado reais e precisa de `cnd calibrar --orgao SEFAZ_ES`.
@@ -367,8 +370,9 @@ tentativas_turnstile = 4
 # levar o dia sem evitar captcha nenhum.
 intervalo_inicial_s = 10.0
 intervalo_piso_s    = 10.0
-# Levando captcha o intervalo sobe (10 -> 30 -> 90 ...) ate este teto, e volta
-# aos 10 conforme os acertos. E a resposta suave; a dura e o disjuntor.
+# Captcha nao mexe mais no ritmo aqui: o Turnstile nao e reclamacao de
+# velocidade, e some com sessao nova. O teto continua valendo para bloqueio de
+# verdade e erro tecnico.
 intervalo_teto_s    = 900.0
 acelera_apos        = 20
 fator_aceleracao    = 0.85
@@ -385,10 +389,11 @@ espera_maxima_s  = 21600
 avisar_apos      = 5
 
 [orgaos.SEFAZ_ES.breaker]
-# UM captcha ja pausa o orgao. No ES o captcha nao e ruido ocasional: quando
-# o Turnstile passa a exigir clique, ele exige do proximo documento tambem, e
-# insistir a 10s so queima a carteira contra um portal que ja disse nao.
-captchas_para_abrir = 1
+# Captcha NAO pausa este orgao (ver core/perfis.py): no ES ele se resolve
+# reabrindo o Edge, e pausar 30 min era parar a carteira por algo que uma
+# janela nova conserta. O numero abaixo passa a contar so bloqueio de
+# verdade do portal.
+captchas_para_abrir = 3
 janela_jobs         = 10
 erros_para_abrir    = 5
 # Meia hora na primeira vez, dobrando a cada reabertura ate o teto de 1h15.
@@ -401,7 +406,9 @@ cooldown_maximo_s   = 4500
 [orgaos.SEFAZ_ES.retry]
 max_tentativas    = 3
 backoff_erro_s    = [120, 600, 2700]
-backoff_captcha_s = [3600, 14400, 43200]
+# Zero: o robo reabre a sessao e tenta na hora. Estes numeros ficam aqui por
+# compatibilidade com config antigo; o piso de zero vem do codigo.
+backoff_captcha_s = [0, 0, 0]
 backoff_bloqueio_s = [300, 900, 1800]
 
 [orgaos.SEFAZ_MA]
@@ -474,6 +481,101 @@ cooldown_maximo_s   = 9000
 max_tentativas    = 3
 backoff_erro_s    = [120, 600, 2700]
 backoff_captcha_s = [0, 0, 0]
+backoff_bloqueio_s = [300, 900, 1800]
+
+[orgaos.SEFAZ_MT]
+ativo   = false
+adapter = "sefaz_mt"
+workers = 1
+nome    = "SEFAZ MATO GROSSO"
+
+[orgaos.SEFAZ_MT.urls]
+consulta = "https://www.sefaz.mt.gov.br/cnd/certidao/servlet/ServletRotdAberto?origem=60"
+servlet  = "https://www.sefaz.mt.gov.br/cnd/certidao/servlet/ServletRotdAberto"
+
+[orgaos.SEFAZ_MT.http]
+timeout_s = 30.0
+# Sem certidao vigente, o portal mostra "REQUERIMENTO" e pede refresh em 15s;
+# depois devolve o PDF no mesmo servlet.
+espera_processamento_s = 16.0
+tempo_processamento_s  = 120.0
+
+[orgaos.SEFAZ_MT.pacing]
+# Fluxo HTTP, sem navegador e sem captcha operacional: mesmo perfil prudente do GO.
+intervalo_inicial_s = 3.0
+intervalo_piso_s    = 3.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.SEFAZ_MT.recuperacao]
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.SEFAZ_MT.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.SEFAZ_MT.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+
+[orgaos.GOIANIA]
+ativo   = false
+adapter = "goiania"
+workers = 1
+nome    = "PREFEITURA GOIANIA"
+
+[orgaos.GOIANIA.urls]
+consulta = "https://www.goiania.go.gov.br/sistemas/sccer/asp/sccer00300f0.asp"
+emissao  = "https://www.goiania.go.gov.br/sistemas/sccer/asp/sccer00300w0.asp"
+
+[orgaos.GOIANIA.http]
+timeout_s = 30.0
+
+[orgaos.GOIANIA.pacing]
+# Fluxo HTTP. O formulario tem captcha visual, mas o clique em Emitir aceita
+# txt_captcha vazio no portal oficial em 21/09/2026.
+intervalo_inicial_s = 3.0
+intervalo_piso_s    = 3.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.GOIANIA.recuperacao]
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.GOIANIA.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.GOIANIA.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
 backoff_bloqueio_s = [300, 900, 1800]
 
 [orgaos.RFB_PF]

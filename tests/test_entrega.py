@@ -256,3 +256,140 @@ class TestPacoteZip:
                        emitida_em=f"{mes_corrente()}-15")
 
         assert any(n.endswith(".pdf") for n in self._nomes(zipar_pdfs(conn)))
+
+
+# ---------------------------------------------------------------------------
+# Exportar a PLANILHA ENVIADA, e não tudo o que a máquina já fez
+# ---------------------------------------------------------------------------
+class TestExportarPorPlanilha:
+    """Pedido da operação em 17/09/2026: "de tal planilha eu quero extrair
+    tal coisa; não deve ser de tudo que já fez"."""
+
+    def _dois_lotes(self, conn, tmp_path):
+        from cnd.core import fila
+        from cnd.core.modelos import Desfecho, ResultadoTentativa
+        from tests.conftest import criar_job
+
+        lotes = []
+        for indice, documento in enumerate(("11222333000181", "11444777000161")):
+            lote = conn.execute(
+                "INSERT INTO lote (descricao, arquivo_origem) VALUES (?, ?)",
+                (f"planilha {indice}", f"planilha{indice}.xlsx"),
+            ).lastrowid
+            criar_job(conn, lote, documento=documento, orgao="RFB_PJ")
+            job = fila.reivindicar(conn, "RFB_PJ")
+            pdf = tmp_path / f"{documento}.pdf"
+            pdf.write_bytes(b"%PDF-1.4 certidao")
+            fila.concluir(conn, job, ResultadoTentativa(
+                desfecho=Desfecho.NEGATIVA, caminho_pdf=pdf))
+            lotes.append(lote)
+        return lotes
+
+    def test_relatorio_traz_so_a_planilha_pedida(self, conn, tmp_path):
+        from openpyxl import load_workbook
+
+        from cnd.web.relatorio import Recorte, gerar, mes_corrente
+
+        _primeiro, segundo = self._dois_lotes(conn, tmp_path)
+
+        caminho = gerar(conn, Recorte(mes_corrente(), lote=segundo),
+                        tmp_path / "planilha.xlsx")
+
+        documentos = set()
+        for aba in load_workbook(caminho).worksheets:
+            for linha in aba.iter_rows(min_row=2, values_only=True):
+                documentos.update(str(c) for c in linha if c)
+        assert any("11.444.777/0001-61" in d for d in documentos)
+        assert not any("11.222.333/0001-81" in d for d in documentos), (
+            "a planilha do outro envio não entra")
+
+    def test_pacote_de_pdfs_traz_so_a_planilha_pedida(self, conn, tmp_path):
+        import io
+        import zipfile
+
+        from cnd.web.relatorio import zipar_pdfs
+
+        _primeiro, segundo = self._dois_lotes(conn, tmp_path)
+
+        pacote = zipar_pdfs(conn, lote=segundo)
+
+        nomes = zipfile.ZipFile(io.BytesIO(pacote)).namelist()
+        pdfs = [n for n in nomes if n.lower().endswith(".pdf")]
+        assert len(pdfs) == 1, pdfs
+        assert "11444777000161" in pdfs[0].replace(".", "").replace("-", "")
+
+    def test_sem_lote_continua_valendo_o_mes(self, conn, tmp_path):
+        import io
+        import zipfile
+
+        from cnd.web.relatorio import mes_corrente, zipar_pdfs
+
+        self._dois_lotes(conn, tmp_path)
+
+        pacote = zipar_pdfs(conn, mes_corrente())
+
+        pdfs = [n for n in zipfile.ZipFile(io.BytesIO(pacote)).namelist()
+                if n.lower().endswith(".pdf")]
+        assert len(pdfs) == 2
+
+    def test_rota_do_painel_aceita_a_planilha(self, conn, tmp_path, monkeypatch):
+        """É assim que a tela pede: a mesma rota, com ?lote= da planilha."""
+        from dataclasses import replace as _replace
+
+        import pytest
+
+        fastapi_testclient = pytest.importorskip("fastapi.testclient")
+        from cnd.infra.config import ConfigRede, carregar
+        from cnd.web import app as modulo
+        from cnd.web.relatorio import mes_corrente
+
+        _primeiro, segundo = self._dois_lotes(conn, tmp_path)
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+        monkeypatch.setattr(modulo, "cfg", _replace(
+            carregar(), banco=banco, rede=ConfigRede(nome="PC 01", senha="")))
+
+        with fastapi_testclient.TestClient(modulo.app) as cliente:
+            planilha = cliente.get(f"/relatorio/{mes_corrente()}.xlsx?lote={segundo}")
+            pacote = cliente.get(f"/certidoes/{mes_corrente()}.zip?lote={segundo}")
+
+        assert planilha.status_code == 200
+        assert f"planilha{segundo}" in planilha.headers["content-disposition"]
+        pdfs = [n for n in zipfile.ZipFile(BytesIO(pacote.content)).namelist()
+                if n.lower().endswith(".pdf")]
+        assert len(pdfs) == 1, pdfs
+
+
+def test_tela_oferece_exportar_so_a_planilha_da_vez(monkeypatch, tmp_path):
+    """A opção precisa estar na tela marcada, senão o padrão continua sendo
+    o mês — que é justamente o que a operação não quer (17/09/2026)."""
+    from dataclasses import replace as _replace
+
+    import pytest
+
+    fastapi_testclient = pytest.importorskip("fastapi.testclient")
+    from cnd.core import fila
+    from cnd.core.modelos import Desfecho, ResultadoTentativa
+    from cnd.infra.config import ConfigRede, carregar
+    from cnd.infra.db import conectar, criar_schema
+    from cnd.web import app as modulo
+    from tests.conftest import criar_job
+
+    banco = tmp_path / "cnd.db"
+    conexao = conectar(banco)
+    criar_schema(conexao)
+    lote = conexao.execute(
+        "INSERT INTO lote (descricao, arquivo_origem) VALUES ('teste', ?)",
+        ("CND 0926.xlsx",)).lastrowid
+    criar_job(conexao, lote, documento="11222333000181", orgao="RFB_PJ")
+    job = fila.reivindicar(conexao, "RFB_PJ")
+    fila.concluir(conexao, job, ResultadoTentativa(desfecho=Desfecho.POSITIVA))
+    monkeypatch.setattr(modulo, "cfg", _replace(
+        carregar(), banco=banco, rede=ConfigRede(nome="PC 01", senha="")))
+
+    with fastapi_testclient.TestClient(modulo.app) as cliente:
+        pagina = cliente.get("/").text
+    conexao.close()
+
+    assert f'name="lote" value="{lote}" checked' in pagina
+    assert "Só esta planilha" in pagina
+    assert "CND 0926.xlsx" in pagina

@@ -23,6 +23,8 @@ ABA_PARA_ORGAO: dict[str, tuple[str, str]] = {
     "CPF": ("RFB_PF", "CPF"),
     "GO": ("SEFAZ_GO", "CNPJ"),
     "MA": ("SEFAZ_MA", "CNPJ"),
+    "MT": ("SEFAZ_MT", "CNPJ"),
+    "GOIANIA": ("GOIANIA", "CNPJ"),
     "DF": ("SEFAZ_DF", "CNPJ"),
     "ES": ("SEFAZ_ES", "CNPJ"),
     "SP": ("SEFAZ_SP", "CNPJ"),
@@ -228,13 +230,44 @@ def ler(caminho: Path, abas: list[str] | None = None,
     return resultado
 
 
+def ler_pares(caminho: Path, pares: list[tuple[str, str]]) -> Leitura:
+    """Várias abas, cada uma com a sua automação, numa leitura só.
+
+    O mesmo documento em duas abas da MESMA automação entra uma vez: a
+    segunda ocorrência vira recusa, como o repetido dentro de uma aba.
+    """
+    total = Leitura()
+    vistos: set[tuple[str, str]] = set()
+    for aba, orgao in pares:
+        parcial = ler(caminho, [aba], orgao)
+        total.rejeitados.extend(parcial.rejeitados)
+        for item in parcial.itens:
+            chave = (item.orgao, item.documento)
+            if chave in vistos:
+                total.rejeitados.append(Rejeitado(
+                    aba.strip().upper(), 0, item.documento, item.nome,
+                    "duplicado em outra aba da mesma automação "
+                    "(mantida a primeira ocorrência)"))
+                continue
+            vistos.add(chave)
+            total.itens.append(item)
+    return total
+
+
 def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
              abas: list[str] | None = None, orgao: str | None = None,
-             arquivo_origem: str | None = None) -> tuple[int, Leitura]:
+             arquivo_origem: str | None = None,
+             pares: list[tuple[str, str]] | None = None) -> tuple[int, Leitura]:
     """Lê a planilha e grava lote + empresas + jobs no banco.
 
-    Tudo de uma vez só: ou o lote inteiro entra, ou nada entra."""
-    leitura = ler(caminho, abas, orgao)
+    Tudo de uma vez só: ou o lote inteiro entra, ou nada entra.
+
+    `pares` importa várias abas, cada uma com a sua automação, num lote SÓ.
+    A planilha é uma; a tela, o controle de fila e a entrega a tratam como
+    uma. Importada aba por aba, a carteira virava um lote por automação com
+    o mesmo nome, e o painel mostrava só um deles (17/09/2026).
+    """
+    leitura = ler_pares(caminho, pares) if pares else ler(caminho, abas, orgao)
 
     conn.execute("BEGIN")
     try:

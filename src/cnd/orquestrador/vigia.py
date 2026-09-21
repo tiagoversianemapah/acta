@@ -186,7 +186,7 @@ class Vigia:
         esperando_a_tela = (
             self.vez_da_tela is not None
             and self.vez_da_tela.dispensa_cobranca(
-                orgao.codigo, vigilancia.MINUTOS_SEM_PROGRESSO * 60))
+                orgao.codigo, vigilancia.MINUTOS_SEM_PROGRESSO * 60, conn))
 
         if (parado_ha is None or parado_ha < vigilancia.MINUTOS_SEM_PROGRESSO
                 or esperando_a_tela):

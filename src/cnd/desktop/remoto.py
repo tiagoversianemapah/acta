@@ -661,16 +661,27 @@ def baixar_planilha(cfg: Config, mes: str, destino: Path,
 
 
 def enviar_planilha(maquina: Maquina, arquivo: Path, senha: str = "",
-                    aba: str = "", orgao: str = "", nome: str = "") -> dict:
+                    aba: str = "", orgao: str = "", nome: str = "",
+                    pares: list[tuple[str, str]] | None = None) -> dict:
     """Sobe a planilha para a máquina e devolve o resumo da importação.
 
     `aba` diz onde estão os dados; `orgao` diz qual automação vai rodar.
     Sem `aba` e sem `orgao`, a máquina importa todas as abas conhecidas pelo
     nome. Esse é o caminho do botão "Enviar planilha" do app de mesa.
+
+    `pares` manda várias abas para entrarem num lote só. A primeira também
+    vai em `aba`/`orgao`: um robô de versão anterior ignora `pares` e
+    importa ao menos essa — e a resposta dele, sem a chave "pares", avisa
+    quem enviou para mandar as outras.
     """
+    if pares:
+        aba, orgao = pares[0]
     limite = b"----acta" + str(id(arquivo)).encode()
     corpo = b"".join([
         b"--", limite, b"\r\n",
+        b'Content-Disposition: form-data; name="pares"\r\n\r\n',
+        (json.dumps([list(p) for p in pares]) if pares else "").encode("utf-8"),
+        b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="aba"\r\n\r\n',
         aba.encode("utf-8"), b"\r\n--", limite, b"\r\n",
         b'Content-Disposition: form-data; name="orgao"\r\n\r\n',

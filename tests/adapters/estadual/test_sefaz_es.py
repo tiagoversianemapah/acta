@@ -1216,3 +1216,71 @@ class TestModalDeCertidaoNegativaImpossivel:
             "400 Bad Request Request Header Or Cookie Too Large")
         assert estourado is Desfecho.ERRO_TECNICO
         assert estourado not in sefaz_es.DESFECHOS_QUE_PRESERVAM_A_SESSAO
+
+
+def test_turnstile_encerra_a_tentativa_em_vez_de_insistir(monkeypatch, tmp_path):
+    """Decisão da operação em 18/09/2026: vendo o Turnstile, o robô desiste
+    desta sessão. Insistir no botão (eram 4 vezes, com clique na caixinha)
+    gastava minutos numa janela que o portal já marcou; quem resolve é o
+    worker, que fecha o Edge, abre outro e tenta de novo na hora."""
+    cfg = SimpleNamespace(pasta_certidoes=tmp_path, pasta_evidencias=tmp_path)
+    adapter = sefaz_es.AdapterSEFAZES("SEFAZ_ES", cfg)
+    adapter._calibragem = _calibragem_es()
+    doc = Documento(empresa_id=1, documento="11222333000181", tipo="CNPJ",
+                    nome="EMPRESA TESTE")
+    cliques, caixas = [], []
+
+    monkeypatch.setattr(adapter, "_formulario_na_tela", lambda: True)
+    monkeypatch.setattr(adapter, "_focar", lambda: None)
+    monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+    monkeypatch.setattr(adapter, "_ponto", lambda nome: ABSOLUTOS_ES[nome])
+    monkeypatch.setattr(adapter, "_ponto_botao_emitir",
+                        lambda: ABSOLUTOS_ES["botao_emitir"])
+    monkeypatch.setattr(adapter, "_clicar",
+                        lambda alvo, _ponto: cliques.append(alvo))
+    monkeypatch.setattr(adapter, "_clicar_caixa_turnstile",
+                        lambda: caixas.append(1) or True)
+    monkeypatch.setattr(adapter, "_aguardar_reacao",
+                        lambda _doc, _segundos: ("turnstile", None))
+    monkeypatch.setattr(sefaz_es.entrada_real, "limpar_campo", lambda: None)
+    monkeypatch.setattr(sefaz_es.entrada_real, "digitar", lambda _texto: None)
+    monkeypatch.setattr(sefaz_es.time, "sleep", lambda _segundos: None)
+
+    reacao, caminho = adapter._submeter(doc)
+
+    assert (reacao, caminho) == ("turnstile", None)
+    assert cliques.count("botao_emitir") == 1, "não insiste no botão"
+    assert caixas == [], "nem fica clicando na caixinha do Turnstile"
+    assert sefaz_es.TENTATIVAS_TURNSTILE == 1
+
+
+def test_com_duas_tentativas_ainda_insiste_uma_vez(monkeypatch, tmp_path):
+    """Quem preferir o comportamento antigo sobe o número no config: aí ele
+    clica na caixinha entre uma tentativa e outra, e para na última."""
+    cfg = SimpleNamespace(pasta_certidoes=tmp_path, pasta_evidencias=tmp_path)
+    adapter = sefaz_es.AdapterSEFAZES("SEFAZ_ES", cfg, tentativas_turnstile=2)
+    adapter._calibragem = _calibragem_es()
+    doc = Documento(empresa_id=1, documento="11222333000181", tipo="CNPJ",
+                    nome="EMPRESA TESTE")
+    cliques, caixas = [], []
+
+    monkeypatch.setattr(adapter, "_formulario_na_tela", lambda: True)
+    monkeypatch.setattr(adapter, "_focar", lambda: None)
+    monkeypatch.setattr(adapter, "_exigir_foco", lambda: None)
+    monkeypatch.setattr(adapter, "_ponto", lambda nome: ABSOLUTOS_ES[nome])
+    monkeypatch.setattr(adapter, "_ponto_botao_emitir",
+                        lambda: ABSOLUTOS_ES["botao_emitir"])
+    monkeypatch.setattr(adapter, "_clicar",
+                        lambda alvo, _ponto: cliques.append(alvo))
+    monkeypatch.setattr(adapter, "_clicar_caixa_turnstile",
+                        lambda: caixas.append(1) or True)
+    monkeypatch.setattr(adapter, "_aguardar_reacao",
+                        lambda _doc, _segundos: ("turnstile", None))
+    monkeypatch.setattr(sefaz_es.entrada_real, "limpar_campo", lambda: None)
+    monkeypatch.setattr(sefaz_es.entrada_real, "digitar", lambda _texto: None)
+    monkeypatch.setattr(sefaz_es.time, "sleep", lambda _segundos: None)
+
+    adapter._submeter(doc)
+
+    assert cliques.count("botao_emitir") == 2
+    assert len(caixas) == 1, "clica na caixinha entre as duas, e não na última"

@@ -437,3 +437,136 @@ def test_cnpj_com_005_nao_dispara_micro_retentativa(conn, lote, tmp_path, monkey
     executar(cfg, limite=1)
 
     assert adapter.chamadas == ["00000000000001"]
+
+
+# ---------------------------------------------------------------------------
+# SEFAZ-ES: captcha se resolve com sessão nova, não com pausa
+# ---------------------------------------------------------------------------
+def test_captcha_do_sefaz_es_nao_pausa_nem_freia(conn, lote, tmp_path):
+    """Turnstile no ES não é o portal reclamando de velocidade: ele some com
+    uma janela nova. Pausar 30 min e esperar horas parava a carteira por algo
+    que o robô conserta reabrindo o Edge (decisão de operação, 18/09/2026)."""
+    for i in range(4):
+        criar_job(conn, lote, documento=f"{i:014d}", orgao="SEFAZ_ES")
+
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+        simulacao={"captcha_base": 1.0, "duracao_min_s": 0.0, "duracao_max_s": 0.0},
+        codigo="SEFAZ_ES",
+    )
+    executar(cfg, ate_esvaziar=True)
+
+    estado = ritmo.estado(conn, "SEFAZ_ES", cfg.orgaos["SEFAZ_ES"].pacing)
+    assert estado.intervalo_s == cfg.orgaos["SEFAZ_ES"].pacing.intervalo_inicial_s
+    assert breaker.consultar(conn, "SEFAZ_ES").aberturas == 0
+
+
+def test_captcha_do_sefaz_es_reabre_a_sessao_e_tenta_na_hora(
+    conn, lote, tmp_path, monkeypatch
+):
+    criar_job(conn, lote, documento="00000000000001", orgao="SEFAZ_ES")
+    adapter = AdapterSequencial([
+        ResultadoTentativa(Desfecho.CAPTCHA, mensagem_portal="Turnstile"),
+    ])
+    monkeypatch.setattr("cnd.orquestrador.worker.carregar_adapter", lambda *_: adapter)
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2], {},
+        codigo="SEFAZ_ES",
+    )
+    # Config de máquina já instalada, com o backoff antigo de horas: o piso de
+    # zero tem de vir do código, senão atualizar o programa não bastaria.
+    orgao = cfg.orgaos["SEFAZ_ES"]
+    cfg = replace(cfg, orgaos={"SEFAZ_ES": replace(
+        orgao, retry=replace(orgao.retry, backoff_captcha_s=(3600.0, 14400.0)))})
+
+    executar(cfg, limite=1)
+
+    job = conn.execute("SELECT status, proxima_execucao_em FROM job").fetchone()
+    assert job["status"] == Status.RETRY_WAIT
+    assert job["proxima_execucao_em"] <= tempo.agora_iso(), "sem espera"
+    assert adapter.reinicios == 1, "a sessão marcada é fechada e reaberta"
+
+
+def test_erro_tecnico_do_sefaz_es_continua_pausando(conn, lote, tmp_path):
+    """Só o captcha ficou de fora: avaria de máquina ainda pausa o órgão."""
+    for i in range(8):
+        criar_job(conn, lote, documento=f"{i:014d}", orgao="SEFAZ_ES")
+
+    cfg = montar_config(
+        tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+        simulacao={"chance_erro_tecnico": 1.0, "captcha_base": 0.0,
+                   "duracao_min_s": 0.0, "duracao_max_s": 0.0},
+        codigo="SEFAZ_ES",
+    )
+    executar(cfg, ate_esvaziar=True)
+
+    assert breaker.consultar(conn, "SEFAZ_ES").aberturas >= 1
+
+
+def test_captcha_do_es_nao_conta_para_abrir_por_bloqueio(conn, lote, tmp_path):
+    """O disjuntor conta os bloqueios recentes; os captchas do ES não entram
+    nessa conta, senão a pausa voltaria pela porta dos fundos."""
+    from cnd.core.breaker import ParametrosBreaker, avaliar, consultar
+
+    job = criar_job(conn, lote, documento="00000000000001", orgao="SEFAZ_ES")
+    p = ParametrosBreaker(captchas_para_abrir=2, janela_jobs=10,
+                          erros_para_abrir=5, cooldown_inicial_s=60,
+                          cooldown_maximo_s=60)
+    for desfecho in (Desfecho.CAPTCHA, Desfecho.CAPTCHA):
+        conn.execute(
+            "INSERT INTO tentativa (job_id, numero, iniciada_em, desfecho, worker)"
+            " VALUES (?, 1, ?, ?, 0)", (job, tempo.agora_iso(), str(desfecho)))
+        avaliar(conn, "SEFAZ_ES", desfecho, p)
+    assert consultar(conn, "SEFAZ_ES").estado == breaker.FECHADO
+
+    # Um bloqueio de verdade sozinho também não basta: são precisos dois.
+    conn.execute(
+        "INSERT INTO tentativa (job_id, numero, iniciada_em, desfecho, worker)"
+        " VALUES (?, 1, ?, ?, 0)",
+        (job, tempo.agora_iso(), str(Desfecho.BLOQUEIO_TEMPORARIO)))
+    avaliar(conn, "SEFAZ_ES", Desfecho.BLOQUEIO_TEMPORARIO, p)
+    assert consultar(conn, "SEFAZ_ES").estado == breaker.FECHADO, (
+        "os dois captchas não podem contar como bloqueio")
+
+
+def test_captcha_do_es_nao_reabre_a_pausa_em_sondagem(conn, lote):
+    """Em sondagem, um resultado ruim reabre a pausa. Captcha do ES não é
+    resultado ruim do portal: ele some com sessão nova."""
+    from cnd.core.breaker import (
+        MEIO_ABERTO,
+        ParametrosBreaker,
+        abrir,
+        avaliar,
+        consultar,
+    )
+
+    criar_job(conn, lote, documento="00000000000001", orgao="SEFAZ_ES")
+    p = ParametrosBreaker(captchas_para_abrir=3, janela_jobs=10,
+                          erros_para_abrir=5, cooldown_inicial_s=0,
+                          cooldown_maximo_s=0)
+    abrir(conn, "SEFAZ_ES", "erro técnico", p, Desfecho.ERRO_TECNICO)
+    assert consultar(conn, "SEFAZ_ES").estado in (MEIO_ABERTO, breaker.ABERTO)
+    conn.execute("UPDATE breaker SET estado = ? WHERE orgao = ?",
+                 (MEIO_ABERTO, "SEFAZ_ES"))
+
+    avaliar(conn, "SEFAZ_ES", Desfecho.CAPTCHA, p)
+
+    assert consultar(conn, "SEFAZ_ES").estado == MEIO_ABERTO, "segue sondando"
+
+
+def test_robo_que_encerra_apaga_o_proprio_sinal_de_vida(conn, lote, tmp_path,
+                                                        monkeypatch):
+    """O painel dizia "Parar robô" por até cinco minutos depois do fim: o
+    último sinal continuava no banco, e vivo é "sinal recente" (18/09/2026)."""
+    from cnd.infra import heartbeat
+
+    monkeypatch.setattr("cnd.orquestrador.loop.CARENCIA_ANTES_DE_ENCERRAR_S", 0.0)
+    criar_job(conn, lote, documento="11222333000181", orgao="FAKE")
+    cfg = montar_config(tmp_path, conn.execute("PRAGMA database_list").fetchone()[2],
+                        simulacao={"limiar_heuristica_s": 0.0,
+                                   "chance_erro_tecnico": 0.0,
+                                   "duracao_min_s": 0.0, "duracao_max_s": 0.0})
+
+    executar(cfg)
+
+    assert heartbeat.ultimo(conn) is None, "encerrou: não há sinal a envelhecer"

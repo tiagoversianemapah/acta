@@ -44,6 +44,21 @@ navegador dirigido por CDP (`navigator.webdriver = True`). O adapter atual abre
 o Edge comum e usa entrada real do Windows, sem ler DOM e sem capturar resposta
 AJAX pelo Playwright.
 
+### O que o robo faz quando o Turnstile aparece
+
+Decidido pela operacao em 18/09/2026, depois do primeiro lote grande:
+
+1. **nao insiste no botao.** Ver o Turnstile encerra a tentativa
+   (`tentativas_turnstile = 1`); antes eram 4 cliques em "Emitir Certidao",
+   com clique na caixinha entre eles;
+2. **fecha o Edge e abre outro.** A sessao marcada e o problema, e sessao
+   nova costuma passar invisivel — o mesmo que acontece com um operador;
+3. **tenta de novo na hora.** Captcha no ES nao pausa o orgao, nao pune o
+   ritmo e nao espera (`core/perfis.py`, `CAPTCHA_RESOLVIDO_REABRINDO`).
+
+O que continua pausando: erro tecnico repetido e bloqueio de verdade do
+portal, pelo disjuntor de sempre.
+
 ## 3. Calibragem
 
 Antes de ligar o orgao numa maquina:

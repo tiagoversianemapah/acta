@@ -17,6 +17,7 @@ fora da sessão normal do Windows.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import shutil
@@ -417,8 +418,13 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
     async def enviar_planilha(arquivo: UploadFile = ARQUIVO_ENVIADO,
                               aba: str = Form(default=""),
                               orgao: str = Form(default=""),
-                              nome: str = Form(default="")):
+                              nome: str = Form(default=""),
+                              pares: str = Form(default="")):
         """Recebe a planilha e cria o lote nesta máquina.
+
+        `pares` (JSON: [["aba", "ORGAO"], ...]) importa várias abas num lote
+        só. Sem ele, vale `aba`/`orgao` — que é como falam os aplicativos de
+        antes desta versão.
 
         Resolve o caminho que hoje obriga a entrar por AnyDesk em cada
         máquina só para arrastar um arquivo — quatro sessões remotas por mês
@@ -459,10 +465,12 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                 # eles. Sem orgao vale o atalho antigo (aba RFB é Receita),
                 # que a linha de comando continua usando.
                 escolhidas = [aba.strip()] if aba.strip() else None
+                lista_de_pares = _ler_pares(pares)
                 lote_id, leitura = importar(conn, destino,
                                             f"Importação de {nome_lote}",
                                             escolhidas, orgao.strip() or None,
-                                            arquivo_origem=nome_lote)
+                                            arquivo_origem=nome_lote,
+                                            pares=lista_de_pares)
             finally:
                 conn.close()
 
@@ -474,6 +482,10 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
 
             return {
                 "lote": lote_id,
+                # Diz a quem enviou que as abas entraram juntas. O aplicativo
+                # que não vê esta chave está falando com um robô antigo e
+                # manda as abas restantes uma por uma.
+                "pares": len(lista_de_pares),
                 "criados": len(leitura.itens),
                 "rejeitados": [
                     {"linha": r.linha, "valor": r.valor_original,
@@ -688,6 +700,22 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
         return _resposta("Atualização iniciada.")
 
     return roteador
+
+
+def _ler_pares(texto: str) -> list[tuple[str, str]]:
+    """O campo `pares` do envio, validado. Vazio vira lista vazia."""
+    if not texto.strip():
+        return []
+    try:
+        dados = json.loads(texto)
+        pares = [(str(aba), str(orgao).strip().upper()) for aba, orgao in dados]
+    except (ValueError, TypeError) as erro:
+        raise HTTPException(status_code=400,
+                            detail=f"Campo pares inválido: {erro}") from erro
+    if any(not aba.strip() or not orgao for aba, orgao in pares):
+        raise HTTPException(status_code=400,
+                            detail="Campo pares tem aba ou automação vazia.")
+    return pares
 
 
 def _comando_robo(raiz: Path) -> list[str]:

@@ -19,6 +19,16 @@ def bater(conn: sqlite3.Connection, processo: str = "orquestrador") -> None:
     )
 
 
+def apagar(conn: sqlite3.Connection, processo: str = "orquestrador") -> None:
+    """Esquece o sinal deste processo — ele encerrou de propósito.
+
+    Sem isto, o painel seguia mostrando "Parar robô" por até cinco minutos
+    depois de o robô terminar o lote: o último sinal continuava lá, e a
+    regra é "vivo enquanto o sinal for recente" (18/09/2026).
+    """
+    conn.execute("DELETE FROM heartbeat WHERE processo = ?", (processo,))
+
+
 def ultimo(conn: sqlite3.Connection, processo: str = "orquestrador") -> str | None:
     linha = conn.execute(
         "SELECT atualizado_em FROM heartbeat WHERE processo = ?", (processo,)

@@ -51,6 +51,8 @@ def test_todo_adapter_de_orgao_expoe_criar():
     "cnd.adapters.estadual.sefaz_go",
     "cnd.adapters.estadual.sefaz_es",
     "cnd.adapters.estadual.sefaz_ma",
+    "cnd.adapters.estadual.sefaz_mt",
+    "cnd.adapters.municipal.goiania",
     "cnd.adapters.fake",
 ])
 def test_o_empacotador_leva_os_adapters_ligaveis(modulo):

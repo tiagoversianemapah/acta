@@ -20,6 +20,7 @@ import signal
 import threading
 import time
 
+from cnd.adapters.base import usa_tela as usa_tela_o_adapter
 from cnd.core import fila
 from cnd.infra import heartbeat
 from cnd.infra.config import Config, ConfigOrgao
@@ -185,6 +186,11 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
 
     parar = threading.Event()
     ctx = Contexto(cfg=cfg, parar=parar, limite=limite)
+    # Antes de subir worker nenhum: é isto que faz a vez da tela seguir a
+    # ordem da fila desde o primeiro item, e não a ordem em que os threads
+    # acordam. Ver orquestrador/vez_da_tela.py.
+    ctx.vez_da_tela.registrar(
+        o.codigo for o in ativos if usa_tela_o_adapter(o.adapter))
 
     def encerrar(*_):
         log.info("encerrando")
@@ -240,5 +246,9 @@ def executar(cfg: Config | None = None, ate_esvaziar: bool = False,
 
     for thread in threads:
         thread.join(timeout=30)
+    # Encerrou de propósito: o painel precisa saber agora, e não daqui a
+    # cinco minutos, quando o último sinal envelhecer.
+    with contextlib.suppress(Exception):
+        heartbeat.apagar(conn)
     conn.close()
     log.info("orquestrador_parado")

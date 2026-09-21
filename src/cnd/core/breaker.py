@@ -290,6 +290,14 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
     _garantir(conn, orgao)
     atual = consultar(conn, orgao)
 
+    # Captcha que se resolve com sessão nova não é o portal barrando: ele não
+    # abre o disjuntor nem conta para a próxima abertura — nem como sondagem
+    # falhada. O resto continua valendo para este órgão: erro técnico e
+    # bloqueio de verdade ainda pausam. Ver core/perfis.py.
+    sem_castigo = perfis.captcha_sem_castigo(orgao)
+    if sem_castigo and desfecho == Desfecho.CAPTCHA:
+        return atual
+
     # Sondagem em MEIO_ABERTO: um resultado limpo religa o órgão. Resultado
     # pendente não é limpo — o portal continua sem entregar certidão.
     if atual.estado == MEIO_ABERTO:
@@ -317,7 +325,8 @@ def avaliar(conn: sqlite3.Connection, orgao: str, desfecho: Desfecho,
     ]
 
     if desfecho in BLOQUEIOS:
-        bloqueios = sum(1 for d in recentes if d in BLOQUEIOS)
+        bloqueios = sum(1 for d in recentes if d in BLOQUEIOS
+                        and not (sem_castigo and d == Desfecho.CAPTCHA))
         if bloqueios >= p.captchas_para_abrir:
             return abrir(
                 conn, orgao,

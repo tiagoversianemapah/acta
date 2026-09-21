@@ -1,4 +1,4 @@
-"""A tela é uma só: as automações cegas usam uma de cada vez.
+"""A tela é uma só: as automações que mexem no Edge usam uma de cada vez.
 
 RFB PJ, RFB PF e SEFAZ-ES mexem no mouse e no teclado de verdade, leem a
 tela por pixel e fecham TODOS os Edge da máquina a cada sessão. Ligadas
@@ -6,7 +6,8 @@ juntas, cada uma rodava no seu thread sem saber da outra: uma fechava o Edge
 da outra no meio da consulta, e a que perdia a corrida da partida nem
 subia (17/09/2026). O CRF entra também: não mexe no mouse, mas abre um Edge
 visível que os cegos fechariam — e em que poderiam clicar. GO e MA falam
-HTTP e não passam por aqui. Quem entra é o adapter que declara `usa_tela`.
+HTTP e não passam por aqui. Quem entra é o adapter cujo módulo declara
+`USA_TELA` (ver adapters/base.usa_tela).
 
 A regra, decidida pela operação:
 
@@ -19,54 +20,85 @@ A regra, decidida pela operação:
     ele, no fim do item que o outro estiver fazendo. Um item nunca é
     interrompido no meio.
 
+Quem manda é o BANCO, e não quem pediu primeiro: a vez sai da mesma ordem
+que `fila.reivindicar` usa, lida na hora por quem pergunta. A primeira
+versão disto decidia pelo que cada worker tinha anunciado, e na partida a
+tela ia para o thread que acordasse antes — a ordem da fila virava sorteio.
+
 Quem retoma a tela depois de outra automação reabre o próprio navegador
 antes de consultar: a outra pode ter fechado o dele.
 """
 from __future__ import annotations
 
+import sqlite3
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from contextlib import contextmanager
 
+from cnd.core import fila
 from cnd.infra.log import obter
 
 log = obter("orquestrador")
-
-Ordem = tuple[int, int, int]
 
 
 class VezDaTela:
     def __init__(self) -> None:
         self._estado = threading.Lock()     # protege os dados abaixo
         self._tela = threading.Lock()       # a tela em si: um item por vez
-        self._candidatas: dict[str, Ordem] = {}
+        self._orgaos: tuple[str, ...] = ()
+        self._impedidos: set[str] = set()
         self._ultima: str | None = None
         self._com_a_tela_desde: dict[str, float] = {}
 
     # ------------------------------------------------------------------
-    # Quem quer a tela
+    # Quem disputa
     # ------------------------------------------------------------------
-    def anunciar(self, orgao: str, ordem: Ordem | None) -> None:
-        """Diz se este órgão tem item para pegar AGORA, e onde está na fila.
+    def registrar(self, orgaos: Iterable[str]) -> None:
+        """As automações de tela desta execução, antes de subir os workers.
 
-        None tira o órgão da disputa: ele está pausado, fora da janela ou
-        sem item pronto. É isso que deixa o seguinte usar a tela.
+        Registrar antes é o que torna a ordem previsível desde o primeiro
+        item: quem pergunta já enxerga todas as filas, e não só as dos
+        threads que acordaram.
         """
         with self._estado:
-            if ordem is None:
-                self._candidatas.pop(orgao, None)
-            else:
-                self._candidatas[orgao] = ordem
+            self._orgaos = tuple(orgaos)
+            self._impedidos.clear()
 
-    def e_a_vez(self, orgao: str) -> bool:
-        """Este órgão é o primeiro da fila entre os que podem trabalhar?"""
+    def impedir(self, orgao: str, impedido: bool = True) -> None:
+        """Marca que este órgão não pode trabalhar agora — ou que voltou.
+
+        Pausado pelo disjuntor, fora da janela de horário ou com o adapter
+        que não subiu. Sem isto, a fila dele seguraria a tela parada.
+        """
         with self._estado:
-            if orgao not in self._candidatas:
-                return False
-            return min(self._candidatas, key=self._candidatas.__getitem__) == orgao
+            if impedido:
+                self._impedidos.add(orgao)
+            else:
+                self._impedidos.discard(orgao)
 
-    def dispensa_cobranca(self, orgao: str, carencia_s: float) -> bool:
+    # ------------------------------------------------------------------
+    # De quem é a vez
+    # ------------------------------------------------------------------
+    def quem_tem_a_vez(self, conn: sqlite3.Connection) -> str | None:
+        """O órgão de tela com o item mais antigo pronto para agora.
+
+        None quando nenhum tem item para pegar. A ordem é a de
+        `fila.ordem_na_fila`: "Rodar agora" na frente, depois a planilha
+        que chegou primeiro.
+        """
+        with self._estado:
+            candidatos = [o for o in self._orgaos if o not in self._impedidos]
+        ordens = {
+            orgao: fila.ordem_na_fila(conn, orgao) for orgao in candidatos
+        }
+        prontos = {o: v for o, v in ordens.items() if v is not None}
+        if not prontos:
+            return None
+        return min(prontos, key=prontos.__getitem__)
+
+    def dispensa_cobranca(self, orgao: str, carencia_s: float,
+                          conn: sqlite3.Connection) -> bool:
         """Ficar sem concluir é esperado agora?
 
         Sim para quem espera a vez — a primeira da fila pode levar horas —
@@ -75,17 +107,13 @@ class VezDaTela:
         vigia acusava "parado há 30 min" a automação que só aguardava.
         """
         with self._estado:
-            if orgao in self._candidatas and min(
-                    self._candidatas, key=self._candidatas.__getitem__) != orgao:
-                return True
+            registrado = orgao in self._orgaos
             desde = self._com_a_tela_desde.get(orgao)
-            return desde is not None and time.monotonic() - desde < carencia_s
-
-    def primeira(self) -> str | None:
-        with self._estado:
-            if not self._candidatas:
-                return None
-            return min(self._candidatas, key=self._candidatas.__getitem__)
+        if registrado:
+            dono = self.quem_tem_a_vez(conn)
+            if dono is not None and dono != orgao:
+                return True
+        return desde is not None and time.monotonic() - desde < carencia_s
 
     # ------------------------------------------------------------------
     # Quem está com a tela

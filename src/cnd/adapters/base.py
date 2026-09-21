@@ -38,6 +38,8 @@ MODULOS_POR_ADAPTER = {
     "sefaz_es": "cnd.adapters.estadual.sefaz_es",
     "sefaz_go": "cnd.adapters.estadual.sefaz_go",
     "sefaz_ma": "cnd.adapters.estadual.sefaz_ma",
+    "sefaz_mt": "cnd.adapters.estadual.sefaz_mt",
+    "goiania": "cnd.adapters.municipal.goiania",
 }
 
 
@@ -83,6 +85,20 @@ def nome_modulo(adapter: str) -> str:
 
 def adapter_existe(adapter: str) -> bool:
     return importlib.util.find_spec(nome_modulo(adapter)) is not None
+
+
+def usa_tela(adapter: str) -> bool:
+    """Este adapter disputa a tela e o Edge da máquina?
+
+    Lido do MÓDULO, sem instanciar: o orquestrador precisa da lista antes de
+    subir os workers, e criar o adapter já abriria navegador. Adapter de
+    HTTP não declara nada e fica de fora. Ver orquestrador/vez_da_tela.py.
+    """
+    try:
+        modulo = importlib.import_module(nome_modulo(adapter))
+    except ModuleNotFoundError:
+        return False
+    return bool(getattr(modulo, "USA_TELA", False))
 
 
 def carregar(orgao: ConfigOrgao, cfg: Config) -> AdapterOrgao:

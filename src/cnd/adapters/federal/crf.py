@@ -46,7 +46,6 @@ import re
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import ClassVar
 
 from cnd.core.modelos import Desfecho, Documento, ResultadoTentativa
 from cnd.infra.arquivos import caminho_certidao
@@ -54,6 +53,12 @@ from cnd.infra.config import Config, ConfigOrgao
 from cnd.infra.log import obter
 
 log = obter("adapter.crf")
+
+# Não mexe no mouse, mas abre um Edge VISÍVEL — e os robôs cegos fecham todos
+# os Edge da máquina a cada item e procuram "a janela do Edge" pela maior
+# aberta. Ligado junto com eles, o CRF perdia o navegador no meio da consulta
+# e um cego podia digitar dentro da janela dele. Ver vez_da_tela.py.
+USA_TELA = True
 
 URL_CONSULTA = ("https://consulta-crf.caixa.gov.br/consultacrf/pages/"
                 "consultaEmpregador.jsf")
@@ -139,13 +144,6 @@ def _data(texto: str) -> date | None:
 @dataclass
 class AdapterCRF:
     """Um navegador vivo entre consultas; uma aba nova por documento."""
-
-    # Não mexe no mouse, mas abre um Edge VISÍVEL — e os robôs cegos fecham
-    # todos os Edge da máquina a cada item e procuram "a janela do Edge" pela
-    # maior aberta. Ligado junto com eles, o CRF perdia o navegador no meio
-    # da consulta e um cego podia digitar dentro da janela dele. Na vez da
-    # tela, um espera o outro (orquestrador/vez_da_tela.py).
-    usa_tela: ClassVar[bool] = True
 
     orgao: str
     cfg: Config

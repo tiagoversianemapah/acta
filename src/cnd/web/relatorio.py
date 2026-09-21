@@ -89,14 +89,21 @@ def _orgaos_escolhidos(orgao: TipoOrgao) -> tuple[str, ...]:
 class Recorte:
     """O pedaço do trabalho que vai para a planilha.
 
-    Mês e automações, não lote — o mesmo corte da tela e do pacote de
-    certidões. Exportar por lote entregava outra coisa que o operador via
-    na frente dele: ele filtra "Receita Federal", pede a planilha, e
-    recebia tudo.
+    Duas réguas, e quem escolhe é quem exporta:
+
+      · `lote` — a PLANILHA ENVIADA. É o padrão da tela desde 18/09/2026:
+        quem manda um arquivo quer de volta o resultado DAQUELE arquivo, e
+        não de tudo o que a máquina já fez no mês.
+      · `mes` — a entrega mensal fechada, que junta as planilhas do mês.
+
+    Com `lote`, o mês não entra na conta: a planilha enviada num dia pode
+    ter itens concluídos no dia seguinte, e cortar por mês perderia
+    justamente a virada.
     """
 
     mes: str
     orgao: TipoOrgao = None
+    lote: int | None = None
 
     @property
     def orgaos(self) -> tuple[str, ...]:
@@ -104,7 +111,8 @@ class Recorte:
 
     @property
     def onde(self) -> str:
-        clausula = "strftime('%Y-%m', j.atualizado_em) = ?"
+        clausula = ("j.lote_id = ?" if self.lote is not None
+                    else "strftime('%Y-%m', j.atualizado_em) = ?")
         if not self.orgaos:
             return clausula
         marcadores = ", ".join(["?"] * len(self.orgaos))
@@ -112,11 +120,12 @@ class Recorte:
 
     @property
     def valores(self) -> list:
-        return [self.mes, *self.orgaos]
+        return [self.lote if self.lote is not None else self.mes, *self.orgaos]
 
     @property
     def descricao(self) -> str:
-        return self.mes + (f" · {', '.join(self.orgaos)}" if self.orgaos else "")
+        alvo = f"planilha #{self.lote}" if self.lote is not None else self.mes
+        return alvo + (f" · {', '.join(self.orgaos)}" if self.orgaos else "")
 
     @property
     def orgaos_descricao(self) -> str:
@@ -328,15 +337,17 @@ def mes_corrente() -> str:
 def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
                somente_negativas: bool = False,
                nomes: dict[str, str] | None = None,
-               orgao: TipoOrgao = None) -> bytes:
-    """Pacote com as certidões emitidas no mês, separadas por órgão.
+               orgao: TipoOrgao = None, lote: int | None = None) -> bytes:
+    """Pacote com as certidões, separadas por órgão.
 
-    O corte é o MÊS, e não o lote, por dois motivos. O primeiro é a regra do
-    negócio: a certidão vale 180 dias, mas quem a recebe exige emissão do
-    mês corrente — é o mesmo critério que o robô usa para decidir se
-    reemite. O segundo é prático: cada máquina numera os seus lotes por
-    conta, então "lote 7" não quer dizer nada fora dela, e importar a
-    planilha duas vezes no mesmo mês partiria a entrega em dois pacotes.
+    `lote` entrega as certidões DAQUELA planilha, que é o que a tela pede
+    por padrão (18/09/2026): quem envia um arquivo quer de volta o pacote
+    dele, e não tudo o que a máquina já emitiu no mês.
+
+    Sem `lote`, o corte é o MÊS — a entrega mensal fechada. Ela continua
+    existindo porque a certidão vale 180 dias mas quem a recebe exige
+    emissão do mês corrente, o mesmo critério que o robô usa para decidir
+    se reemite.
 
     Entram apenas NEGATIVA e CPEN — são os dois documentos que servem para
     entregar ao cliente. A CPEN (débito parcelado ou suspenso) vale como
@@ -356,11 +367,15 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
     """
     mes = mes or mes_corrente()
     nomes = nomes or {}
+    # A planilha enviada, ou o mês inteiro. Ver o cabeçalho desta função.
+    if lote is not None:
+        onde, parametros = "j.lote_id = ?", [lote]
+    else:
+        onde, parametros = "strftime('%Y-%m', c.emitida_em) = ?", [mes]
     filtro = "AND c.tipo = 'NEGATIVA'" if somente_negativas else ""
     # Um órgão de cada vez quando só ele fechou: no fim do mês entrega-se
     # tudo, mas a federal costuma terminar antes das estaduais, e não faz
     # sentido segurar a entrega dela esperando as outras.
-    parametros: list = [mes]
     orgaos = _orgaos_escolhidos(orgao)
     if orgaos:
         filtro += f" AND j.orgao IN ({', '.join(['?'] * len(orgaos))})"
@@ -380,7 +395,7 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
               FROM certidao c
               JOIN job j ON j.id = c.job_id
               JOIN empresa e ON e.id = j.empresa_id
-             WHERE strftime('%Y-%m', c.emitida_em) = ? {filtro}
+             WHERE {onde} {filtro}
              ORDER BY j.orgao, c.tipo, e.nome
             """,
             parametros,

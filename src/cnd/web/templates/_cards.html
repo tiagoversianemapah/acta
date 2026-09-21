@@ -563,8 +563,9 @@
       <div>
         <span class="rotulo">Entregar</span>
         <strong>O que já está pronto para sair</strong>
-        <small>Referente a {{ mes }}. A planilha traz o resultado de cada
-          empresa; o pacote traz os PDFs.</small>
+        <small>Da planilha que está na tela. A planilha de resultado traz
+          o desfecho de cada empresa; o pacote traz os PDFs. Desmarque
+          "Só esta planilha" para levar o mês {{ mes }} inteiro.</small>
       </div>
       <div class="acoes">
         <button class="botao" type="button" data-abrir="#exportar-relatorio">
@@ -576,6 +577,15 @@
         <form method="get" action="{{ base_download }}/relatorio/{{ mes }}.xlsx"
               data-exportar-form>
           <h3>Planilha de resultado</h3>
+          {% if lote_id %}
+          <div class="campo">
+            <span class="rotulo">O que entra</span>
+            <label class="exportar-todas">
+              <input type="checkbox" name="lote" value="{{ lote_id }}" checked>
+              <span>Só esta planilha ({{ lote_nome }})</span>
+            </label>
+          </div>
+          {% endif %}
           <div class="campo">
             <span class="rotulo">Automações</span>
             <label class="exportar-todas">
@@ -609,6 +619,15 @@
         <form method="get" action="{{ base_download }}/certidoes/{{ mes }}.zip"
               data-exportar-form>
           <h3>Certidões</h3>
+          {% if lote_id %}
+          <div class="campo">
+            <span class="rotulo">O que entra</span>
+            <label class="exportar-todas">
+              <input type="checkbox" name="lote" value="{{ lote_id }}" checked>
+              <span>Só esta planilha ({{ lote_nome }})</span>
+            </label>
+          </div>
+          {% endif %}
           <div class="campo">
             <span class="rotulo">Automações</span>
             <label class="exportar-todas">

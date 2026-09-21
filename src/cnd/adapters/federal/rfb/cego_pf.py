@@ -41,6 +41,8 @@ log = obter("adapter.rfb_pf")
 
 URL_FORMULARIO = "https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cpf"
 
+USA_TELA = True          # mesmo Edge da PJ — ver cego.USA_TELA
+
 # `botao_emitir_nova` é obrigatório, como na PJ: no piloto de 17/09/2026 a
 # janela de certidão vigente apareceu nos DOIS CPFs.
 PONTOS_NECESSARIOS = ("campo_cpf", "campo_nascimento", "botao_emitir",

@@ -46,6 +46,12 @@ from cnd.infra.log import obter
 log = obter("adapter.rfb_cego")
 
 URL_FORMULARIO = "https://servicos.receitafederal.gov.br/servico/certidoes/#/home/cnpj"
+
+# Mouse, teclado e tela de verdade: divide a tela com as outras automações
+# que mexem no Edge desta máquina (orquestrador/vez_da_tela.py). É do módulo,
+# e não da classe, para o orquestrador saber quem entra na fila da tela antes
+# de instanciar adapter nenhum — instanciar abre navegador.
+USA_TELA = True
 DOMINIO_PORTAL = "receitafederal.gov.br"
 
 # A janela é localizada pelo PROGRAMA, não pelo título: o título de um
@@ -327,9 +333,6 @@ class AdapterRFBCego:
     pontos_necessarios: ClassVar[tuple[str, ...]] = PONTOS_NECESSARIOS
     ponto_documento: ClassVar[str] = "campo_cnpj"
     padrao_pdf: ClassVar[str] = "Certidao-{documento}*.pdf"
-    # Mouse, teclado e tela de verdade: divide a tela com as outras
-    # automações cegas (orquestrador/vez_da_tela.py).
-    usa_tela: ClassVar[bool] = True
 
     orgao: str
     cfg: Config

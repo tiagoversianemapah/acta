@@ -27,7 +27,6 @@ import urllib.request
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import ClassVar
 
 from cnd.adapters.federal.rfb.cego import (
     Calibragem,
@@ -53,6 +52,9 @@ URL_CONSULTA = "https://s2-internet.sefaz.es.gov.br/certidao/cnd"
 DOMINIO_PORTAL = "sefaz.es.gov.br"
 
 EXECUTAVEL_NAVEGADOR = "msedge.exe"
+
+# Mouse, teclado e tela de verdade — ver federal/rfb/cego.py, USA_TELA.
+USA_TELA = True
 TITULO_JANELA = "Certid"
 # Tamanho de celular, e nao maximizado. Em janela larga o portal sobe inerte:
 # uma folha de estilo pendura, os scripts nao executam, `abreTela` nunca e
@@ -106,7 +108,12 @@ TEMPO_FORMULARIO_S = 20.0
 TEMPO_TURNSTILE_S = 5.0
 TEMPO_REACAO_S = 60.0
 TEMPO_SALVAR_PDF_S = 25.0
-TENTATIVAS_TURNSTILE = 4
+# Uma só: vendo o Turnstile, o robô desiste desta sessão. Insistir no botão
+# (eram 4 tentativas, com clique na caixinha entre elas) gastava minutos numa
+# janela que o portal já marcou; o worker fecha o Edge, abre outro e tenta de
+# novo na hora. Quem quiser o comportamento antigo sobe este número no
+# config, em [orgaos.SEFAZ_ES.cego] tentativas_turnstile.
+TENTATIVAS_TURNSTILE = 1
 INTERVALO_REACAO_S = 0.20
 TEMPO_PRIMEIRA_LEITURA_TEXTO_S = 2.5
 INTERVALO_LEITURA_TEXTO_S = 1.5
@@ -412,10 +419,6 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
 
 @dataclass
 class AdapterSEFAZES:
-    # Mouse, teclado e tela de verdade: divide a tela com as outras
-    # automações cegas (orquestrador/vez_da_tela.py).
-    usa_tela: ClassVar[bool] = True
-
     orgao: str
     cfg: Config
     caminho_calibragem: Path = Path("data/calibragem/sefaz_es.json")
@@ -757,7 +760,8 @@ class AdapterSEFAZES:
         entrada_real.digitar(doc.documento)
         time.sleep(random.uniform(0.5, 1.2))
 
-        for tentativa in range(1, max(1, self.tentativas_turnstile) + 1):
+        limite = max(1, self.tentativas_turnstile)
+        for tentativa in range(1, limite + 1):
             self._ultimo_texto_portal = None
             self._exigir_foco()
             self._clicar("botao_emitir", self._ponto_botao_emitir())
@@ -781,10 +785,15 @@ class AdapterSEFAZES:
                     self._fechar_aviso()
                 return reacao, caminho
 
+            if tentativa == limite:
+                # Ultima volta: nao ha o que reinsistir. Clicar na caixinha e
+                # dormir aqui era trabalho jogado fora - e, com uma tentativa
+                # so (o padrao desde 18/09/2026), era o unico efeito do laco.
+                break
+
             log.info("reinsistindo_na_emissao",
                      extra={"orgao": self.orgao, "motivo": reacao,
-                            "tentativa": tentativa,
-                            "limite": self.tentativas_turnstile})
+                            "tentativa": tentativa, "limite": limite})
             if reacao == "turnstile":
                 self._clicar_caixa_turnstile()
             else:
