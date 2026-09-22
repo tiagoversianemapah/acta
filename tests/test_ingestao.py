@@ -122,3 +122,53 @@ def test_duas_abas_geram_orgaos_diferentes(conn, planilha):
     orgaos = {linha["orgao"] for linha in
               conn.execute("SELECT DISTINCT orgao FROM job WHERE lote_id = ?", (lote_id,))}
     assert orgaos == {"RFB_PJ", "CRF"}
+
+
+def test_importar_aposenta_os_envios_antigos(conn, planilha, tmp_path):
+    """Planilha nova entra, a sexta mais antiga sai — com os PDFs dela.
+
+    A limpeza acontece na importação porque é o único momento em que a
+    máquina ganha um envio: sem isso o banco crescia desde a primeira
+    rodada, e o disco junto (22/09/2026). Só sai envio TERMINADO: por isso
+    os itens são fechados aqui, como o robô faria.
+    """
+    from cnd.core.modelos import Status
+
+    certidoes = tmp_path / "certidoes"
+    certidoes.mkdir()
+    primeiros = []
+    for n in range(6):
+        lote, _leitura = importar(conn, planilha, f"envio {n}",
+                                  pasta_certidoes=certidoes)
+        conn.execute("UPDATE job SET status = ? WHERE lote_id = ?",
+                     (Status.DONE, lote))
+        primeiros.append(lote)
+
+    importar(conn, planilha, "envio 7", pasta_certidoes=certidoes)
+    vivos = [linha["id"] for linha in conn.execute("SELECT id FROM lote")]
+
+    # Sobram os cinco terminados mais recentes e o que acabou de entrar,
+    # que ainda tem fila: só o primeiro envio saiu.
+    assert primeiros[0] not in vivos, "o mais antigo saiu"
+    assert vivos == primeiros[1:] + [vivos[-1]]
+
+
+def test_importar_nao_apaga_planilha_com_fila_aberta(conn, planilha, tmp_path):
+    """Importar não pode levar junto trabalho que ninguém mandou parar."""
+    from cnd.core.modelos import Status
+
+    certidoes = tmp_path / "certidoes"
+    certidoes.mkdir()
+    antigo, _leitura = importar(conn, planilha, "com fila",
+                                pasta_certidoes=certidoes)
+    for n in range(6):
+        lote, _l = importar(conn, planilha, f"envio {n}",
+                            pasta_certidoes=certidoes)
+        conn.execute("UPDATE job SET status = ? WHERE lote_id = ?",
+                     (Status.DONE, lote))
+    importar(conn, planilha, "o que dispara a limpeza",
+             pasta_certidoes=certidoes)
+
+    vivos = [linha["id"] for linha in conn.execute("SELECT id FROM lote")]
+
+    assert antigo in vivos, "envio com item pendente fica, por mais velho"

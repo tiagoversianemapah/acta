@@ -466,11 +466,11 @@ def montar(obter_config: Callable[[], Config], raiz: Path) -> APIRouter:
                 # que a linha de comando continua usando.
                 escolhidas = [aba.strip()] if aba.strip() else None
                 lista_de_pares = _ler_pares(pares)
-                lote_id, leitura = importar(conn, destino,
-                                            f"Importação de {nome_lote}",
-                                            escolhidas, orgao.strip() or None,
-                                            arquivo_origem=nome_lote,
-                                            pares=lista_de_pares)
+                lote_id, leitura = importar(
+                    conn, destino, f"Importação de {nome_lote}",
+                    escolhidas, orgao.strip() or None,
+                    arquivo_origem=nome_lote, pares=lista_de_pares,
+                    pasta_certidoes=cfg.pasta_certidoes)
             finally:
                 conn.close()
 

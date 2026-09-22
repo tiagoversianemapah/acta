@@ -198,3 +198,141 @@ class TestBancoComSchemaAntigo:
 
         assert "job" in vistas and "fila_controle" in vistas
         assert not any(t.startswith("sqlite_") for t in vistas)
+
+
+class TestAposentarEnvios:
+    """A máquina guarda os cinco últimos envios — registro e PDFs.
+
+    O painel já aposentava o ARQUIVO da planilha antiga, mas o banco
+    guardava todo envio desde a primeira rodada, com os PDFs de cada um:
+    dezenove na máquina do MT em 22/09/2026.
+    """
+
+    def _envio(self, conn, certidoes, documento: str):
+        lote = conn.execute(
+            "INSERT INTO lote (descricao, arquivo_origem) VALUES ('l', 'l.xlsx')"
+        ).lastrowid
+        job = criar_job(conn, lote, documento)
+        pdf = certidoes / str(lote) / "RFB_PJ" / "c.pdf"
+        pdf.parent.mkdir(parents=True, exist_ok=True)
+        pdf.write_bytes(b"%PDF")
+        conn.execute(
+            "INSERT INTO tentativa (job_id, numero, iniciada_em, desfecho) "
+            "VALUES (?, 1, '2026-09-14T10:00:00.000Z', 'NEGATIVA')",
+            (job,),
+        )
+        conn.execute(
+            "INSERT INTO certidao (job_id, tipo, emitida_em, caminho_pdf, sha256)"
+            " VALUES (?, 'NEGATIVA', '2026-09-14T10:00:00.000Z', ?, 'abc')",
+            (job, str(pdf)),
+        )
+        # Terminado: envio com fila aberta não é aposentado, e é o que os
+        # dois últimos testes desta classe provam.
+        conn.execute("UPDATE job SET status = ? WHERE id = ?",
+                     (Status.DONE, job))
+        return lote, pdf
+
+    def _sete_envios(self, conn, tmp_path):
+        certidoes = tmp_path / "certidoes"
+        certidoes.mkdir()
+        return certidoes, [
+            self._envio(conn, certidoes, f"1122233300018{n}")
+            for n in range(7)
+        ]
+
+    def test_sobram_os_cinco_mais_recentes(self, conn, tmp_path):
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+
+        resultado = limpeza.aposentar_envios(conn, certidoes)
+
+        vivos = [l["id"] for l in conn.execute("SELECT id FROM lote")]
+        assert vivos == [lote for lote, _pdf in envios[2:]]
+        assert sorted(resultado.lotes) == [lote for lote, _pdf in
+                                          envios[:2]]
+
+    def test_pdf_do_envio_velho_sai_do_disco(self, conn, tmp_path):
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+
+        limpeza.aposentar_envios(conn, certidoes)
+
+        (velho, pdf_velho), (_novo, pdf_novo) = envios[0], envios[-1]
+        assert not pdf_velho.exists()
+        assert not (certidoes / str(velho)).exists(), "a pasta do envio fica"
+        assert pdf_novo.exists(), "o envio recente continua entregável"
+
+    def test_itens_e_tentativas_do_velho_somem(self, conn, tmp_path):
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+        velho = envios[0][0]
+
+        limpeza.aposentar_envios(conn, certidoes)
+
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM job WHERE lote_id = ?",
+            (velho,)).fetchone()["n"] == 0
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM tentativa").fetchone()["n"] == 5
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM certidao").fetchone()["n"] == 5
+
+    def test_empresa_fica_porque_e_cadastro(self, conn, tmp_path):
+        """A mesma empresa volta no próximo envio: apagá-la só faria a
+        importação recriar a linha, com id novo e sem ganho nenhum."""
+        certidoes, _envios = self._sete_envios(conn, tmp_path)
+
+        limpeza.aposentar_envios(conn, certidoes)
+
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM empresa").fetchone()["n"] == 7
+
+    def test_com_poucos_envios_nao_apaga_nada(self, conn, tmp_path):
+        certidoes = tmp_path / "certidoes"
+        certidoes.mkdir()
+        for n in range(3):
+            self._envio(conn, certidoes, f"1122233300018{n}")
+
+        resultado = limpeza.aposentar_envios(conn, certidoes)
+
+        assert resultado.lotes == []
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM lote").fetchone()["n"] == 3
+
+    def test_envio_com_fila_aberta_nunca_sai(self, conn, tmp_path):
+        """Idade não é fim de trabalho: a planilha de 349 itens da máquina do
+        MT tinha 142 na fila enquanto outras duas entravam por cima."""
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+        velho, pdf_velho = envios[0]
+        conn.execute("UPDATE job SET status = ? WHERE lote_id = ?",
+                     (Status.PENDING, velho))
+
+        resultado = limpeza.aposentar_envios(conn, certidoes)
+
+        assert velho not in resultado.lotes
+        assert pdf_velho.exists()
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM job WHERE lote_id = ?",
+            (velho,)).fetchone()["n"] == 1
+
+    def test_item_em_execucao_segura_o_envio(self, conn, tmp_path):
+        """Apagar o job que um worker está consultando deixaria a tentativa
+        dele apontando para um item que não existe mais."""
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+        velho, _pdf = envios[1]
+        conn.execute("UPDATE job SET status = ? WHERE lote_id = ?",
+                     (Status.RUNNING, velho))
+
+        resultado = limpeza.aposentar_envios(conn, certidoes)
+
+        assert velho not in resultado.lotes
+
+    def test_falhado_conta_como_aberto(self, conn, tmp_path):
+        """A recuperação devolve os FAILED à fila quando ela esvazia: apagá-los
+        seria decidir que aquelas empresas ficam sem certidão."""
+        certidoes, envios = self._sete_envios(conn, tmp_path)
+        velho, pdf_velho = envios[0]
+        conn.execute("UPDATE job SET status = ? WHERE lote_id = ?",
+                     (Status.FAILED, velho))
+
+        resultado = limpeza.aposentar_envios(conn, certidoes)
+
+        assert velho not in resultado.lotes
+        assert pdf_velho.exists()

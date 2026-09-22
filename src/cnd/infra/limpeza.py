@@ -15,11 +15,13 @@ Não há desfazer. Quem chama é responsável por confirmar antes.
 """
 from __future__ import annotations
 
+import contextlib
 import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
+from cnd.core.modelos import Status
 from cnd.infra.log import obter
 
 log = obter("limpeza")
@@ -109,4 +111,137 @@ def zerar(conn: sqlite3.Connection, pastas: tuple[Path, ...] = ()) -> Zeragem:
     arquivos = sum(_apagar_conteudo(pasta) for pasta in pastas)
     resultado = Zeragem(linhas=linhas, arquivos=arquivos)
     log.warning("maquina_zerada", extra={"resumo": resultado.como_texto()})
+    return resultado
+
+
+# Quantos ENVIOS a máquina guarda. Vale para o registro e para os arquivos:
+# o disco de uma máquina de escritório não é arquivo morto, e o painel já
+# guardava só as três últimas planilhas enviadas (carteiras.QUANTAS_GUARDAR)
+# enquanto o banco acumulava tudo desde a primeira rodada — dezenove envios
+# em 22/09/2026, com os PDFs de cada um.
+QUANTOS_ENVIOS_GUARDAR = 5
+
+
+@dataclass
+class Aposentadoria:
+    """Os envios que saíram, para quem chamou poder relatar."""
+
+    lotes: list[int]
+    linhas: int
+    arquivos: int
+
+    def como_texto(self) -> str:
+        if not self.lotes:
+            return "nada a aposentar"
+        return (f"{len(self.lotes)} envio(s), {self.linhas} linha(s) e "
+                f"{self.arquivos} arquivo(s)")
+
+
+def _colunas(conn: sqlite3.Connection, tabela: str) -> set[str]:
+    return {linha[1] for linha in conn.execute(f'PRAGMA table_info("{tabela}")')}
+
+
+def _apagar_arquivo(caminho: str | None) -> int:
+    if not caminho:
+        return 0
+    alvo = Path(caminho)
+    try:
+        alvo.unlink()
+        return 1
+    except OSError:
+        return 0
+
+
+def aposentar_envios(conn: sqlite3.Connection, pasta_certidoes: Path | None = None,
+                     manter: int = QUANTOS_ENVIOS_GUARDAR) -> Aposentadoria:
+    """Apaga tudo o que passar dos `manter` envios TERMINADOS mais recentes.
+
+    Some o envio, seus itens, tentativas, certidões e os PDFs no disco. O
+    que sobrevive é o mesmo do `zerar`: calibragem, config e logs — e as
+    empresas, que são cadastro e voltam a ser usadas pelo próximo envio.
+
+    Envio com TRABALHO EM ABERTO nunca sai, por mais antigo que seja. A
+    idade não diz que o envio terminou: na máquina do MT havia uma planilha
+    de 349 itens com 142 na fila enquanto outras duas entravam por cima
+    (22/09/2026). Apagá-la levaria junto trabalho que ninguém mandou parar
+    — e o item que um worker estivesse consultando naquele instante viraria
+    tentativa órfã, apontando para um job que não existe mais.
+
+    FAILED conta como aberto: o robô nunca desiste de um item sem resposta,
+    e a recuperação devolve os falhados à fila quando ela esvazia (ver
+    core/recuperacao.py). Apagá-los seria decidir pela máquina que aquelas
+    empresas ficam sem certidão.
+
+    As tabelas saem do PRÓPRIO BANCO, pela mesma razão do `zerar`: um banco
+    antigo carrega tabelas de schemas passados que ainda apontam para `job`
+    ou `lote`, e uma lista escrita aqui não as conhece.
+    """
+    velhos = [linha[0] for linha in conn.execute(
+        """
+        SELECT l.id
+          FROM lote l
+         WHERE NOT EXISTS (
+                   SELECT 1 FROM job j
+                    WHERE j.lote_id = l.id
+                      AND j.status IN (?, ?, ?, ?))
+         ORDER BY l.id DESC
+         LIMIT -1 OFFSET ?
+        """,
+        (Status.PENDING, Status.RUNNING, Status.RETRY_WAIT, Status.FAILED,
+         manter))]
+    if not velhos:
+        return Aposentadoria(lotes=[], linhas=0, arquivos=0)
+
+    marcas = ", ".join("?" * len(velhos))
+    jobs = [linha[0] for linha in conn.execute(
+        f"SELECT id FROM job WHERE lote_id IN ({marcas})", velhos)]
+
+    arquivos = 0
+    if jobs:
+        marcas_jobs = ", ".join("?" * len(jobs))
+        for tabela, coluna in (("certidao", "caminho_pdf"),
+                               ("tentativa", "evidencia")):
+            if coluna not in _colunas(conn, tabela):
+                continue
+            arquivos += sum(_apagar_arquivo(linha[0]) for linha in conn.execute(
+                f'SELECT "{coluna}" FROM "{tabela}" '
+                f"WHERE job_id IN ({marcas_jobs})", jobs))
+
+    linhas = 0
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        conn.execute("BEGIN")
+        try:
+            for tabela in _tabelas_do_banco(conn):
+                colunas = _colunas(conn, tabela)
+                if jobs and "job_id" in colunas:
+                    cursor = conn.execute(
+                        f'DELETE FROM "{tabela}" WHERE job_id IN ({marcas_jobs})',
+                        jobs)
+                    linhas += max(cursor.rowcount, 0)
+                if "lote_id" in colunas:
+                    cursor = conn.execute(
+                        f'DELETE FROM "{tabela}" WHERE lote_id IN ({marcas})',
+                        velhos)
+                    linhas += max(cursor.rowcount, 0)
+            cursor = conn.execute(
+                f"DELETE FROM lote WHERE id IN ({marcas})", velhos)
+            linhas += max(cursor.rowcount, 0)
+            conn.execute("COMMIT")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+    # A pasta do envio inteiro: os PDFs moram em certidoes/{lote}/{orgao}/,
+    # então sobra o esqueleto de pastas depois de apagar arquivo por arquivo.
+    if pasta_certidoes is not None:
+        for lote_id in velhos:
+            with contextlib.suppress(OSError):
+                shutil.rmtree(pasta_certidoes / str(lote_id))
+
+    resultado = Aposentadoria(lotes=velhos, linhas=linhas, arquivos=arquivos)
+    log.warning("envios_aposentados", extra={"resumo": resultado.como_texto(),
+                                             "lotes": velhos})
     return resultado

@@ -489,6 +489,28 @@ def _totais(orgaos: list[dict]) -> dict:
     }
 
 
+# Quantas planilhas a lista de exportar oferece. O painel guarda o ARQUIVO
+# das três últimas (carteiras.QUANTAS_GUARDAR), mas o banco guarda todos os
+# envios desde sempre — e a lista ficou com dezenove opções, a maioria de
+# semanas atrás (22/09/2026). Cinco cobrem o que se baixa de verdade: as
+# desta semana e a do mês passado para comparar.
+PLANILHAS_NA_EXPORTACAO = 5
+
+
+def _planilhas_para_exportar(lotes: list[dict], atual: int | None) -> list[dict]:
+    """As mais recentes, mais a que está na tela — que pode ser antiga.
+
+    Sem a segunda parte, quem estivesse conferindo uma planilha velha abriria
+    o diálogo e não acharia a dela na lista.
+    """
+    recentes = lotes[:PLANILHAS_NA_EXPORTACAO]
+    if atual is not None and not any(l["id"] == atual for l in recentes):
+        escolhida = next((l for l in lotes if l["id"] == atual), None)
+        if escolhida is not None:
+            recentes = [escolhida, *recentes]
+    return recentes
+
+
 def _orgaos_para_exportar(
     selecionada: remoto.EstadoRemoto | None, mes: str,
 ) -> list[dict]:
@@ -667,6 +689,8 @@ def _contexto_painel(
         "atividade": selecionada.atividade if selecionada else [],
         "saude": selecionada.saude if selecionada else {},
         "lotes": lotes,
+        "lotes_exportacao": _planilhas_para_exportar(
+            lotes, dados.get("lote_id")),
         "planilhas_salvas": (
             planilhas_salvas
             if selecionada and selecionada.online and selecionada.roda_robo
@@ -1156,7 +1180,7 @@ def _importar_planilha_local(caminho: Path, aba: str = "",
         lote_id, leitura = importar(
             conn, caminho, f"Importacao de {nome_lote}",
             [aba] if aba else None, orgao or None, arquivo_origem=nome_lote,
-            pares=pares,
+            pares=pares, pasta_certidoes=cfg.pasta_certidoes,
         )
         resposta = {
             "lote": lote_id,
@@ -1651,8 +1675,36 @@ def _sufixo_do_recorte(lote: int | None) -> str:
     return "" if lote is None else f"_planilha{lote}"
 
 
+def _lote_pedido(bruto: str | None) -> int | None:
+    """A planilha escolhida na tela, ou o mês inteiro.
+
+    A escolha virou uma lista, e a opção "mês inteiro" viaja como campo
+    vazio: sem isto o navegador mandaria `lote=` e a rota recusaria com
+    422 — erro de máquina para quem só queria o pacote do mês.
+    """
+    texto = (bruto or "").strip()
+    return int(texto) if texto.isdigit() else None
+
+
+def _voltar_com_erro(request: Request, erro: str) -> RedirectResponse:
+    """Devolve quem baixou à tela de onde veio, com o motivo à vista.
+
+    Um download é navegação: sem isto, o pedido sem resultado terminava num
+    arquivo vazio na pasta de Downloads, e a pessoa ficava procurando o
+    defeito no zip em vez de na escolha.
+    """
+    origem = request.headers.get("referer") or "/"
+    alvo = urllib.parse.urlsplit(origem)
+    consulta = [(c, v) for c, v in urllib.parse.parse_qsl(alvo.query)
+                if c not in ("erro", "mensagem")]
+    consulta.append(("erro", erro[:220]))
+    destino = urllib.parse.urlunsplit(
+        ("", "", alvo.path or "/", urllib.parse.urlencode(consulta), ""))
+    return RedirectResponse(destino, status_code=303)
+
+
 @app.get("/relatorio/{mes}.xlsx")
-def baixar_relatorio(request: Request, mes: str, lote: int | None = None):
+def baixar_relatorio(request: Request, mes: str, lote: str | None = None):
     """Resultado de cada empresa, em Excel.
 
     `lote` entrega só a PLANILHA ENVIADA, que é o padrão da tela: quem
@@ -1661,10 +1713,11 @@ def baixar_relatorio(request: Request, mes: str, lote: int | None = None):
     recorte por automação, o mesmo do pacote de certidões.
     """
     orgaos = _orgaos_do_download(request)
+    escolhido = _lote_pedido(lote)
     with contextlib.closing(ler()) as conn:
         conteudo = relatorio.gerar_bytes(
-            conn, relatorio.Recorte(mes, orgaos, lote=lote))
-    sufixo = _sufixo_do_recorte(lote) + _sufixo_download(orgaos)
+            conn, relatorio.Recorte(mes, orgaos, lote=escolhido))
+    sufixo = _sufixo_do_recorte(escolhido) + _sufixo_download(orgaos)
     return Response(
         conteudo,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1676,7 +1729,7 @@ def baixar_relatorio(request: Request, mes: str, lote: int | None = None):
 @app.get("/certidoes/{mes}.zip")
 def baixar_pdfs(
     request: Request, mes: str, somente_negativas: bool = False,
-    lote: int | None = None,
+    lote: str | None = None,
 ):
     """Pacote dos PDFs das certidões.
 
@@ -1688,13 +1741,23 @@ def baixar_pdfs(
     automações escolhidas.
     """
     orgaos = _orgaos_do_download(request)
+    escolhido = _lote_pedido(lote)
     with contextlib.closing(ler()) as conn:
         conteudo = relatorio.zipar_pdfs(
             conn, mes, somente_negativas,
             nomes={codigo: o.rotulo for codigo, o in cfg.orgaos.items()},
-            orgao=orgaos, lote=lote)
+            orgao=orgaos, lote=escolhido)
+    # Pacote só com o índice é pacote sem certidão nenhuma — acontece
+    # quando a planilha escolhida não tem a automação pedida. Entregar o zip
+    # vazio calado mandava procurar defeito no lugar errado (22/09/2026).
+    if not relatorio.tem_certidoes(conteudo):
+        return _voltar_com_erro(
+            request,
+            "Nenhuma certidão nessa combinação: a planilha escolhida não tem "
+            "certidão das automações marcadas. Escolha outra planilha, ou o "
+            "mês inteiro.")
     sufixo = "_negativas" if somente_negativas else ""
-    sufixo = _sufixo_do_recorte(lote) + _sufixo_download(orgaos) + sufixo
+    sufixo = _sufixo_do_recorte(escolhido) + _sufixo_download(orgaos) + sufixo
     return Response(
         conteudo, media_type="application/zip",
         headers={"Content-Disposition":

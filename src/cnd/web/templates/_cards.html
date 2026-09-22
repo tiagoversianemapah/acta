@@ -577,13 +577,19 @@
         <form method="get" action="{{ base_download }}/relatorio/{{ mes }}.xlsx"
               data-exportar-form>
           <h3>Planilha de resultado</h3>
-          {% if lote_id %}
+          {% if lotes_exportacao %}
           <div class="campo">
             <span class="rotulo">O que entra</span>
-            <label class="exportar-todas">
-              <input type="checkbox" name="lote" value="{{ lote_id }}" checked>
-              <span>Só esta planilha ({{ lote_nome }})</span>
-            </label>
+            <div class="exportar-planilha">
+              <select name="lote">
+                {% for l in lotes_exportacao %}
+                <option value="{{ l.id }}"{% if l.id == lote_id %} selected{% endif %}>
+                  {{ l.nome }} · {{ l.criado_fmt }} · {{ l.itens }} item(ns)</option>
+                {% endfor %}
+                <option value=""{% if not lote_id %} selected{% endif %}>
+                  Mês {{ mes }} inteiro — todas as planilhas</option>
+              </select>
+            </div>
           </div>
           {% endif %}
           <div class="campo">
@@ -592,6 +598,8 @@
               <input type="checkbox" data-exportar-todas checked>
               <span>Todas as automações do mês</span>
             </label>
+            <small class="exportar-nota">As quantidades abaixo são do mês
+              {{ mes }} inteiro; a planilha escolhida acima pode ter menos.</small>
             {% if orgaos_exportacao %}
             <div class="exportar-lista" data-exportar-opcoes hidden>
               {% for r in orgaos_exportacao %}
@@ -619,13 +627,19 @@
         <form method="get" action="{{ base_download }}/certidoes/{{ mes }}.zip"
               data-exportar-form>
           <h3>Certidões</h3>
-          {% if lote_id %}
+          {% if lotes_exportacao %}
           <div class="campo">
             <span class="rotulo">O que entra</span>
-            <label class="exportar-todas">
-              <input type="checkbox" name="lote" value="{{ lote_id }}" checked>
-              <span>Só esta planilha ({{ lote_nome }})</span>
-            </label>
+            <div class="exportar-planilha">
+              <select name="lote">
+                {% for l in lotes_exportacao %}
+                <option value="{{ l.id }}"{% if l.id == lote_id %} selected{% endif %}>
+                  {{ l.nome }} · {{ l.criado_fmt }} · {{ l.itens }} item(ns)</option>
+                {% endfor %}
+                <option value=""{% if not lote_id %} selected{% endif %}>
+                  Mês {{ mes }} inteiro — todas as planilhas</option>
+              </select>
+            </div>
           </div>
           {% endif %}
           <div class="campo">
@@ -634,6 +648,8 @@
               <input type="checkbox" data-exportar-todas checked>
               <span>Todas as automações do mês</span>
             </label>
+            <small class="exportar-nota">As quantidades abaixo são do mês
+              {{ mes }} inteiro; a planilha escolhida acima pode ter menos.</small>
             {% if orgaos_exportacao %}
             <div class="exportar-lista" data-exportar-opcoes hidden>
               {% for r in orgaos_exportacao %}

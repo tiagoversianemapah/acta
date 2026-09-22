@@ -1001,6 +1001,24 @@
   .exportar-todas input,.exportar-item input{
     width:16px;height:16px;margin:0;accent-color:var(--azul-acao);
   }
+  /* Qual planilha baixar. Era uma caixa "só esta planilha": com tres
+     planilhas guardadas, quem queria o pacote de outra tinha de trocar a
+     tela de planilha antes de abrir o dialogo. */
+  .exportar-planilha{position:relative;margin:.15rem 0 .1rem}
+  .exportar-planilha select{
+    width:100%;appearance:none;padding:.68rem .85rem;
+    font:inherit;font-size:13.5px;color:var(--texto);cursor:pointer;
+    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
+    text-overflow:ellipsis;
+  }
+  .exportar-planilha select:focus-visible{
+    outline:0;border-color:var(--azul-acao);
+    box-shadow:0 0 0 3px rgba(37,99,235,.16);
+  }
+  .exportar-nota{
+    display:block;margin:.35rem 0 0;font-size:11.5px;color:var(--texto-3);
+    font-weight:650;
+  }
   .exportar-lista{
     display:grid;margin:.1rem 0 0;border-bottom:1px solid var(--linha);
   }

@@ -161,6 +161,20 @@ CREATE INDEX idx_certidao_job ON certidao (job_id);
 
 | Tipo | Caminho | Retenção |
 |---|---|---|
-| Certidões (PDF) | `data/certidoes/{lote_id}/{orgao}/{documento}_{emitida_em}.pdf` | Permanente (é o produto) |
+| Certidões (PDF) | `data/certidoes/{lote_id}/{orgao}/{documento}_{emitida_em}.pdf` | Os 5 envios terminados mais recentes |
 | Evidências de falha | `data/evidencias/{job_id}/{tentativa}/screenshot.png` + `pagina.html` | 90 dias (limpeza agendada) |
-| Banco | `data/cnd.db` (+ `-wal`, `-shm`) | Permanente; backup = cópia do diretório `data/` |
+| Banco | `data/cnd.db` (+ `-wal`, `-shm`) | Os 5 envios terminados mais recentes; backup = cópia do diretório `data/` |
+
+**Cinco envios, e só os terminados** (`infra/limpeza.aposentar_envios`, 22/09/2026).
+A limpeza roda na IMPORTAÇÃO, que é o único momento em que a máquina ganha um
+envio, e leva junto o registro e os PDFs do que saiu. Antes disso o banco
+guardava tudo desde a primeira rodada — dezenove envios na máquina do MT — e o
+painel guardava só os três últimos ARQUIVOS `.xlsx` (`infra/carteiras`), o que
+fazia parecer que o resto também tinha sido aposentado.
+
+Envio com item `PENDING`, `RUNNING`, `RETRY_WAIT` ou `FAILED` **não** é
+aposentado, por mais antigo que seja: os três primeiros são fila viva, e o
+`FAILED` volta para a fila pela recuperação automática (docs/04). Quem precisa
+apagar tudo, inclusive o que está em aberto, continua tendo o `cnd zerar --sim`.
+Quem precisa guardar mais do que cinco envios entrega o pacote antes: baixar é
+o que tira a certidão da máquina.

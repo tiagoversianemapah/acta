@@ -170,11 +170,15 @@ class TestPacoteZip:
         assert not any(n.startswith("SEFAZ_MT/") for n in nomes)
 
     def test_orgao_sem_nome_cadastrado_usa_o_codigo(self, conn, tmp_path):
-        """Órgão novo entra na entrega antes de alguém batizá-lo."""
-        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_MT")
+        """Órgão novo entra na entrega antes de alguém batizá-lo.
+
+        O código é de propósito um que não existe: o SEFAZ_MT, que fazia este
+        papel, ganhou nome na tabela do sistema e o teste passou a provar o
+        contrário do que diz (22/09/2026)."""
+        self._preparar(conn, tmp_path, ["NEGATIVA"], orgao="SEFAZ_XX")
 
         nomes = self._nomes(zipar_pdfs(conn, MES))
-        assert any(n.startswith("SEFAZ_MT/") for n in nomes)
+        assert any(n.startswith("SEFAZ_XX/") for n in nomes)
 
     def test_certidao_de_outro_mes_fica_de_fora(self, conn, tmp_path):
         """Quem recebe exige emissão do mês; a do mês passado não serve."""
@@ -332,6 +336,53 @@ class TestExportarPorPlanilha:
                 if n.lower().endswith(".pdf")]
         assert len(pdfs) == 2
 
+    def _cliente(self, conn, monkeypatch):
+        from dataclasses import replace as _replace
+
+        import pytest
+
+        fastapi_testclient = pytest.importorskip("fastapi.testclient")
+        from cnd.infra.config import ConfigRede, carregar
+        from cnd.web import app as modulo
+
+        banco = conn.execute("PRAGMA database_list").fetchone()[2]
+        monkeypatch.setattr(modulo, "cfg", _replace(
+            carregar(), banco=banco, rede=ConfigRede(nome="PC 01", senha="")))
+        return fastapi_testclient.TestClient(modulo.app)
+
+    def test_planilha_vazia_na_lista_vale_o_mes(self, conn, tmp_path,
+                                                monkeypatch):
+        """A opção "mês inteiro" viaja como campo vazio: sem tratar isso, a
+        rota recusava com 422 em vez de entregar o mês."""
+        from cnd.web.relatorio import mes_corrente
+
+        self._dois_lotes(conn, tmp_path)
+
+        with self._cliente(conn, monkeypatch) as cliente:
+            pacote = cliente.get(f"/certidoes/{mes_corrente()}.zip?lote=")
+
+        assert pacote.status_code == 200
+        pdfs = [n for n in zipfile.ZipFile(BytesIO(pacote.content)).namelist()
+                if n.lower().endswith(".pdf")]
+        assert len(pdfs) == 2
+
+    def test_combinacao_sem_certidao_avisa_em_vez_de_baixar_vazio(
+            self, conn, tmp_path, monkeypatch):
+        """Planilha de um órgão + automação de outro dava um zip só com o
+        índice, e quem baixou foi procurar defeito no pacote (22/09/2026)."""
+        from cnd.web.relatorio import mes_corrente
+
+        _primeiro, segundo = self._dois_lotes(conn, tmp_path)
+
+        with self._cliente(conn, monkeypatch) as cliente:
+            resposta = cliente.get(
+                f"/certidoes/{mes_corrente()}.zip?lote={segundo}&orgao=CRF",
+                follow_redirects=False)
+
+        assert resposta.status_code == 303
+        assert "erro=" in resposta.headers["location"]
+        assert "zip" not in resposta.headers.get("content-disposition", "")
+
     def test_rota_do_painel_aceita_a_planilha(self, conn, tmp_path, monkeypatch):
         """É assim que a tela pede: a mesma rota, com ?lote= da planilha."""
         from dataclasses import replace as _replace
@@ -360,8 +411,10 @@ class TestExportarPorPlanilha:
 
 
 def test_tela_oferece_exportar_so_a_planilha_da_vez(monkeypatch, tmp_path):
-    """A opção precisa estar na tela marcada, senão o padrão continua sendo
-    o mês — que é justamente o que a operação não quer (17/09/2026)."""
+    """A planilha da tela vem escolhida, senão o padrão vira o mês — que é
+    justamente o que a operação não quer (17/09/2026). A escolha é uma lista
+    das planilhas guardadas: com três salvas, quem queria o pacote de outra
+    tinha de trocar a tela antes de abrir o diálogo (22/09/2026)."""
     from dataclasses import replace as _replace
 
     import pytest
@@ -390,6 +443,7 @@ def test_tela_oferece_exportar_so_a_planilha_da_vez(monkeypatch, tmp_path):
         pagina = cliente.get("/").text
     conexao.close()
 
-    assert f'name="lote" value="{lote}" checked' in pagina
-    assert "Só esta planilha" in pagina
+    assert f'<option value="{lote}" selected>' in pagina
+    assert 'name="lote"' in pagina
+    assert "inteiro" in pagina          # a opção do mês continua à mão
     assert "CND 0926.xlsx" in pagina

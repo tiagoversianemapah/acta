@@ -34,7 +34,8 @@ def importar_planilha(args) -> int:
     criar_schema(conn)
     descricao = args.descricao or f"Importação de {args.planilha.name}"
     abas = [a.upper() for a in args.abas] if args.abas else None
-    lote_id, leitura = importar(conn, args.planilha, descricao, abas)
+    lote_id, leitura = importar(conn, args.planilha, descricao, abas,
+                                pasta_certidoes=cfg.pasta_certidoes)
 
     print(f"\nLote #{lote_id} criado a partir de {args.planilha.name}")
     print(f"  jobs criados : {len(leitura.itens)}")

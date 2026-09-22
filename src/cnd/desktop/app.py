@@ -2272,9 +2272,10 @@ class Aplicativo(ctk.CTk):
             conn = conectar(self.cfg.banco)
             criar_schema(conn)
             try:
-                lote_id, leitura = importar(conn, Path(caminho),
-                                            f"Importação de {Path(caminho).name}",
-                                            ["RFB"])
+                lote_id, leitura = importar(
+                    conn, Path(caminho),
+                    f"Importação de {Path(caminho).name}", ["RFB"],
+                    pasta_certidoes=self.cfg.pasta_certidoes)
             finally:
                 conn.close()
 

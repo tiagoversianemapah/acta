@@ -419,6 +419,12 @@ def zipar_pdfs(conn: sqlite3.Connection, mes: str | None = None,
     return buffer.getvalue()
 
 
+def tem_certidoes(pacote: bytes) -> bool:
+    """Se o zip traz algum PDF, e não só o índice."""
+    with zipfile.ZipFile(BytesIO(pacote)) as lido:
+        return any(nome != "indice.csv" for nome in lido.namelist())
+
+
 def meses_com_certidao(conn: sqlite3.Connection) -> list[str]:
     """Os meses que têm certidão guardada, do mais recente para trás."""
     return [linha["mes"] for linha in conn.execute(

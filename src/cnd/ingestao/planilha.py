@@ -15,6 +15,10 @@ from pathlib import Path
 from openpyxl import load_workbook
 
 from cnd.core.documentos import DocumentoInvalido, validar
+from cnd.infra import limpeza
+from cnd.infra.log import obter
+
+log = obter("ingestao")
 
 # aba da planilha -> (código do órgão, tipo de documento esperado)
 ABA_PARA_ORGAO: dict[str, tuple[str, str]] = {
@@ -257,7 +261,8 @@ def ler_pares(caminho: Path, pares: list[tuple[str, str]]) -> Leitura:
 def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
              abas: list[str] | None = None, orgao: str | None = None,
              arquivo_origem: str | None = None,
-             pares: list[tuple[str, str]] | None = None) -> tuple[int, Leitura]:
+             pares: list[tuple[str, str]] | None = None,
+             pasta_certidoes: Path | None = None) -> tuple[int, Leitura]:
     """Lê a planilha e grava lote + empresas + jobs no banco.
 
     Tudo de uma vez só: ou o lote inteiro entra, ou nada entra.
@@ -266,6 +271,11 @@ def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
     A planilha é uma; a tela, o controle de fila e a entrega a tratam como
     uma. Importada aba por aba, a carteira virava um lote por automação com
     o mesmo nome, e o painel mostrava só um deles (17/09/2026).
+
+    Entrando um envio novo, os que passarem dos cinco mais recentes são
+    apagados com os PDFs deles — ver `limpeza.aposentar_envios`. É o mesmo
+    momento em que o painel já aposentava o ARQUIVO da planilha antiga; o
+    banco é que guardava tudo desde a primeira rodada.
     """
     leitura = ler_pares(caminho, pares) if pares else ler(caminho, abas, orgao)
 
@@ -303,6 +313,13 @@ def importar(conn: sqlite3.Connection, caminho: Path, descricao: str,
     except Exception:
         conn.execute("ROLLBACK")
         raise
+
+    # Depois do COMMIT, e fora da transação do envio: falhar ao apagar o que
+    # é velho não pode derrubar a importação que acabou de dar certo.
+    try:
+        limpeza.aposentar_envios(conn, pasta_certidoes)
+    except Exception as erro:
+        log.warning("aposentadoria_falhou", extra={"erro": str(erro)[:300]})
 
     return lote_id, leitura
 
