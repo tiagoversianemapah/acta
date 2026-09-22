@@ -97,12 +97,20 @@
   fixarLinkDoPainel();
   atualizarContadores();
 
+  // Os diálogos de exportar moram dentro do #resumo: trocar o HTML com um
+  // deles aberto o recriava fechado, e o modal sumia sozinho em até 5s.
+  // A recarga espera o diálogo fechar.
+  function dialogoAberto() {
+    return !!document.querySelector('#resumo dialog[open]');
+  }
+
   setInterval(function () {
-    if (document.hidden) return;
+    if (document.hidden || dialogoAberto()) return;
     fetch(rotaFragmento())
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (html) {
-        if (!html) return;
+        // De novo aqui: o diálogo pode ter aberto com o pedido no caminho.
+        if (!html || dialogoAberto()) return;
         document.getElementById('resumo').innerHTML = html;
         atualizarContadores();
       })

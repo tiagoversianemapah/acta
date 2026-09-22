@@ -1,4 +1,4 @@
-"""SEFAZ-MT: fluxo HTTP, reimpressao e classificacao do PDF."""
+"""SEFAZ-MT: fluxo HTTP, certidao vigente e classificacao do PDF."""
 from __future__ import annotations
 
 from dataclasses import replace
@@ -34,29 +34,6 @@ pendencia, em nome do sujeito passivo acima indicado.
 Certidao valida ate: 19/11/2026.
 Numero de Autenticacao: T7BTLL22TUKKB2K2
 """
-
-LISTA_REIMPRESSAO = """
-<form method="POST" action="/cnd/certidao/servlet/ServletRotdAberto">
-<input type="hidden" name="origem" value="59">
-<tr class="SEFAZ-TD-ExibicaoPar">
-  <td><input type="radio" name="ModeloCertidao" onclick="setNumrRelt(64561340)"></td>
-  <td>0064561340</td>
-  <td>19 - CERTIDAO CONJUNTA</td>
-  <td>Certidao Negativa de Debitos</td>
-  <td>28/08/2026 10:44:27</td>
-  <td>26/10/2026</td>
-</tr>
-<tr class="SEFAZ-TD-ExibicaoImPar">
-  <td><input type="radio" name="ModeloCertidao" onclick="setNumrRelt(64463909)"></td>
-  <td>0064463909</td>
-  <td>19 - CERTIDAO CONJUNTA</td>
-  <td>Certidao Negativa de Debitos</td>
-  <td>24/08/2026 17:26:56</td>
-  <td>22/10/2026</td>
-</tr>
-</form>
-""".encode()
-
 
 def _resposta(corpo: bytes, content_type: str = "text/html;charset=UTF-8",
               status: int = 200):
@@ -149,31 +126,72 @@ class TestClassificacaoDoPdf:
         assert r.desfecho == Desfecho.ERRO_TECNICO
 
 
-class TestReimpressao:
-    def test_lista_certidoes_e_escolhe_a_mais_recente(self):
-        certidoes = sefaz_mt.certidoes_da_lista(LISTA_REIMPRESSAO)
+class TestCertidaoVigente:
+    """Com certidao vigente, o robo pede NOVA - nunca reimprime a antiga."""
 
-        assert [c.sequencial for c in certidoes] == ["64561340", "64463909"]
-        assert sefaz_mt.certidao_mais_recente(certidoes).sequencial == "64561340"
+    TELA_VIGENTE = (b"Voce possui uma Certidao Negativa de Debitos (CND) que "
+                    b"ainda esta no prazo de validade. "
+                    b"<a>Reimprimir Certidao Vigente</a> "
+                    b"<a>Emitir nova Certidao</a>")
 
-    def test_tela_de_vigente_dispara_reimpressao(self, tmp_path, monkeypatch):
+    @pytest.fixture
+    def adapter(self, tmp_path):
         cfg = replace(carregar(), pasta_certidoes=tmp_path / "c",
                       pasta_evidencias=tmp_path / "e")
-        adapter = sefaz_mt.AdapterSEFAZMT("SEFAZ_MT", cfg)
-        doc = Documento(1, CNPJ, "CNPJ", "EMPRESA", lote_id=1)
-        chamadas = []
+        return sefaz_mt.AdapterSEFAZMT(
+            "SEFAZ_MT", cfg, espera_processamento_s=0.0,
+            tempo_processamento_s=1.0)
 
+    @pytest.fixture
+    def doc(self):
+        return Documento(1, CNPJ, "CNPJ", "EMPRESA", lote_id=1)
+
+    def test_pede_nova_com_os_campos_do_navegador(self, adapter, doc,
+                                                   monkeypatch):
+        enviados = []
         monkeypatch.setattr(
-            adapter, "_reimprimir",
-            lambda recebido: chamadas.append(recebido) or
-            ResultadoTentativa(Desfecho.NEGATIVA),
-        )
+            adapter, "_post",
+            lambda dados, _ref: enviados.append(dados) or
+            _resposta(b"%PDF-1.4 nova", "application/pdf"))
+        monkeypatch.setattr(adapter, "_salvar_pdf",
+                            lambda _b, _d, _m: ResultadoTentativa(
+                                Desfecho.NEGATIVA))
 
-        r = adapter._interpretar(
-            _resposta(b"Reimprimir Certidao Vigente"), doc)
+        r = adapter._interpretar(_resposta(self.TELA_VIGENTE), doc)
 
         assert r.desfecho == Desfecho.NEGATIVA
-        assert chamadas == [doc]
+        assert len(enviados) == 1
+        assert enviados[0]["origem"] == "62"
+        assert enviados[0]["numrDoctFinal"] == CNPJ
+        assert enviados[0]["indiceModlCertSelecionado"] == "19"
+        assert enviados[0]["tipoDoctSele"] == "2"
+
+    def test_nova_passa_pelo_requerimento_ate_o_pdf(self, adapter, doc,
+                                                     monkeypatch):
+        monkeypatch.setattr(adapter, "_post",
+                            lambda *_a: _resposta(b"<b>REQUERIMENTO</b>"))
+        monkeypatch.setattr(adapter, "_get", lambda *_a: _resposta(
+            b"%PDF-1.4 nova", "application/pdf"))
+        monkeypatch.setattr(adapter, "_salvar_pdf",
+                            lambda _b, _d, _m: ResultadoTentativa(
+                                Desfecho.NEGATIVA))
+
+        r = adapter._interpretar(_resposta(self.TELA_VIGENTE), doc)
+
+        assert r.desfecho == Desfecho.NEGATIVA
+
+    def test_vigente_de_novo_e_erro_e_nao_laco(self, adapter, doc,
+                                               monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(
+            adapter, "_post",
+            lambda *_a: chamadas.append(1) or _resposta(self.TELA_VIGENTE))
+
+        r = adapter._interpretar(_resposta(self.TELA_VIGENTE), doc)
+
+        assert r.desfecho == Desfecho.ERRO_TECNICO
+        assert r.desfecho not in COM_PDF
+        assert len(chamadas) == 1
 
 
 class TestProcessamento:

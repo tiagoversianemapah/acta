@@ -7,10 +7,14 @@ Portal oficial mapeado em 21/09/2026:
 O formulario inicial carrega Turnstile, mas o servlet aceita o POST de emissao
 sem token visivel. O portal tem dois caminhos:
 
-* se ja existe CND/CPEND vigente, ele oferece "Reimprimir Certidao Vigente";
-  a reimpressao passa por origem 57 -> 58 -> 59 e devolve o PDF.
-* se nao existe certidao vigente, ele mostra uma tela "REQUERIMENTO" com
-  refresh de 15s; depois de alguns polls no mesmo servlet, devolve o PDF.
+* se ja existe CND/CPEND vigente, ele oferece "Reimprimir Certidao Vigente"
+  ou "Emitir nova Certidao". O robo SEMPRE emite nova (origem 62): quem
+  recebe a certidao exige emissao do mes corrente, e a vigente pode ser de
+  dois meses atras - mesma regra da Receita, ver docs/fluxos/rfb-pj.md.
+  Reimprimir entregava a antiga como se fosse de hoje (22/09/2026).
+* se nao existe certidao vigente, ou depois de pedir nova, ele mostra uma
+  tela "REQUERIMENTO" com refresh de 15s; depois de alguns polls no mesmo
+  servlet, devolve o PDF.
 """
 from __future__ import annotations
 
@@ -45,9 +49,9 @@ URL_SERVLET = "https://www.sefaz.mt.gov.br/cnd/certidao/servlet/ServletRotdAbert
 INDICE_MODELO_CERTIDAO = "19"
 TIPO_DOCUMENTO_CNPJ = "2"
 ORIGEM_CONSULTA = "76"
-ORIGEM_REIMPRESSAO_FORM = "57"
-ORIGEM_REIMPRESSAO_LISTA = "58"
-ORIGEM_REIMPRESSAO_PDF = "59"
+# O link "Emitir nova Certidao" da tela de vigente, capturado no navegador
+# em 22/09/2026.
+ORIGEM_EMITIR_NOVA = "62"
 
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -61,9 +65,6 @@ ERRO_CAPTCHA = "O portal exigiu verificacao de seguranca."
 RE_CHARSET = re.compile(r"charset=([A-Za-z0-9_-]+)", re.IGNORECASE)
 RE_SCRIPT = re.compile(r"<(script|style)\b.*?</\1>", re.IGNORECASE | re.DOTALL)
 RE_TAG = re.compile(r"<[^>]+>")
-RE_TR = re.compile(r"<tr\b.*?</tr>", re.IGNORECASE | re.DOTALL)
-RE_TD = re.compile(r"<td\b[^>]*>(.*?)</td>", re.IGNORECASE | re.DOTALL)
-RE_SEQ_CERTIDAO = re.compile(r"setNumrRelt\((\d+)\)")
 RE_DATA = re.compile(r"(\d{2}/\d{2}/\d{4})")
 RE_VALIDADE = re.compile(r"valid[ao]\s+ate[:\s]*(\d{2}/\d{2}/\d{4})")
 RE_AUTENTICACAO = re.compile(
@@ -81,15 +82,6 @@ class RespostaPortal:
     status: int
     content_type: str
     corpo: bytes
-
-
-@dataclass(frozen=True)
-class CertidaoListada:
-    sequencial: str
-    numero: str
-    tipo: str
-    emissao: datetime | None
-    validade: date | None
 
 
 def _sem_acento(texto: str | None) -> str:
@@ -124,12 +116,6 @@ def texto_da_resposta(resposta: RespostaPortal) -> str:
 def _data_curta(texto: str) -> date | None:
     with contextlib.suppress(ValueError):
         return datetime.strptime(texto, "%d/%m/%Y").date()
-    return None
-
-
-def _data_hora(texto: str) -> datetime | None:
-    with contextlib.suppress(ValueError):
-        return datetime.strptime(texto, "%d/%m/%Y %H:%M:%S")
     return None
 
 
@@ -236,35 +222,7 @@ def ler_pdf(caminho: Path, texto_tela: str) -> ResultadoTentativa:
                               evidencia=caminho)
 
 
-def certidoes_da_lista(corpo: bytes) -> list[CertidaoListada]:
-    pagina = corpo.decode("utf-8", errors="replace")
-    certidoes: list[CertidaoListada] = []
-    for linha in RE_TR.findall(pagina):
-        seq = RE_SEQ_CERTIDAO.search(linha)
-        if not seq:
-            continue
-        colunas = [_limpar_html(c) for c in RE_TD.findall(linha)]
-        if len(colunas) < 6:
-            continue
-        certidoes.append(CertidaoListada(
-            sequencial=seq.group(1),
-            numero=colunas[1],
-            tipo=colunas[3],
-            emissao=_data_hora(colunas[4]),
-            validade=_data_curta(colunas[5]),
-        ))
-    return certidoes
-
-
-def certidao_mais_recente(certidoes: list[CertidaoListada]) -> CertidaoListada:
-    return max(certidoes, key=lambda c: (
-        c.validade or date.min,
-        c.emissao or datetime.min,
-        c.sequencial,
-    ))
-
-
-def _oferece_reimpressao(texto: str) -> bool:
+def _tem_vigente(texto: str) -> bool:
     return "reimprimir certidao vigente" in _sem_acento(texto)
 
 
@@ -387,13 +345,17 @@ class AdapterSEFAZMT:
 
     def _interpretar(self, resposta: RespostaPortal,
                     doc: Documento) -> ResultadoTentativa:
+        if not _e_pdf(resposta) and _tem_vigente(texto_da_resposta(resposta)):
+            return self._emitir_nova(doc)
+        return self._interpretar_emissao(resposta, doc)
+
+    def _interpretar_emissao(self, resposta: RespostaPortal,
+                             doc: Documento) -> ResultadoTentativa:
         if _e_pdf(resposta):
             return self._salvar_pdf(resposta.corpo, doc,
                                     "SEFAZ-MT emitiu PDF")
 
         texto = texto_da_resposta(resposta)
-        if _oferece_reimpressao(texto):
-            return self._reimprimir(doc)
         if _em_processamento(texto):
             return self._esperar_processamento(doc)
 
@@ -431,53 +393,31 @@ class AdapterSEFAZMT:
         return ResultadoTentativa(Desfecho.ERRO_TECNICO,
                                   mensagem_portal=ERRO_GENERICO)
 
-    def _reimprimir(self, doc: Documento) -> ResultadoTentativa:
-        url_reimpressao = f"{self.url_servlet}?origem={ORIGEM_REIMPRESSAO_FORM}"
-        self._get(url_reimpressao, self.url_servlet)
-        lista = self._post({
-            "origem": ORIGEM_REIMPRESSAO_LISTA,
-            "ret": "1",
-            "tipoDoctSele": TIPO_DOCUMENTO_CNPJ,
-            "numrDoct": doc.documento,
-            "btnOk": "     OK     ",
-        }, url_reimpressao)
-
-        certidoes = certidoes_da_lista(lista.corpo)
-        if not certidoes:
-            texto = texto_da_resposta(lista)
-            desfecho = classificar_texto(texto)
-            log.warning("reimpressao_sem_lista",
-                        extra={"documento": doc.documento,
-                               "trecho": texto[:300]})
-            return ResultadoTentativa(
-                desfecho,
-                mensagem_portal=_mensagem(desfecho, texto),
-            )
-
-        certidao = certidao_mais_recente(certidoes)
+    def _emitir_nova(self, doc: Documento) -> ResultadoTentativa:
+        # Os campos do clique em "Emitir nova Certidao", como o navegador
+        # manda - inclusive "usuario" com o texto null.
         resposta = self._post({
-            "origem": ORIGEM_REIMPRESSAO_PDF,
-            "ret": "2",
-            "numrCertidoSelecionado": certidao.sequencial,
+            "numrDoct": "",
+            "origem": ORIGEM_EMITIR_NOVA,
+            "indiceModlCertSelecionado": INDICE_MODELO_CERTIDAO,
+            "caracteres": "",
             "tipoDoctSele": TIPO_DOCUMENTO_CNPJ,
-            "numrDoct": doc.documento,
-            "botaoSubmit": "Confirma",
+            "numrDoctFinal": doc.documento,
+            "codgMenu": "",
+            "nomeMenu": "",
+            "barraMenu": "",
+            "codgTemporario": "",
+            "usuario": "null",
         }, self.url_servlet)
 
-        if _e_pdf(resposta):
-            return self._salvar_pdf(
-                resposta.corpo, doc,
-                f"SEFAZ-MT reimprimiu a certidao {certidao.numero}",
-            )
-
-        texto = texto_da_resposta(resposta)
-        desfecho = classificar_texto(texto)
-        log.warning("reimpressao_sem_pdf",
-                    extra={"documento": doc.documento, "trecho": texto[:300]})
-        return ResultadoTentativa(
-            desfecho,
-            mensagem_portal=_mensagem(desfecho, texto),
-        )
+        # Nao volta para _interpretar: se o portal insistir na vigente, e
+        # erro. Reimprimir e justamente o que nao pode acontecer.
+        if not _e_pdf(resposta) and _tem_vigente(texto_da_resposta(resposta)):
+            log.warning("emitir_nova_devolveu_vigente",
+                        extra={"documento": doc.documento})
+            return ResultadoTentativa(Desfecho.ERRO_TECNICO,
+                                      mensagem_portal=ERRO_GENERICO)
+        return self._interpretar_emissao(resposta, doc)
 
     def _salvar_pdf(self, conteudo: bytes, doc: Documento,
                     mensagem: str) -> ResultadoTentativa:
