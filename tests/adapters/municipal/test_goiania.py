@@ -169,6 +169,71 @@ class TestAdapter:
         assert list(adapter.cfg.pasta_certidoes.rglob("*.pdf")) == []
 
 
+class TestImpressao:
+    def test_pdf_sai_sem_cabecalho_do_navegador(self, monkeypatch, tmp_path):
+        """Data e endereco no alto da folha sao carimbo de pagina salva do
+        navegador, e a certidao vai assim para o cliente (22/09/2026)."""
+        pedidos = {}
+
+        class PaginaFalsa:
+            def route(self, *_a, **_k):
+                pass
+
+            def goto(self, *_a, **_k):
+                pass
+
+            def wait_for_load_state(self, *_a, **_k):
+                pass
+
+            def emulate_media(self, *_a, **_k):
+                pass
+
+            def pdf(self, **argumentos):
+                from pathlib import Path
+
+                pedidos.update(argumentos)
+                Path(argumentos["path"]).write_bytes(b"%PDF-1.4")
+
+        class NavegadorFalso:
+            def new_page(self, *_a, **_k):
+                return PaginaFalsa()
+
+            def close(self):
+                pass
+
+        class PlaywrightFalso:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_a):
+                return False
+
+        monkeypatch.setattr(goiania, "_abrir_chromium",
+                            lambda _p: NavegadorFalso())
+        import sys
+        import types
+        modulo = types.ModuleType("playwright.sync_api")
+        modulo.sync_playwright = lambda: PlaywrightFalso()
+        pacote = types.ModuleType("playwright")
+        pacote.sync_api = modulo
+        monkeypatch.setitem(sys.modules, "playwright", pacote)
+        monkeypatch.setitem(sys.modules, "playwright.sync_api", modulo)
+
+        origem = tmp_path / "certidao.html"
+        origem.write_text("<html><body>certidao</body></html>", encoding="utf-8")
+
+        goiania._pdf_com_playwright(origem, tmp_path / "saida.pdf")
+
+        assert pedidos["display_header_footer"] is False
+        assert "header_template" not in pedidos
+
+    def test_navegador_do_sistema_tambem_imprime_limpo(self):
+        import inspect
+
+        codigo = inspect.getsource(goiania._pdf_com_navegador_sistema)
+        assert "--no-pdf-header-footer" in codigo
+
+
 class TestContrato:
     def test_criar_devolve_um_adapter_do_contrato(self):
         from cnd.adapters.base import AdapterOrgao

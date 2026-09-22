@@ -292,13 +292,6 @@ def _pdf_com_playwright(html_path: Path, destino: Path) -> None:
     from playwright.sync_api import sync_playwright
 
     html_pronto = html_path.read_text(encoding="utf-8")
-    header = """
-    <div style="font-size:7px; width:100%; margin:0 9mm; color:#000;
-                font-family:Arial, sans-serif;">
-      <span class="date"></span>
-      <span style="float:right;" class="url"></span>
-    </div>
-    """
     with sync_playwright() as p:
         browser = _abrir_chromium(p)
         try:
@@ -319,9 +312,13 @@ def _pdf_com_playwright(html_path: Path, destino: Path) -> None:
                 path=str(destino),
                 format="A4",
                 print_background=True,
-                display_header_footer=True,
-                header_template=header,
-                footer_template="<div></div>",
+                # Sem data e endereco impressos no alto: a certidao vai para
+                # o cliente, e ali aquilo e o carimbo de uma pagina salva do
+                # navegador, nao parte do documento da Prefeitura. E o mesmo
+                # que desmarcar "Cabecalhos e rodapes" ao imprimir a mao
+                # (22/09/2026). O caminho do navegador do sistema ja saia
+                # limpo, por --no-pdf-header-footer.
+                display_header_footer=False,
                 margin={
                     "top": "10mm",
                     "right": "10mm",
