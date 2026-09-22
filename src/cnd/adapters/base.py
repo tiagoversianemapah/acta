@@ -40,6 +40,7 @@ MODULOS_POR_ADAPTER = {
     "sefaz_ma": "cnd.adapters.estadual.sefaz_ma",
     "sefaz_mt": "cnd.adapters.estadual.sefaz_mt",
     "goiania": "cnd.adapters.municipal.goiania",
+    "vitoria": "cnd.adapters.municipal.vitoria",
 }
 
 

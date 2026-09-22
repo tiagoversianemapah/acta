@@ -74,6 +74,7 @@ ocultos = [
     "cnd.adapters.estadual.sefaz_ma",
     "cnd.adapters.estadual.sefaz_mt",
     "cnd.adapters.municipal.goiania",
+    "cnd.adapters.municipal.vitoria",
     "cnd.adapters.fake",
     *pw_ocultos,
     # Cinto e suspensório: o painel também é alcançado por nome em alguns
