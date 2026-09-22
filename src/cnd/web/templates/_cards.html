@@ -432,7 +432,13 @@
                 <small class="linha-menor">{{ r.orgao }}</small>
               </td>
               <td>
-                {% if r.situacao_fila == 'ESTACIONADA' %}
+                {# Terminou é terminou: sem item para pegar e sem item na mão,
+                   o que sobra de "estacionada"/"cancelada" é história, não
+                   estado. Mostrar o rótulo antigo aqui fazia a tela pedir
+                   uma decisão sobre uma fila que já acabou. #}
+                {% if r.total and not r.pendentes and not r.em_execucao %}
+                  <span class="estado ok">Concluída</span>
+                {% elif r.situacao_fila == 'ESTACIONADA' %}
                   <span class="estado cinza">Estacionada</span>
                 {% elif r.situacao_fila == 'CANCELADA' %}
                   <span class="estado cinza">Cancelada</span>
@@ -459,6 +465,12 @@
                 {% endif %}
               </td>
               <td class="coluna-controle">
+                {# Sem item para pegar não há o que estacionar, cancelar ou
+                   mandar rodar agora: "Rodar agora" numa fila concluída
+                   reativa a planilha e não roda nada — um botão que não faz
+                   o que diz. Ver core/fila.py (só PENDING/RETRY_WAIT são
+                   reivindicados) e core/controle.py. #}
+                {% set pode_controlar = lote_id and selecionada.local and r.pendentes %}
                 {% if r.disjuntor == 'ABERTO' %}
                   {# O bloqueio do portal continua visível, mas agora divide
                      espaço com o controle: quem vê "pausado" quer saber se
@@ -468,7 +480,7 @@
                     <small class="linha-menor">retoma às <span data-retoma-hora="{{ r.disjuntor_ate }}"></span></small>
                   {% endif %}
                 {% endif %}
-                {% if r.disjuntor == 'ABERTO' or (lote_id and selecionada.local) %}
+                {% if r.disjuntor == 'ABERTO' or pode_controlar %}
                 <div class="acoes-fila">
                   {% if r.disjuntor == 'ABERTO' and selecionada_idx is not none %}
                     <form method="post"
@@ -479,7 +491,7 @@
                       </button>
                     </form>
                   {% endif %}
-                  {% if lote_id and selecionada.local %}
+                  {% if pode_controlar %}
                   {% if r.situacao_fila == 'ATIVA' %}
                     <button class="botao mini" data-fila="/api/fila/{{ lote_id }}/{{ r.orgao }}"
                             data-acao="estacionar" data-label="Estacionar">Estacionar</button>
