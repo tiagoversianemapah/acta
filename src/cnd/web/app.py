@@ -511,6 +511,29 @@ def _planilhas_para_exportar(lotes: list[dict], atual: int | None) -> list[dict]
     return recentes
 
 
+def _planilhas_na_espera(lotes: list[dict], dados: dict) -> list[dict]:
+    """Planilhas com item pendente que não são a da vez.
+
+    Terminadas não entram: elas não esperam nada. A DA VEZ também não —
+    ela é a que está valendo. Sai da lista mesmo quando não é a que está
+    na tela, que é o caso de quem abriu uma planilha antiga pelo link:
+    sem isso a tela chamava de "esperando" justamente a que roda.
+
+    A contagem vem do que a máquina informou por planilha, e não de uma
+    consulta nova, porque a máquina pode ser remota.
+    """
+    atual = dados.get("lote_id")
+    da_vez = dados.get("lote_da_vez")
+    pendentes_por_lote = dados.get("pendentes_por_lote") or {}
+    espera = []
+    for lote in lotes:
+        if lote["id"] == atual or lote["id"] == da_vez:
+            continue
+        if int(pendentes_por_lote.get(str(lote["id"]), 0) or 0) > 0:
+            espera.append(lote)
+    return espera
+
+
 def _orgaos_para_exportar(
     selecionada: remoto.EstadoRemoto | None, mes: str,
 ) -> list[dict]:
@@ -691,6 +714,11 @@ def _contexto_painel(
         "lotes": lotes,
         "lotes_exportacao": _planilhas_para_exportar(
             lotes, dados.get("lote_id")),
+        # As que ficaram para depois. A tela mostra UMA planilha, a da vez,
+        # e estas viram um recado — não um seletor: quem escolhe a ordem é a
+        # fila (core/fila.lote_da_vez), e oferecer a troca aqui sugeria que
+        # dá para tocar duas ao mesmo tempo.
+        "planilhas_na_espera": _planilhas_na_espera(lotes, dados),
         "planilhas_salvas": (
             planilhas_salvas
             if selecionada and selecionada.online and selecionada.roda_robo

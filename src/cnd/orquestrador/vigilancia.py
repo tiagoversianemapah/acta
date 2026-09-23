@@ -16,6 +16,7 @@ justamente no dia em que o aviso importava.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Collection
 from dataclasses import dataclass
 
 from cnd.core import fila, tempo
@@ -163,15 +164,26 @@ def lotes_recem_concluidos(conn: sqlite3.Connection) -> list[ResumoLote]:
     return concluidos
 
 
-def minutos_sem_progresso(conn: sqlite3.Connection, orgao: str) -> float | None:
+def minutos_sem_progresso(conn: sqlite3.Connection, orgao: str,
+                          impedidos: Collection[str] = ()) -> float | None:
     """Há quanto tempo nada conclui, tendo trabalho na fila.
 
     Devolve None quando não há mais o que fazer — fila vazia não é
     travamento, é serviço terminado.
+
+    `impedidos` são os órgãos parados agora, que não contam na escolha da
+    planilha da vez: sem eles a resposta seria sobre outra planilha, e a
+    pergunta "este órgão está só esperando?" sairia errada.
     """
     # A mesma pergunta que segura o robô de pé: item de planilha estacionada
     # ou cancelada não é trabalho, e "parado" por causa dele é alarme falso.
     if not fila.ha_trabalho(conn, orgao):
+        return None
+
+    # Esperar a vez da planilha também não é travamento: com "uma planilha
+    # por vez", um envio grande segura a vez por bastante tempo, e sem isto
+    # o aviso de travado sairia para todas as outras automações.
+    if fila.esperando_a_vez(conn, orgao, impedidos):
         return None
 
     ultima = conn.execute(

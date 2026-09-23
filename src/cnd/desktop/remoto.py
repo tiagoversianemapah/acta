@@ -296,7 +296,7 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
     """
     import platform
 
-    from cnd.core import breaker, controle
+    from cnd.core import breaker, controle, fila
     from cnd.desktop.estado import ler_atividade, ler_meses, ler_panorama
     from cnd.infra import maquina
     from cnd.infra.db import conectar_leitura
@@ -313,6 +313,15 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         with contextlib.closing(conectar_leitura(cfg.banco)) as conn:
             lotes = consultas.lotes(conn)
             em_execucao = consultas.lote_em_execucao(conn)
+            # Quantos itens cada planilha ainda tem para o robô pegar: é o
+            # que a tela usa para dizer quantas esperam a vez. Vem por aqui
+            # também, e não só pelo /api/estado, porque quando o console É a
+            # máquina do robô a tela lê deste caminho.
+            espera_por_lote = consultas.pendentes_por_lote(conn)
+            # A planilha que está valendo: quem abre uma antiga pelo link
+            # continua vendo o recado das que esperam, e a da vez não é
+            # uma delas.
+            da_vez = fila.lote_da_vez(conn)
             # Colhido AQUI, com a conexão viva: a lista de órgãos abaixo é
             # montada depois do `with`, e consultar de lá dava "Cannot
             # operate on a closed database".
@@ -324,6 +333,8 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         lotes = []
         em_execucao = None
         situacao_da_fila = {}
+        espera_por_lote = {}
+        da_vez = None
 
     def _orgao_para_dict(r) -> dict:
         parametros = (
@@ -371,6 +382,8 @@ def consultar_local(cfg: Config, lote: int | None = None) -> EstadoRemoto:
         "lote_id": panorama.lote_id,
         "lote_nome": panorama.lote_nome,
         "lote_em_execucao": em_execucao,
+        "pendentes_por_lote": espera_por_lote,
+        "lote_da_vez": da_vez,
         "atividade": ler_atividade(cfg, lote_id=panorama.lote_id),
         "meses": ler_meses(cfg),
         "lotes": [{"id": lote["id"], "descricao": lote["descricao"],

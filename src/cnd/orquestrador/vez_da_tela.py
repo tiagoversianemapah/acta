@@ -11,6 +11,9 @@ HTTP e não passam por aqui. Quem entra é o adapter cujo módulo declara
 
 A regra, decidida pela operação:
 
+  - disputa a tela só quem tem item na planilha DA VEZ — a fila entrega
+    uma planilha por vez (core/fila.lote_da_vez), e dar a tela a quem não
+    vai conseguir reivindicar nada é deixá-la parada;
   - vale a ordem da FILA: quem chegou primeiro (ou foi mandado "Rodar
     agora") usa a tela e vai até o fim da fila dele;
   - quando o primeiro não pode trabalhar — disjuntor aberto, fora da
@@ -70,6 +73,13 @@ class VezDaTela:
 
         Pausado pelo disjuntor, fora da janela de horário ou com o adapter
         que não subiu. Sem isto, a fila dele seguraria a tela parada.
+
+        Vale para TODOS os órgãos, inclusive os de HTTP, que não disputam
+        tela nenhuma: quem também precisa da resposta é a FILA, para não
+        deixar a planilha de um órgão parado segurar a vez das outras
+        (ver core/fila.lote_da_vez). Aqui porque o registro já existia e
+        já chega ao vigia; a disputa da tela continua só entre os
+        registrados em `registrar`.
         """
         with self._estado:
             if impedido:
@@ -77,20 +87,32 @@ class VezDaTela:
             else:
                 self._impedidos.discard(orgao)
 
+    def impedidos(self) -> frozenset[str]:
+        """Quem não consegue trabalhar agora, para quem decide a vez."""
+        with self._estado:
+            return frozenset(self._impedidos)
+
     # ------------------------------------------------------------------
     # De quem é a vez
     # ------------------------------------------------------------------
     def quem_tem_a_vez(self, conn: sqlite3.Connection) -> str | None:
         """O órgão de tela com o item mais antigo pronto para agora.
 
-        None quando nenhum tem item para pegar. A ordem é a de
-        `fila.ordem_na_fila`: "Rodar agora" na frente, depois a planilha
-        que chegou primeiro.
+        None quando nenhum tem item para pegar NA PLANILHA DA VEZ — e aí
+        ninguém ocupa a tela, que é o certo: quem só tem trabalho em
+        planilha que ainda vai chegar espera como quem não tem trabalho.
+        A ordem é a de `fila.ordem_na_fila`: "Rodar agora" na frente,
+        depois a planilha que chegou primeiro.
         """
         with self._estado:
             candidatos = [o for o in self._orgaos if o not in self._impedidos]
+            parados = frozenset(self._impedidos)
+        # Os impedidos entram na pergunta: a planilha de quem está parado
+        # não segura a vez, senão a tela ficava livre e a fila não
+        # entregava item a ninguém.
         ordens = {
-            orgao: fila.ordem_na_fila(conn, orgao) for orgao in candidatos
+            orgao: fila.ordem_na_fila(conn, orgao, parados)
+            for orgao in candidatos
         }
         prontos = {o: v for o, v in ordens.items() if v is not None}
         if not prontos:

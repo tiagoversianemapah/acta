@@ -181,7 +181,10 @@ class Vigia:
     def _avisar_travamento(self, conn, orgao: ConfigOrgao) -> None:
         """Fila com trabalho e nada concluindo = travado, mesmo com o
         processo vivo. O heartbeat sozinho não pega este caso."""
-        parado_ha = vigilancia.minutos_sem_progresso(conn, orgao.codigo)
+        parados = (self.vez_da_tela.impedidos()
+                   if self.vez_da_tela is not None else ())
+        parado_ha = vigilancia.minutos_sem_progresso(conn, orgao.codigo,
+                                                     parados)
         chave = f"travado:{orgao.codigo}"
         esperando_a_tela = (
             self.vez_da_tela is not None

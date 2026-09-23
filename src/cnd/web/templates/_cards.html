@@ -293,21 +293,18 @@
             · <b>{{ insuficientes + inaptos }}</b> para conferir
           {% endif %}
         </span>
+        {# UMA planilha na tela: a da vez. O seletor que ficava aqui deixava
+           escolher outra e dava a impressão de que dá para tocar duas ao
+           mesmo tempo — e o robô emite uma de cada vez (core/fila.py).
+           Planilha antiga se confere pela Carteira. #}
         {% if lote_em_execucao and lote_em_execucao != lote_id %}
           <a class="aviso-outra-planilha"
              href="/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo={{ lote_em_execucao }}">
             O robô está emitindo {{ lote_em_execucao_nome }} — acompanhar essa
           </a>
-        {% elif lotes|length > 1 %}
-          <span class="troca-planilha">
-            <select class="seletor-planilha"
-                    onchange="location.href='/?maquina={{ selecionada_idx if selecionada_idx is not none else '' }}&arquivo=' + this.value">
-              {% for l in lotes %}
-                <option value="{{ l.id }}" {{ 'selected' if l.id == lote_id }}>
-                  {{ l.nome }} · {{ l.itens }} itens
-                </option>
-              {% endfor %}
-            </select>
+        {% elif planilhas_na_espera %}
+          <span class="na-espera" title="{{ planilhas_na_espera | map(attribute='nome') | join(', ') }}">
+            {{ planilhas_na_espera | length }} planilha(s) esperando a vez
           </span>
         {% endif %}
       </div>

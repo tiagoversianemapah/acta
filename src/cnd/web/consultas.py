@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from math import ceil
 
-from cnd.core import breaker, controle, tempo
+from cnd.core import breaker, controle, fila, tempo
 from cnd.core.documentos import limpar
 from cnd.core.modelos import Desfecho, Status
 
@@ -83,10 +83,16 @@ def lotes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 
 
 def lote_em_execucao(conn: sqlite3.Connection) -> int | None:
-    """De qual planilha é o item que o robô está emitindo agora."""
+    """De qual planilha é o item que o robô está emitindo agora.
+
+    Desempate pelo `lote_id`, o mesmo de `fila.lote_da_vez`: com uma
+    planilha por vez os RUNNING são todos dela, e as duas respostas só
+    podem divergir por RUNNING órfão de um crash — aí as duas apontam a
+    mesma planilha, em vez de a tela dizer uma coisa e o robô outra.
+    """
     linha = conn.execute(
         "SELECT lote_id FROM job WHERE status = ? "
-        "ORDER BY atualizado_em DESC LIMIT 1",
+        "ORDER BY lote_id LIMIT 1",
         (Status.RUNNING,),
     ).fetchone()
     return linha["lote_id"] if linha is not None else None
@@ -119,14 +125,43 @@ def lote_com_fila(conn: sqlite3.Connection) -> int | None:
     return linha["lote_id"] if linha is not None else None
 
 
+def pendentes_por_lote(conn: sqlite3.Connection) -> dict[str, int]:
+    """Itens que o robô AINDA VAI pegar, planilha por planilha.
+
+    Mesma regra de `fila.reivindicar`: fila estacionada ou cancelada não
+    conta, porque ninguém vai buscar aqueles itens. Chave em texto para
+    atravessar o JSON entre máquinas sem virar número em uma ponta e texto
+    na outra.
+    """
+    return {
+        str(linha["lote_id"]): linha["n"]
+        for linha in conn.execute(
+            """
+            SELECT j.lote_id, COUNT(*) AS n
+              FROM job j
+              LEFT JOIN fila_controle c
+                     ON c.lote_id = j.lote_id AND c.orgao = j.orgao
+             WHERE j.status IN (?, ?)
+               AND COALESCE(c.situacao, ?) = ?
+             GROUP BY j.lote_id
+            """,
+            (Status.PENDING, Status.RETRY_WAIT, controle.ATIVA, controle.ATIVA),
+        )
+    }
+
+
 def lote_em_foco(conn: sqlite3.Connection,
                  escolhido: int | None = None) -> sqlite3.Row | None:
     """Qual planilha a tela de operação deve mostrar.
 
-    Sem escolha explícita vale a mais recente que ainda tem fila real. A
-    planilha em execução continua indo no aviso separado; misturar as duas
-    coisas fazia a seção "Na fila" esconder trabalho pendente enquanto o
-    robô emitia outro item.
+    A DA VEZ, que é a que o robô está autorizado a emitir agora (ver
+    core/fila.lote_da_vez). A tela de operação mostra uma planilha só, e
+    precisa ser a mesma que o robô emite: enquanto ela seguia a "mais
+    recente com fila", a tela anunciava um arquivo e o robô trabalhava em
+    outro (22/09/2026).
+
+    `escolhido` continua valendo para quem pede uma planilha pelo nome —
+    é como a Carteira abre um envio antigo para conferir.
     """
     todos = lotes(conn)
     if not todos:
@@ -135,6 +170,12 @@ def lote_em_foco(conn: sqlite3.Connection,
     if escolhido is not None:
         for lote in todos:
             if lote["id"] == escolhido:
+                return lote
+
+    da_vez = fila.lote_da_vez(conn)
+    if da_vez is not None:
+        for lote in todos:
+            if lote["id"] == da_vez:
                 return lote
 
     pendente = lote_com_fila(conn)

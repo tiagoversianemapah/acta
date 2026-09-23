@@ -172,11 +172,13 @@ class TestOrdemNaFila:
         assert fila.ordem_na_fila(conn, "RFB_PF") is None
 
     def test_planilha_que_chegou_antes_vem_primeiro(self, conn, lote):
+        """E a de depois nem disputa: só a planilha da vez usa a tela."""
         criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_ES")
         depois = _novo_lote(conn)
         criar_job(conn, depois, documento="11444777000161", orgao="RFB_PF")
 
-        assert fila.ordem_na_fila(conn, "SEFAZ_ES") < fila.ordem_na_fila(conn, "RFB_PF")
+        assert fila.ordem_na_fila(conn, "SEFAZ_ES") is not None
+        assert fila.ordem_na_fila(conn, "RFB_PF") is None
 
     def test_rodar_agora_passa_na_frente(self, conn, lote):
         criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_ES")
@@ -185,7 +187,36 @@ class TestOrdemNaFila:
 
         controle.priorizar(conn, depois, "RFB_PF")
 
-        assert fila.ordem_na_fila(conn, "RFB_PF") < fila.ordem_na_fila(conn, "SEFAZ_ES")
+        assert fila.ordem_na_fila(conn, "RFB_PF") is not None
+        assert fila.ordem_na_fila(conn, "SEFAZ_ES") is None
+
+    def test_duas_automacoes_na_mesma_planilha_disputam_pela_ordem(self, conn,
+                                                                   lote):
+        """Dentro da planilha da vez a ordem continua sendo a de chegada."""
+        primeiro = criar_job(conn, lote, documento="11222333000181",
+                             orgao="SEFAZ_ES")
+        criar_job(conn, lote, documento="11444777000161", orgao="RFB_PF")
+
+        assert primeiro is not None
+        assert fila.ordem_na_fila(conn, "SEFAZ_ES") < fila.ordem_na_fila(
+            conn, "RFB_PF")
+
+    def test_quem_so_tem_item_em_outra_planilha_nao_ocupa_a_tela(self, conn,
+                                                                 lote):
+        """O último item da planilha da vez ainda sendo emitido segurava a
+        tela para a automação seguinte, que então não conseguia reivindicar
+        nada e voltava a esperar de navegador aberto (23/09/2026)."""
+        criar_job(conn, lote, documento="11222333000181", orgao="SEFAZ_ES")
+        depois = _novo_lote(conn)
+        criar_job(conn, depois, documento="11444777000161", orgao="RFB_PF")
+
+        fila.reivindicar(conn, "SEFAZ_ES")      # fica RUNNING, sem concluir
+
+        vez = VezDaTela()
+        vez.registrar(["SEFAZ_ES", "RFB_PF"])
+
+        assert vez.quem_tem_a_vez(conn) is None
+        assert fila.reivindicar(conn, "RFB_PF") is None
 
     def test_retentativa_agendada_para_depois_nao_segura_a_tela(self, conn, lote):
         job = criar_job(conn, lote, documento="11222333000181", orgao="RFB_PF")

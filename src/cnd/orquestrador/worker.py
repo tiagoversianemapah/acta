@@ -126,9 +126,10 @@ class Worker(threading.Thread):
             else:
                 self.adapter.preparar()
         except Exception as erro:
-            # Sai da disputa pela tela: adapter que não subiu nunca vai
-            # trabalhar, e a fila dele seguraria a vez das outras.
-            self._sair_da_disputa_pela_tela()
+            # Adapter que não subiu nunca vai trabalhar: sai da disputa
+            # pela tela e da escolha da planilha da vez, senão a fila dele
+            # seguraria as outras.
+            self._nao_posso_trabalhar_agora()
             log.error("adapter_nao_carregou",
                       extra={"orgao": self.orgao.codigo, "erro": str(erro)})
             alertas.abrir_incidente(
@@ -149,7 +150,7 @@ class Worker(threading.Thread):
             while not self.ctx.parar.is_set():
                 self._passo()
         finally:
-            self._sair_da_disputa_pela_tela()
+            self._nao_posso_trabalhar_agora()
             try:
                 self.adapter.encerrar()
             finally:
@@ -162,7 +163,7 @@ class Worker(threading.Thread):
         self._bater_ponto()
 
         if not tempo.dentro_da_janela(self.orgao.pacing.janela_ativa):
-            self._sair_da_disputa_pela_tela()
+            self._nao_posso_trabalhar_agora()
             self.ctx.parar.wait(PAUSA_FORA_DA_JANELA_S)
             return
 
@@ -180,11 +181,15 @@ class Worker(threading.Thread):
                 "retoma_em": estado.aberto_ate,
                 "dica": "use --reiniciar-ritmo para zerar",
             })
-            # Pausado não segura a tela: a automação seguinte da fila
-            # trabalha enquanto esta espera o disjuntor.
-            self._sair_da_disputa_pela_tela()
+            # Pausado não segura a tela nem a vez da planilha: a automação
+            # seguinte da fila trabalha enquanto esta espera o disjuntor.
+            self._nao_posso_trabalhar_agora()
             self.ctx.parar.wait(PAUSA_BREAKER_ABERTO_S)
             return
+
+        # Passou da janela e do disjuntor: volta a contar para a escolha da
+        # planilha da vez, se algum ciclo anterior o tinha tirado.
+        self.ctx.vez_da_tela.impedir(self.orgao.codigo, False)
 
         if self.usa_tela and not self._chegou_a_vez():
             return
@@ -195,7 +200,8 @@ class Worker(threading.Thread):
             return
 
         try:
-            job = fila.reivindicar(self.conn, self.orgao.codigo)
+            job = fila.reivindicar(self.conn, self.orgao.codigo,
+                                   self.ctx.vez_da_tela.impedidos())
         except Exception:
             self.ctx.cancelar_reserva()
             raise
@@ -277,8 +283,8 @@ class Worker(threading.Thread):
         False já inclui a espera: quem chama só precisa voltar. Quem decide
         é a ordem da fila no banco, igual para todos os workers.
         """
+        # Quem já voltou à disputa foi `_passo`, antes de chamar aqui.
         vez = self.ctx.vez_da_tela
-        vez.impedir(self.orgao.codigo, False)
         dono = vez.quem_tem_a_vez(self.conn)
 
         if dono == self.orgao.codigo:
@@ -303,9 +309,15 @@ class Worker(threading.Thread):
         self.ctx.parar.wait(PAUSA_AGUARDANDO_A_TELA_S)
         return False
 
-    def _sair_da_disputa_pela_tela(self) -> None:
+    def _nao_posso_trabalhar_agora(self) -> None:
+        """Este órgão não trabalha agora: sai da tela E da escolha da vez.
+
+        Os dois juntos porque são a mesma notícia. Só o da tela, a planilha
+        deste órgão continuava sendo a da vez enquanto ele estava de
+        castigo, e a fila não entregava item a ninguém (23/09/2026).
+        """
+        self.ctx.vez_da_tela.impedir(self.orgao.codigo, True)
         if self.usa_tela:
-            self.ctx.vez_da_tela.impedir(self.orgao.codigo, True)
             self._esperando_a_vez = False
 
     def _tela(self):

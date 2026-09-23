@@ -353,46 +353,6 @@
   .cartao-planilha > .rotulo{
     display:block;margin:0;line-height:1.15;max-width:none;
   }
-  .escolha-planilha{
-    position:relative;display:grid;
-    grid-template-columns:38px minmax(0,1fr) auto;align-items:center;gap:.75rem;
-    min-height:58px;padding:.6rem .7rem;border:1px solid var(--linha);border-radius:8px;
-    background:var(--faixa);
-    transition:border-color .18s ease,background-color .18s ease,box-shadow .18s ease;
-  }
-  .escolha-planilha .icone-metrica{width:38px;height:38px;border-radius:8px}
-  .escolha-planilha .icone-metrica svg{width:19px;height:19px}
-  .escolha-corpo{min-width:0}
-  .escolha-corpo strong{
-    display:block;font-size:15px;font-weight:800;
-    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
-  }
-  .escolha-corpo small{display:block;color:var(--texto-3);font-size:12px}
-  .escolha-planilha .chevron{
-    width:18px;height:18px;fill:none;stroke:var(--texto-3);stroke-width:2;
-    stroke-linecap:round;stroke-linejoin:round;
-    transition:stroke .18s ease,transform .18s ease;
-  }
-  /* A caixa fica igual com uma planilha ou com dez — é ela que diz "os
-     números ao lado são DESTA aqui". O que sai é só o convite a abrir:
-     sem chevron, sem hover, sem cursor de clique, porque uma caixa que se
-     oferece para abrir e não abre é pior do que uma caixa quieta. */
-  .escolha-planilha:not(.sem-troca):hover{
-    border-color:var(--linha-forte);background:#fff;
-    box-shadow:0 6px 18px rgba(15,23,42,.06);
-  }
-  .escolha-planilha:not(.sem-troca):hover .chevron{stroke:var(--azul-acao);transform:translateY(1px)}
-  .escolha-planilha:focus-within{
-    border-color:var(--azul-acao);
-    box-shadow:0 0 0 3px rgba(37,99,235,.16);
-  }
-  /* Invisível por cima da caixa inteira: o clique vale em qualquer ponto
-     dela e quem abre a lista é o próprio navegador. Um menu em JS daria o
-     mesmo desenho e ainda teria de reimplementar teclado e rolagem. */
-  .seletor-planilha{
-    position:absolute;inset:0;width:100%;height:100%;
-    opacity:0;cursor:pointer;appearance:none;border:0;padding:0;
-  }
   .aviso-outra-planilha{
     display:block;margin-top:.5rem;color:var(--ambar);font-size:12px;line-height:1.35;
   }
@@ -1338,10 +1298,10 @@
     flex-wrap:wrap;font-size:12.5px;color:var(--texto-2);
   }
   .resultado-resumo b{color:var(--texto);font-weight:800}
-  .troca-planilha .seletor-planilha{
-    max-width:280px;padding:.32rem 1.8rem .32rem .6rem;font-size:12.5px;
-    border:1px solid var(--linha-forte);border-radius:8px;background:#fff;
-    appearance:none;cursor:pointer;
+  /* As planilhas que esperam a vez: recado, e nao controle. Escolher qual
+     roda e do robo, que toca uma de cada vez. */
+  .na-espera{
+    color:var(--texto-3);font-size:12px;font-weight:650;
   }
 
   /* Entregar: o fim do trabalho, no fim da tela. */

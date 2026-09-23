@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from fastapi import APIRouter
 
-from cnd.core import breaker, controle, recuperacao, tempo
+from cnd.core import breaker, controle, fila, recuperacao, tempo
 from cnd.infra import heartbeat, maquina
 from cnd.infra.config import Config, nome_do_orgao
 from cnd.web import consultas, relatorio
@@ -192,6 +192,17 @@ def montar(obter_config: Callable[[], Config],
                            "criado_em": lote["criado_em"],
                            "encerrado_em": lote["encerrado_em"]}
                           for lote in lotes],
+                # Quantos itens cada planilha ainda tem para o robô pegar.
+                # A tela mostra UMA planilha e precisa dizer quantas outras
+                # esperam a vez — sem isto ela teria de perguntar de novo,
+                # uma vez por planilha, e a máquina pode estar na rede.
+                # Chave em texto porque o caminho é JSON.
+                "pendentes_por_lote": consultas.pendentes_por_lote(conn),
+                # Qual delas está valendo. Vai junto porque quem abre uma
+                # planilha antiga pelo link continua vendo o recado das que
+                # esperam, e a da vez não é uma delas — sem este campo a
+                # tela chamava de "esperando" justamente a que roda.
+                "lote_da_vez": fila.lote_da_vez(conn),
                 "orgaos": orgaos,
             }
 
