@@ -57,6 +57,9 @@ dados = [
     *cnd_metadados,
     *pw_datas,
     (str(FONTE / "infra" / "schema.sql"), "cnd/infra"),
+    # O banco semente do captcha de Sao Luis: sem ele o orgao liga e nao le.
+    (str(FONTE / "adapters" / "municipal" / "captcha_sao_luis.json"),
+     "cnd/adapters/municipal"),
     (str(FONTE / "web" / "templates"), "cnd/web/templates"),
     (str(FONTE / "web" / "static"), "cnd/web/static"),
 ]
@@ -75,6 +78,8 @@ ocultos = [
     "cnd.adapters.estadual.sefaz_mt",
     "cnd.adapters.municipal.goiania",
     "cnd.adapters.municipal.vitoria",
+    # sao_luis importa captcha_ma estaticamente, como o sefaz_ma.
+    "cnd.adapters.municipal.sao_luis",
     "cnd.adapters.fake",
     *pw_ocultos,
     # Cinto e suspensório: o painel também é alcançado por nome em alguns

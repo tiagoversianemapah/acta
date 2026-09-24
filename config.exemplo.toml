@@ -623,6 +623,64 @@ backoff_erro_s    = [120, 600, 2700]
 backoff_captcha_s = [3600, 14400, 43200]
 backoff_bloqueio_s = [300, 900, 1800]
 
+[orgaos.SAO_LUIS]
+ativo   = false
+adapter = "sao_luis"
+workers = 1
+nome    = "PREFEITURA SAO LUIS"
+# O formulario pede a finalidade da certidao; o texto e livre e nao aparece
+# no PDF.
+finalidade = "Comprovação de regularidade fiscal"
+
+[orgaos.SAO_LUIS.urls]
+consulta = "https://stm.semfaz.saoluis.ma.gov.br/credenciamento/jsp/emissaoCertidao/emissaoPublicaCertidao.jsf"
+
+[orgaos.SAO_LUIS.http]
+timeout_s = 30.0
+
+[orgaos.SAO_LUIS.ocr]
+# Captcha de imagem em toda emissao, lido localmente pelo mesmo leitor da
+# SEFAZ-MA (mapeado em 24/09/2026). Errar nao emite nada: o portal diz
+# "Codigo de verificacao esta incorreto" e a imagem seguinte traz outro
+# codigo. Acerto medido de ~85% por imagem, entao 12 tentativas sobram.
+tentativas_captcha = 12
+# O banco semente vem no pacote, e o orgao funciona sem treino. O que o
+# portal confirma na operacao vai para este arquivo, que passa a valer no
+# lugar da semente.
+# banco = "data/ocr/sao_luis.json"   # padrao; descomente para trocar
+
+[orgaos.SAO_LUIS.pacing]
+# Fluxo HTTP, sem navegador: o mesmo perfil prudente de Vitoria e do MA.
+intervalo_inicial_s = 3.0
+intervalo_piso_s    = 3.0
+intervalo_teto_s    = 600.0
+acelera_apos        = 20
+fator_aceleracao    = 0.85
+fator_punicao       = 3.0
+fator_punicao_bloqueio = 1.4
+jitter              = 0.3
+janela_ativa        = "00:00-24:00"
+
+[orgaos.SAO_LUIS.recuperacao]
+ativa            = true
+espera_inicial_s = 1800
+fator            = 2.0
+espera_maxima_s  = 21600
+avisar_apos      = 5
+
+[orgaos.SAO_LUIS.breaker]
+captchas_para_abrir = 3
+janela_jobs         = 10
+erros_para_abrir    = 5
+cooldown_inicial_s  = 1800
+cooldown_maximo_s   = 9000
+
+[orgaos.SAO_LUIS.retry]
+max_tentativas    = 3
+backoff_erro_s    = [120, 600, 2700]
+backoff_captcha_s = [3600, 14400, 43200]
+backoff_bloqueio_s = [300, 900, 1800]
+
 [orgaos.RFB_PF]
 ativo   = false
 # Robô cego, como a PJ: o formulário de CPF também barra Playwright (código

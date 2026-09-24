@@ -44,7 +44,10 @@ log = obter("adapter.sefaz_ma.captcha")
 # bits: fino o bastante para separar 'e' de 'c' e grosso o bastante para o
 # ruído de reamostragem do JPEG não pesar. Mudar este número invalida um banco
 # já gravado (os bitmaps teriam outro tamanho), por isso ele viaja DENTRO do
-# arquivo do banco e é conferido na carga.
+# arquivo do banco e é conferido na carga. Isso inclui a semente que o pacote
+# leva para a Prefeitura de São Luís (municipal/captcha_sao_luis.json), que
+# usa este mesmo leitor: mudou aqui, refaça a semente com
+# `ferramentas/treinar_ocr_sao_luis.py --semente`.
 CAIXA = 20
 BITS = CAIXA * CAIXA
 

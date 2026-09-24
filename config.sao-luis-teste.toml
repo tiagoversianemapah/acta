@@ -1,0 +1,64 @@
+# Config ISOLADO para testar a Prefeitura de Sao Luis nesta maquina, sem tocar
+# na base de producao: banco e pastas proprios, so o SAO_LUIS ligado.
+#
+#   python -m cnd.cli importar --config config.sao-luis-teste.toml --abas "SAO LUIS" <planilha>
+#   python -m cnd.cli rodar    --config config.sao-luis-teste.toml --ate-esvaziar
+#
+# Os PDFs saem em data/teste_sao_luis/certidoes/.
+
+[geral]
+banco = "data/teste_sao_luis/cnd.db"
+pasta_certidoes = "data/teste_sao_luis/certidoes"
+pasta_evidencias = "data/teste_sao_luis/evidencias"
+pasta_logs = "data/teste_sao_luis/logs"
+
+[rede]
+papel = "robo"
+senha = ""
+
+[alertas]
+metodo = "teams"
+teams_webhook = ""
+
+[orgaos.SAO_LUIS]
+ativo = true
+adapter = "sao_luis"
+workers = 1
+nome = "PREFEITURA SAO LUIS"
+finalidade = "Comprovação de regularidade fiscal"
+
+[orgaos.SAO_LUIS.urls]
+consulta = "https://stm.semfaz.saoluis.ma.gov.br/credenciamento/jsp/emissaoCertidao/emissaoPublicaCertidao.jsf"
+
+[orgaos.SAO_LUIS.http]
+timeout_s = 30.0
+
+[orgaos.SAO_LUIS.ocr]
+tentativas_captcha = 12
+# banco da maquina de teste, separado do de producao (a semente do pacote
+# vale enquanto ele nao existir)
+banco = "data/teste_sao_luis/ocr.json"
+
+[orgaos.SAO_LUIS.pacing]
+intervalo_inicial_s = 3.0
+intervalo_piso_s = 3.0
+intervalo_teto_s = 600.0
+acelera_apos = 20
+fator_aceleracao = 0.85
+fator_punicao = 3.0
+fator_punicao_bloqueio = 1.4
+jitter = 0.3
+janela_ativa = "00:00-24:00"
+
+[orgaos.SAO_LUIS.breaker]
+captchas_para_abrir = 3
+janela_jobs = 10
+erros_para_abrir = 5
+cooldown_inicial_s = 1800
+cooldown_maximo_s = 9000
+
+[orgaos.SAO_LUIS.retry]
+max_tentativas = 3
+backoff_erro_s = [10, 20, 30]
+backoff_captcha_s = [0, 0, 0]
+backoff_bloqueio_s = [30, 60, 120]

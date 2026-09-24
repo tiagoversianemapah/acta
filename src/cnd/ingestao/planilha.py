@@ -30,6 +30,7 @@ ABA_PARA_ORGAO: dict[str, tuple[str, str]] = {
     "MT": ("SEFAZ_MT", "CNPJ"),
     "GOIANIA": ("GOIANIA", "CNPJ"),
     "VITORIA": ("VITORIA", "CNPJ"),
+    "SAO LUIS": ("SAO_LUIS", "CNPJ"),
     "DF": ("SEFAZ_DF", "CNPJ"),
     "ES": ("SEFAZ_ES", "CNPJ"),
     "SP": ("SEFAZ_SP", "CNPJ"),
